@@ -1,0 +1,10 @@
+# `uses:` で SHA 固定した GitHub Actions の更新 PR を月次で作成する。
+# 注意: ワークフロー内の docker run のイメージダイジェスト（gitleaks）は
+# Dependabot の追跡対象外のため、手動で更新すること。
+# 依存マニフェスト（requirements.txt 等）が増えたら ecosystem を追記すること。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

@@ -1,0 +1,4 @@
+# リポジトリ全体のコードオーナー。
+# engineers チームの誰か 1 名のレビュー承認が PR のマージに必要になる。
+# エンジニアの追加・削除は org の engineers チームのメンバー変更で行う。
+* @openfashion-labs/engineers
