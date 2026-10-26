@@ -1,0 +1,64 @@
+name: docs
+
+# ドキュメントサイト (website/, Docusaurus) のビルドと GitHub Pages への配信。
+#   - PR: ビルドのみ行い、リンク切れ等がないか確認する（Pages へは配信しない）
+#   - push (main): ビルドし、リポジトリ変数 DOCS_DEPLOY が "true" のときだけ
+#     GitHub Pages へ配信する（Pages を設定するまでは変数を立てず、ビルド確認だけ
+#     走らせられる）
+#   - 手動実行 (workflow_dispatch): ビルドして常に配信する
+# マニュアル本文 (リポジトリルートの docs/en, docs/ja) がまだ無い間は
+# website/docusaurus.config.ts が準備中ページを出すので、このワークフローは
+# docs/ の有無にかかわらず常に動く
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build
+        working-directory: website
+        run: npm run build
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: website/build
+
+  deploy:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.DOCS_DEPLOY == 'true')
+    runs-on: ubuntu-latest
+    # 配信が重ならないようにする (PR のビルドは並列でよいので deploy だけに付ける)
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+        id: deployment
