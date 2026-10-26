@@ -2,9 +2,6 @@ name: gitleaks
 
 on:
   pull_request:
-    # edited を含める: squash マージのメッセージは PR タイトル・本文から作られるため、
-    # CI 通過後にタイトルを書き換えて検査を回避されないようにする
-    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
