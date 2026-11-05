@@ -66,11 +66,20 @@ jobs:
             exit 1
           fi
 
+      # 封印（LLM/manifest.toml と __init__.py の AC9_GUIDANCE_BUILD）は開発元が版のコミットに入れておく。
+      # CI では作らず、入っているかだけ見る（タグのビルドだけ。190 MB を落とす前に止める）
+      - name: Check that the LLM/ documents are sealed
+        if: env.TAG != ''
+        run: |
+          grep -q '^build_id = ' LLM/manifest.toml || { echo "::error::LLM/manifest.toml is not sealed"; exit 1; }
+          grep -q '^AC9_GUIDANCE_BUILD = ' __init__.py || { echo "::error::__init__.py has no AC9_GUIDANCE_BUILD"; exit 1; }
+
       # 計算に使う wheel（newton・warp-lang・scipy の Windows 用）を PyPI から落として wheels/ に置く。
       # リポジトリには置かない（warp-lang が約 150 MB）。版は blender_manifest.toml の wheels と同じで、
       # sha256 で PyPI の公式ファイルそのものであることを確かめる（中身は改変しない）。
       # solver/newton_patch/ は newton 1.6.0 を元にした改変コピーなので、newton の版を上げるときは
-      # solver/newton_vbd.py の NEWTON_BASE_SHA256 も合わせて直す（合わないと計算が改変コピーを読まない）
+      # solver/newton_patch/ と solver/newton_vbd.py の NEWTON_BASE_SHA256 も合わせて直す
+      # （合わないと利用者の計算が始まらずに止まる。下で照合する）
       - name: Download the pinned wheels
         run: |
           mkdir wheels
@@ -85,11 +94,27 @@ jobs:
           ca35c82242a7553046f09023bbe56750b5c3d9af72625bd1a905a56d3189771d  warp_lang-1.17.0-py3-none-win_amd64.whl
           559ed65f60c1af5a03f3912605a1b5114f522c7c32fb23c3376ae8f03219fe28  scipy-1.18.1-cp313-cp313-win_amd64.whl
           EOF
-          # manifest の wheels と、落としたファイルの名前が一致するか
+          # manifest の wheels と、落としたファイルの名前が一致するか（両方向）
           cd ..
           for w in wheels/*.whl; do
             grep -qF "\"./$w\"" blender_manifest.toml || { echo "::error::$w is not listed in blender_manifest.toml"; exit 1; }
           done
+          [ "$(grep -cE '^ *"\./wheels/[^"]+\.whl",?$' blender_manifest.toml)" -eq 3 ] \
+            || { echo "::error::blender_manifest.toml does not list exactly these 3 wheels"; exit 1; }
+          # newton の wheel の中の 2 ファイルが、solver/newton_patch/ の元にした版（NEWTON_BASE_SHA256）か
+          python3 - <<'EOF'
+          import ast, hashlib, sys, zipfile
+          src = open('solver/newton_vbd.py', encoding='utf-8').read()
+          table = next(ast.literal_eval(n.value) for n in ast.parse(src).body if isinstance(n, ast.Assign)
+                       and any(getattr(t, 'id', None) == 'NEWTON_BASE_SHA256' for t in n.targets))
+          z = zipfile.ZipFile('wheels/newton-1.6.0-py3-none-any.whl')
+          for f, ok in table.items():
+              h = hashlib.sha256(z.read('newton/_src/solvers/vbd/' + f)).hexdigest()
+              if h not in ok:
+                  print(f"::error::the newton wheel's {f} is not the Newton solver/newton_patch/ was made from")
+                  sys.exit(1)
+          print('newton matches NEWTON_BASE_SHA256')
+          EOF
 
       # どのコミットから作った ZIP かを ZIP の中に残す
       - name: Write BUILD_INFO.txt
@@ -97,14 +122,6 @@ jobs:
           ver=$(sed -nE 's/^version = "([^"]+)".*/\1/p' blender_manifest.toml)
           printf 'AC9 Cloth Sim %s\ncommit %s (%s)\nbuilt %s\n' "$ver" "$(git rev-parse HEAD)" "${TAG:-$GITHUB_REF}" \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > BUILD_INFO.txt
-
-      # 封印（LLM/manifest.toml と __init__.py の AC9_GUIDANCE_BUILD）は開発元が版のコミットに入れておく。
-      # CI では作らず、入っているかだけ見る（タグのビルドだけ）
-      - name: Check that the LLM/ documents are sealed
-        if: env.TAG != ''
-        run: |
-          grep -q '^build_id = ' LLM/manifest.toml || { echo "::error::LLM/manifest.toml is not sealed"; exit 1; }
-          grep -q '^AC9_GUIDANCE_BUILD = ' __init__.py || { echo "::error::__init__.py has no AC9_GUIDANCE_BUILD"; exit 1; }
 
       # Blender 本体と出力先はソースディレクトリの外（RUNNER_TEMP）に置く。
       # 中に置くと paths_exclude_pattern に掛からず、Blender ごと ZIP に入ってしまう
@@ -173,6 +190,8 @@ jobs:
           name: extension-zip
           path: ${{ runner.temp }}/dist/*.zip
           if-no-files-found: error
+          # PR の ZIP（約 190 MB）は中身の確認に数日あれば足りる。タグの ZIP は Release にも添付される
+          retention-days: ${{ env.TAG != '' && 90 || 5 }}
 
   publish:
     needs: build

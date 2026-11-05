@@ -32,7 +32,7 @@ Apache-2.0（同じフォルダの `LICENSE`・`NOTICE`）。それ以外は GPL
 - `maintainer` 欄とログの接頭辞は `AC9` で統一する（`blender_manifest.toml`）。
 
 ## 配布
-- 配布 ZIP に入らないもの: `docs/`・`website/`・`.github/`・`CLAUDE.md`・`CHANGELOG.md`（`blender_manifest.toml` の `paths_exclude_pattern`）。`LLM/` と `tests/` は ZIP に入る（LLM/ は AICompanion が読む説明書で、その封印がアドオンの .py 全部の一覧を見るため）。
+- 配布 ZIP に入らないもの: `docs/`・`website/`・`.github/`・`CLAUDE.md`・`CHANGELOG.md`（`blender_manifest.toml` の `paths_exclude_pattern`）。`wheels/`（`release.yml` が PyPI から落とす）・`THIRD_PARTY_NOTICES.txt`・`licenses/`・`BUILD_INFO.txt`（`release.yml` が書く）は ZIP に入る。`LLM/` と `tests/` は ZIP に入る（LLM/ は AICompanion が読む説明書で、その封印がアドオンの .py 全部の一覧を見るため）。
 - 秘密情報の検査（gitleaks）は `.github/workflows/gitleaks.yml` が PR と main への push で回す。コミットに社内の名前が入っていないかは機械では検査しないので、上の「公開に向けて守ること」を自分で確かめる。
 - 公開の流れ: 手元のブランチは push せず細かくコミットしてよい。版を出すときに main へ 1 コミットにまとめて入れ、変更点は `CHANGELOG.md` に書く（`## [X.Y.Z] - 日付` の節。`[Unreleased]` に溜めて版を出すときに付け替える）。
 - リリース: `blender_manifest.toml` の `version` と `CHANGELOG.md` の節を更新した PR をマージしたあと、admin が `vX.Y.Z` タグを push する。`.github/workflows/release.yml` が Blender を落として ZIP をビルドし、draft の Release に添付する（本文は CHANGELOG の該当節）。本文を確かめて Release を公開する。
