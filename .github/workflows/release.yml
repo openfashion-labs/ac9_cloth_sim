@@ -1,0 +1,164 @@
+name: release
+
+# リリース ZIP のビルドと GitHub Release への添付。
+#   - タグ `v*` の push: そのタグをビルドして同名の Release に ZIP を添付する
+#     （タグは release tags ルールセットにより admin しか打てない）。
+#     Release が無ければ draft で作り、本文は CHANGELOG.md の該当節から取る
+#   - 手動実行: push 済みの既存タグを指定して同じことをやり直す
+#     （注意: Releases 画面で新しいタグ名の draft を作っても、公開するまで git タグは
+#     存在しないので手動実行では checkout できない。タグを先に push すること）
+#   - PR: このファイル・manifest を変えた PR ではビルドだけ行い、Release には触らない
+# ビルドには Blender 本体が要るため、公式配布の Linux 版を runner に落として
+# `blender --command extension build` を使う（手元に Blender が無くてもリリースできる）。
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing (pushed) release tag to build and attach the ZIP to (e.g. v1.0.0)"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - blender_manifest.toml
+
+permissions:
+  contents: read
+
+# 同じタグの run（タグ push と手動実行など）が重ならないようにする
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  # ビルドに使う Blender。sha256 は https://download.blender.org/release/Blender<系列>/ にある
+  # リリースごとの一覧ファイル blender-<版>.sha256 の linux-x64.tar.xz の行から取る
+  # （tar.xz 単体の .sha256 は無い）。Dependabot の対象外なので手動で上げる
+  BLENDER_VERSION: "5.2.1"
+  BLENDER_SHA256: "a31f524fa99a527d3d52b7f5aaa68c34e1a19d5a1c9473f79c5cc610fd5b10e9"
+  # 対象タグ。PR では空。run: の中では必ずこの環境変数経由で参照する
+  # （`${{ }}` をシェルに直接展開すると入力値がコマンドとして解釈され得る）
+  TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG || github.ref }}
+
+      - name: Check that the tag matches the manifest version and has a CHANGELOG entry
+        if: env.TAG != ''
+        run: |
+          ver=$(sed -nE 's/^version = "([^"]+)".*/\1/p' blender_manifest.toml)
+          if [ "$TAG" != "v$ver" ]; then
+            echo "::error::tag '$TAG' does not match blender_manifest.toml version '$ver'"
+            exit 1
+          fi
+          if ! grep -qE "^## \[${ver//./\\.}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$ver]' section (still under [Unreleased]?)"
+            exit 1
+          fi
+
+      # Blender 本体と出力先はソースディレクトリの外（RUNNER_TEMP）に置く。
+      # 中に置くと paths_exclude_pattern に掛からず、Blender ごと ZIP に入ってしまう
+      - name: Download Blender
+        run: |
+          series="${BLENDER_VERSION%.*}"
+          url="https://download.blender.org/release/Blender${series}/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 --retry-connrefused --retry-all-errors -o blender.tar.xz "$url"
+          echo "${BLENDER_SHA256}  blender.tar.xz" | sha256sum -c -
+          mkdir blender
+          tar -xJf blender.tar.xz -C blender --strip-components=1
+
+      - name: Install libraries Blender needs to start headless
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            libxi6 libxrender1 libxkbcommon0 libsm6 libice6 libgl1 libegl1 libxxf86vm1 libxfixes3 libgomp1
+
+      - name: Validate and build the extension
+        run: |
+          blender="$RUNNER_TEMP/blender/blender"
+          dist="$RUNNER_TEMP/dist"
+          "$blender" --command extension validate .
+          mkdir -p "$dist"
+          "$blender" --command extension build --source-dir . --output-dir "$dist"
+          "$blender" --command extension validate "$dist"/*.zip
+          ls -l "$dist"
+
+      - name: Check the ZIP contents
+        run: |
+          zip=$(ls "$RUNNER_TEMP"/dist/*.zip)
+          entries=$(unzip -Z1 "$zip")
+          echo "--- top-level entries"
+          echo "$entries" | cut -d/ -f1 | sort -u
+          # アドオンの入口と、配布に含める LLM/ と tests/ が入っているか（除外パターンの編集ミスで欠けるのを防ぐ）
+          for need in '__init__.py' 'blender_manifest.toml' 'LLM/manifest.toml' 'tests/'; do
+            if ! echo "$entries" | grep -qE "^${need}"; then
+              echo "::error::the ZIP lacks $need"
+              exit 1
+            fi
+          done
+          # 配布物に入ってはいけないもの（manifest の paths_exclude_pattern と対応）
+          if echo "$entries" | grep -E '^(\.|CLAUDE\.md|CHANGELOG\.md|docs/|website/|.*__pycache__/)' ; then
+            echo "::error::the ZIP contains files that paths_exclude_pattern should have removed"
+            exit 1
+          fi
+          # サイズの上限（ソースと workspace.blend だけなので数 MB が正常。website/node_modules などが紛れ込むと桁が変わる）
+          size=$(stat -c %s "$zip")
+          if [ "$size" -gt 20000000 ]; then
+            echo "::error::ZIP is $size bytes; something outside the add-on got packed in"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extension-zip
+          path: ${{ runner.temp }}/dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: inputs.tag != '' || github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: extension-zip
+          path: dist
+
+      - name: Attach the ZIP to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Release が無ければ draft で作る。本文は CHANGELOG.md の該当節
+          # （`## [x.y.z]` から次の `## ` または末尾のリンク定義まで）。
+          # 既にあれば（draft でも）本文は触らず ZIP を差し替えるだけ
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            ver="${TAG#v}"
+            awk -v ver="$ver" '
+              $0 ~ "^## \\[" ver "\\]" { on=1; next }
+              on && (/^## / || /^\[/) { exit }
+              on { print }
+            ' CHANGELOG.md > notes.md
+            if [ ! -s notes.md ]; then
+              echo "::error::could not extract the [$ver] section from CHANGELOG.md"
+              exit 1
+            fi
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" --notes-file notes.md
+          fi
+          gh release upload "$TAG" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber
