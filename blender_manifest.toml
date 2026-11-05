@@ -23,4 +23,6 @@ paths_exclude_pattern = [
   "/docs/",
   "/.github/",
   "/CHANGELOG.md",
+  # ドキュメントサイト (Docusaurus) の設定。利用者には無関係で、手元で npm install した node_modules が紛れ込むのを防ぐ
+  "/website/",
 ]
