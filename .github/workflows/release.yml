@@ -24,6 +24,8 @@ on:
     paths:
       - .github/workflows/release.yml
       - blender_manifest.toml
+      - THIRD_PARTY_NOTICES.txt
+      - licenses/**
 
 permissions:
   contents: read
@@ -64,6 +66,46 @@ jobs:
             exit 1
           fi
 
+      # 計算に使う wheel（newton・warp-lang・scipy の Windows 用）を PyPI から落として wheels/ に置く。
+      # リポジトリには置かない（warp-lang が約 150 MB）。版は blender_manifest.toml の wheels と同じで、
+      # sha256 で PyPI の公式ファイルそのものであることを確かめる（中身は改変しない）。
+      # solver/newton_patch/ は newton 1.6.0 を元にした改変コピーなので、newton の版を上げるときは
+      # solver/newton_vbd.py の NEWTON_BASE_SHA256 も合わせて直す（合わないと計算が改変コピーを読まない）
+      - name: Download the pinned wheels
+        run: |
+          mkdir wheels
+          python3 -m pip download --no-deps --only-binary :all: \
+            --platform win_amd64 --python-version 3.13 --implementation cp \
+            -d wheels newton==1.6.0 warp-lang==1.17.0 scipy==1.18.1
+          cd wheels
+          ls -l
+          [ "$(ls | wc -l)" -eq 3 ] || { echo "::error::expected 3 wheels"; exit 1; }
+          sha256sum -c - <<'EOF'
+          5eedebe17d7261ca39e8f97c2f2f20e22e7264d0aed01782f3cb1dd60180b872  newton-1.6.0-py3-none-any.whl
+          ca35c82242a7553046f09023bbe56750b5c3d9af72625bd1a905a56d3189771d  warp_lang-1.17.0-py3-none-win_amd64.whl
+          559ed65f60c1af5a03f3912605a1b5114f522c7c32fb23c3376ae8f03219fe28  scipy-1.18.1-cp313-cp313-win_amd64.whl
+          EOF
+          # manifest の wheels と、落としたファイルの名前が一致するか
+          cd ..
+          for w in wheels/*.whl; do
+            grep -qF "\"./$w\"" blender_manifest.toml || { echo "::error::$w is not listed in blender_manifest.toml"; exit 1; }
+          done
+
+      # どのコミットから作った ZIP かを ZIP の中に残す
+      - name: Write BUILD_INFO.txt
+        run: |
+          ver=$(sed -nE 's/^version = "([^"]+)".*/\1/p' blender_manifest.toml)
+          printf 'AC9 Cloth Sim %s\ncommit %s (%s)\nbuilt %s\n' "$ver" "$(git rev-parse HEAD)" "${TAG:-$GITHUB_REF}" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > BUILD_INFO.txt
+
+      # 封印（LLM/manifest.toml と __init__.py の AC9_GUIDANCE_BUILD）は開発元が版のコミットに入れておく。
+      # CI では作らず、入っているかだけ見る（タグのビルドだけ）
+      - name: Check that the LLM/ documents are sealed
+        if: env.TAG != ''
+        run: |
+          grep -q '^build_id = ' LLM/manifest.toml || { echo "::error::LLM/manifest.toml is not sealed"; exit 1; }
+          grep -q '^AC9_GUIDANCE_BUILD = ' __init__.py || { echo "::error::__init__.py has no AC9_GUIDANCE_BUILD"; exit 1; }
+
       # Blender 本体と出力先はソースディレクトリの外（RUNNER_TEMP）に置く。
       # 中に置くと paths_exclude_pattern に掛からず、Blender ごと ZIP に入ってしまう
       - name: Download Blender
@@ -99,7 +141,8 @@ jobs:
           echo "--- top-level entries"
           echo "$entries" | cut -d/ -f1 | sort -u
           # アドオンの入口と、配布に含める LLM/ と tests/ が入っているか（除外パターンの編集ミスで欠けるのを防ぐ）
-          for need in '__init__.py' 'blender_manifest.toml' 'LLM/manifest.toml' 'tests/'; do
+          for need in '__init__.py' 'blender_manifest.toml' 'LLM/manifest.toml' 'tests/' \
+                      'THIRD_PARTY_NOTICES.txt' 'licenses/' 'BUILD_INFO.txt'; do
             if ! echo "$entries" | grep -qE "^${need}"; then
               echo "::error::the ZIP lacks $need"
               exit 1
@@ -110,10 +153,18 @@ jobs:
             echo "::error::the ZIP contains files that paths_exclude_pattern should have removed"
             exit 1
           fi
-          # サイズの上限（ソースと workspace.blend だけなので数 MB が正常。website/node_modules などが紛れ込むと桁が変わる）
+          # wheel が manifest の 3 本とも、そのまま入っているか
+          n=$(echo "$entries" | grep -cE '^wheels/[^/]+\.whl$' || true)
+          if [ "$n" -ne 3 ]; then
+            echo "::error::the ZIP has $n wheels, expected 3"
+            exit 1
+          fi
+          (cd wheels && for w in *.whl; do unzip -p "$zip" "wheels/$w" | cmp - "$w" || { echo "::error::wheels/$w differs in the ZIP"; exit 1; }; done)
+          # サイズの範囲（ソースと workspace.blend で数 MB ＋ wheel で約 190 MB。
+          # website/node_modules などが紛れ込むと上に、wheel が抜けると下に外れる）
           size=$(stat -c %s "$zip")
-          if [ "$size" -gt 20000000 ]; then
-            echo "::error::ZIP is $size bytes; something outside the add-on got packed in"
+          if [ "$size" -lt 150000000 ] || [ "$size" -gt 260000000 ]; then
+            echo "::error::ZIP is $size bytes; expected 150-260 MB (the add-on and its 3 wheels)"
             exit 1
           fi
 

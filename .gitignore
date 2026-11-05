@@ -42,3 +42,6 @@ venv/
 *.log
 *.tmp
 node_modules/
+
+# Wheels are downloaded by release.yml, never committed (warp-lang is about 150 MB)
+/wheels/

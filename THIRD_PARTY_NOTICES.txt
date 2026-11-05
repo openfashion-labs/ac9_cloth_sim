@@ -1,0 +1,19 @@
+AC9 Cloth Sim is GPL-3.0-or-later (LICENSE). It bundles these Python packages as wheels (wheels/), each
+unmodified from PyPI:
+
+- newton 1.6.0 by The Newton Developers, Apache License 2.0 (licenses/newton-LICENSE.md).
+- warp-lang 1.17.0 by NVIDIA Corporation, Apache License 2.0 (licenses/warp-lang-LICENSE.md). Its CUDA Runtime, NVRTC
+  and libmathdx are under the NVIDIA Software License Agreement, not the GPL (licenses/warp-lang-cuda-LICENSE.txt,
+  licenses/warp-lang-nvrtc-LICENSE.txt, licenses/warp-lang-libmathdx-LICENSE.txt); LICENSE gives the additional
+  permission (GPLv3 section 7) to combine with them. Its other components keep their licenses in the wheel's
+  warp_lang-1.17.0.dist-info/licenses/.
+- scipy 1.18.1 by the SciPy Developers, BSD-3-Clause (licenses/scipy-LICENSE.txt).
+
+Changed copies of two Newton 1.6.0 files, Apache License 2.0, MODIFIED by AC9 (OpenFashion):
+  solver/newton_patch/particle_vbd_kernels.py  (newton/_src/solvers/vbd/particle_vbd_kernels.py)
+  solver/newton_patch/solver_vbd.py            (newton/_src/solvers/vbd/solver_vbd.py)
+Each says at its top what was changed; every change is marked in the file ("sim_spike local patch",
+"aniso_membrane local patch", "AC9 ..."). The add-on's solver loads them in place of Newton's own modules, only on
+the Newton 1.6.0 they were made from (solver/newton_vbd.py, NEWTON_BASE_SHA256). The installed newton is not changed.
+
+This add-on is not made or endorsed by NVIDIA.

@@ -13,6 +13,21 @@ license = ["SPDX:GPL-3.0-or-later"]
 
 tags = ["Physics", "Modeling"]
 
+# windows-x64 only: the solver needs NVIDIA Warp (CUDA). The wheels are not in the repository (warp-lang is about
+# 150 MB); .github/workflows/release.yml downloads these exact files from PyPI, checks their sha256 and builds.
+platforms = ["windows-x64"]
+wheels = [
+  "./wheels/newton-1.6.0-py3-none-any.whl",
+  "./wheels/warp_lang-1.17.0-py3-none-win_amd64.whl",
+  "./wheels/scipy-1.18.1-cp313-cp313-win_amd64.whl",
+]
+copyright = [
+  "2026 OpenFashion (AC9)",
+  "2025 The Newton Developers (newton, Apache-2.0; solver/newton_patch holds changed copies)",
+  "2022-2026 NVIDIA Corporation (warp-lang, Apache-2.0, with NVIDIA components under their own licenses)",
+  "2001-2026 SciPy Developers (scipy, BSD-3-Clause)",
+]
+
 [build]
 paths_exclude_pattern = [
   "__pycache__/",
