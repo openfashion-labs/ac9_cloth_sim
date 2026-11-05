@@ -1,0 +1,171 @@
+schema = 1
+addon_id = "ac9_cloth_sim"
+addon_version = "0.1.0"
+
+[[documents]]
+id = "guide_blender"
+title = "Blender の基本（人向けの説明書 docs/ja の写し）"
+path = "README.md"
+section = "Blender の基本"
+operators = []
+
+[[documents]]
+id = "guide_first"
+title = "はじめての 1 着（人向けの説明書 docs/ja の写し）"
+path = "README.md"
+section = "はじめての 1 着"
+operators = []
+
+[[documents]]
+id = "guide_concepts"
+title = "考え方（人向けの説明書 docs/ja の写し）"
+path = "README.md"
+section = "考え方"
+operators = []
+
+[[documents]]
+id = "guide_trouble"
+title = "困ったとき（人向けの説明書 docs/ja の写し）"
+path = "README.md"
+section = "困ったとき"
+operators = []
+
+[[documents]]
+id = "guide_notes"
+title = "案内上の注意と画面の場所"
+path = "procedures.md"
+section = "案内上の注意と画面の場所"
+operators = ["ac9_cloth_sim.update_3d", "ac9_cloth_sim.dress", "ac9_cloth_sim.edit_frame", "ac9_cloth_sim.delete_cache", "ac9_cloth_sim.export_retopo"]
+
+[[documents]]
+id = "import_bom"
+title = "型紙を読み込む（Import BOM）"
+path = "procedures.md"
+section = "型紙を読み込む（Import BOM）"
+operators = ["ac9_cloth_sim.import_bom"]
+
+[[documents]]
+id = "update_bom_seams"
+title = "着装形を保ってBOMの縫い目を更新（Update BOM Seams）"
+path = "procedures.md"
+section = "着装形を保ってBOMの縫い目を更新（Update BOM Seams）"
+operators = ["ac9_cloth_sim.seams_from_bom"]
+
+[[documents]]
+id = "import_dxf"
+title = "型紙を読み込む（Import DXF）"
+path = "procedures.md"
+section = "型紙を読み込む（Import DXF）"
+operators = ["ac9_cloth_sim.import_dxf", "ac9_cloth_sim.export_dxf", "ac9_cloth_sim.import_svg"]
+
+[[documents]]
+id = "from_mesh"
+title = "型紙を読み込む（From Mesh）"
+path = "procedures.md"
+section = "型紙を読み込む（From Mesh）"
+operators = ["ac9_cloth_sim.from_mesh", "ac9_cloth_sim.new_pattern"]
+
+[[documents]]
+id = "use_pieces"
+title = "使うピースを選ぶ"
+path = "procedures.md"
+section = "使うピースを選ぶ"
+operators = ["ac9_cloth_sim.select_garment", "ac9_cloth_sim.rename_garment", "ac9_cloth_sim.garment_from_selection", "ac9_cloth_sim.piece_state", "ac9_cloth_sim.invert_piece_selection", "ac9_cloth_sim.enable_all_pieces", "ac9_cloth_sim.refresh"]
+
+[[documents]]
+id = "edit_pattern"
+title = "型紙を直す（Transform Pattern・Edit Pattern・右クリック・3D Follows Edits）"
+path = "procedures.md"
+section = "型紙を直す（Transform Pattern・Edit Pattern）"
+operators = ["ac9_cloth_sim.use_tool", "ac9_cloth_sim.edit_pattern", "ac9_cloth_sim.pattern_transform", "ac9_cloth_sim.context_menu", "ac9_cloth_sim.sync_3d", "ac9_cloth_sim.duplicate_pieces", "ac9_cloth_sim.symmetrize", "ac9_cloth_sim.parallel_line", "ac9_cloth_sim.pattern_edit", "ac9_cloth_sim.pattern_drag", "ac9_cloth_sim.pick_piece_under", "ac9_cloth_sim.set_gap", "ac9_cloth_sim.pattern_rotate", "ac9_cloth_sim.add_dart", "ac9_cloth_sim.move_dart", "ac9_cloth_sim.spread", "ac9_cloth_sim.cut_line", "ac9_cloth_sim.piece_label", "ac9_cloth_sim.mirror_copy", "ac9_cloth_sim.match_twin", "ac9_cloth_sim.symmetric_edit", "ac9_cloth_sim.delete_piece", "ac9_cloth_sim.delete_selected", "ac9_cloth_sim.restore_pieces"]
+
+[[documents]]
+id = "draw_piece"
+title = "型紙を描く（Draw Piece・Internal Line・図形）"
+path = "procedures.md"
+section = "型紙を描く（Draw Piece・Internal Line・図形）"
+operators = ["ac9_cloth_sim.draw_piece", "ac9_cloth_sim.draw_line", "ac9_cloth_sim.draw_shape", "ac9_cloth_sim.delete_internal", "ac9_cloth_sim.cut_out", "ac9_cloth_sim.clone_shape"]
+
+[[documents]]
+id = "seams"
+title = "縫い目を付ける・直す"
+path = "procedures.md"
+section = "縫い目を付ける・直す"
+operators = ["ac9_cloth_sim.edit_seams", "ac9_cloth_sim.seam_click", "ac9_cloth_sim.seam_list_pick", "ac9_cloth_sim.seam_move_side", "ac9_cloth_sim.seam_notch", "ac9_cloth_sim.add_seam", "ac9_cloth_sim.add_seam_mn", "ac9_cloth_sim.match_length", "ac9_cloth_sim.seam_edit", "ac9_cloth_sim.seam_path", "ac9_cloth_sim.seam_path_part", "ac9_cloth_sim.pick_seam", "ac9_cloth_sim.blend", "ac9_cloth_sim.match_notches", "ac9_cloth_sim.notches_from_bom", "ac9_cloth_sim.close_dart", "ac9_cloth_sim.fold_dart"]
+
+[[documents]]
+id = "guides"
+title = "使う体と置く目安を用意する（Detect Guides・Edit Guides）"
+path = "procedures.md"
+section = "使う体と置く目安を用意する（Detect Guides・Edit Guides）"
+operators = ["ac9_cloth_sim.detect_guides", "ac9_cloth_sim.edit_guides"]
+
+[[documents]]
+id = "place"
+title = "配置する（Place・Back to Flat・置いた形を整える）"
+path = "procedures.md"
+section = "配置する（Place・Back to Flat）"
+operators = ["ac9_cloth_sim.place", "ac9_cloth_sim.clear_placement", "ac9_cloth_sim.use_tool", "ac9_cloth_sim.unlink_pair", "ac9_cloth_sim.pair", "ac9_cloth_sim.swap_sides", "ac9_cloth_sim.move_to_seam", "ac9_cloth_sim.lay_on_edge", "ac9_cloth_sim.move_outside", "ac9_cloth_sim.settle_placed"]
+
+[[documents]]
+id = "move_by_hand"
+title = "配置を手で直す（Move by Hand・Back to Guide）"
+path = "procedures.md"
+section = "配置を手で直す（Move by Hand・Back to Guide）"
+operators = ["ac9_cloth_sim.move_by_hand", "ac9_cloth_sim.show_placed", "ac9_cloth_sim.reset_placed", "ac9_cloth_sim.set_pose", "ac9_cloth_sim.mirror_pose"]
+
+[[documents]]
+id = "simulate"
+title = "シミュレーションする（Phase Sim）"
+path = "procedures.md"
+section = "シミュレーションする（Phase Sim）"
+operators = ["ac9_cloth_sim.update_3d", "ac9_cloth_sim.dress", "ac9_cloth_sim.log", "ac9_cloth_sim.delete_cache"]
+
+[[documents]]
+id = "live"
+title = "Live Sim・Local Sim と Stop"
+path = "procedures.md"
+section = "Live Sim・Local Sim と Stop"
+operators = ["ac9_cloth_sim.dress", "ac9_cloth_sim.fold_local_sim"]
+
+[[documents]]
+id = "reset_edit_frame"
+title = "Back to Placed と Edit Frame"
+path = "procedures.md"
+section = "Back to Placed と Edit Frame"
+operators = ["ac9_cloth_sim.reset", "ac9_cloth_sim.edit_frame"]
+
+[[documents]]
+id = "piece_state"
+title = "ピースの状態を変える"
+path = "procedures.md"
+section = "ピースの状態を変える"
+operators = ["ac9_cloth_sim.piece_state", "ac9_cloth_sim.select_piece", "ac9_cloth_sim.invert_piece_selection", "ac9_cloth_sim.collider", "ac9_cloth_sim.collider_select"]
+
+[[documents]]
+id = "fabric"
+title = "生地を選ぶ"
+path = "procedures.md"
+section = "生地を選ぶ"
+operators = ["ac9_cloth_sim.fabric_new", "ac9_cloth_sim.fabric_preset", "ac9_cloth_sim.fabric_edit", "ac9_cloth_sim.fabric_default", "ac9_cloth_sim.fabric_remove", "ac9_cloth_sim.fabric_select", "ac9_cloth_sim.interlining_new", "ac9_cloth_sim.interlining_preset", "ac9_cloth_sim.interlining_edit", "ac9_cloth_sim.interlining_remove", "ac9_cloth_sim.interlining_select", "ac9_cloth_sim.piece_mesh", "ac9_cloth_sim.layers_to_zero", "ac9_cloth_sim.set_role", "ac9_cloth_sim.propose_roles", "ac9_cloth_sim.set_fold"]
+
+[[documents]]
+id = "measure"
+title = "採寸する"
+path = "procedures.md"
+section = "採寸する"
+operators = ["ac9_cloth_sim.measure_body", "ac9_cloth_sim.measure_garment", "ac9_cloth_sim.measure_reset_levels", "ac9_cloth_sim.measure_move_level", "ac9_cloth_sim.measure_tape", "ac9_cloth_sim.measure_tape_remove", "ac9_cloth_sim.measure_pattern", "ac9_cloth_sim.measure_pattern_remove", "ac9_cloth_sim.measure_set_target", "ac9_cloth_sim.measure_highlight", "ac9_cloth_sim.measure_select", "ac9_cloth_sim.measure_delete", "ac9_cloth_sim.measure_mirror"]
+
+[[documents]]
+id = "to_retopo"
+title = "To AC9 Cloth Retopo"
+path = "procedures.md"
+section = "To AC9 Cloth Retopo"
+operators = ["ac9_cloth_sim.export_retopo"]
+
+[[documents]]
+id = "symptoms"
+title = "症状から探す"
+path = "procedures.md"
+section = "症状から探す"
+operators = []

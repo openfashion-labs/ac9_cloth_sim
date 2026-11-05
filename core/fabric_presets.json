@@ -1,0 +1,23 @@
+{
+ "_about": "Fabric and interlining presets (core/fabric.py). A garment copies the numbers when a preset is picked, so editing this table never changes a saved garment. Sources: 2609_Apparel_CAD/foundation_2026-09-30/calib/SOURCES_fabric_values_2026-10-07.md",
+ "bend_hyst_per_m": 41.0,
+ "bend_hyst_source": "kappa_y = 2HB / 2B, the curvature up to which a bend stays (the bending hysteresis; solver bend_fric2, DECISIONS cloth-sim-bend-hysteresis-stick-slip-2026-10-18). This value: cotton broadcloth, KES B 0.06 gf cm2/cm and 2HB 0.05 gf cm/cm (general values, Fable REVIEW_fable_energy_convergence_2026-10-18; a measured unfinished cotton plain weave gives 34-38 /m, Utkun 2021). Written into a fabric that has none (core/fabric.migrate: the value the solver used for it before 2026-10-20).",
+ "fabrics": [
+  {"preset": "poplin", "name": "Cotton Poplin", "weight_gsm": 140.0, "bending_uNm": 6.0,
+   "stretch_N_m": 3000.0, "shear_N_m": 29.0, "thickness_mm": 0.6, "bend_hyst_per_m": 41.0,
+   "source": "a new garment's default (user 2026-10-20). stretch: the membrane every garment had before 2026-10-20 (checked against a measured drape, experiments/creep_tshirt_2026-10-15), not a KES conversion (an unfinished cotton plain weave, Utkun 2021: secant 650 N/m at 1 %, 3200 at 3 %); shear: cotton shirting KES G 0.52 gf/(cm deg) x 56.2 (Fibre2Fashion / Ramaiah et al.: 0.52); bend_hyst: cotton broadcloth (see bend_hyst_source; a measured shirting 51 /m, Ramaiah et al.); bending: shirtings 96-170 g/m2 measured 2.5-12.7 uN m (FAST B; Yick et al. quoted in Ancutiene et al. 2010), the middle; weight: a published poplin preset's; thickness (the display only): cotton shirting plain weave 125 g/m2 KES T 0.61 mm (Ramaiah et al., fabric C, the shear's fabric)"},
+  {"preset": "wool", "name": "Wool Suiting", "weight_gsm": 276.0, "bending_uNm": 18.0,
+   "stretch_N_m": 3000.0, "shear_N_m": 29.0, "thickness_mm": 1.1, "bend_hyst_per_m": 41.0,
+   "source": "stretch, shear, bend_hyst: no source for wool yet -- the values every garment had before 2026-10-20 (cotton's); bending: wool/PA 244-251 g/m2, FAST B warp 17-25 / weft 11-19 uN m (Ancutiene et al. 2010, table 2), the mean; weight: a published wool preset's; thickness (the display only): the same wool/PA fabrics KES T 1.01-1.16 mm (Ancutiene et al. 2010, table 1), the mean"},
+  {"preset": "jersey", "name": "Cotton Jersey", "weight_gsm": 125.5, "bending_uNm": 0.65,
+   "stretch_N_m": 280.0, "shear_N_m": 26.0, "thickness_mm": 0.92, "bend_hyst_per_m": 61.0,
+   "source": "a T-shirt's single jersey, cotton 100 %, dyed and unfinished (Ramaiah et al., fibre2fashion, KES-FB, fabric A; calib/SOURCES_fabric_values_2026-10-07.md 2026-10-20): weight 125.5 g/m2, thickness 0.92 mm (the display only), bending KES B 0.0066 gf cm2/cm x 98.07, shear G 0.47 gf/(cm deg) x 56.2, bend_hyst 2HB/2B 61 /m; stretch: the poplin's 3000 x the ratio of the two fabrics' secants at 3 % (F = 490 N/m (eps/EM)^n, n = 2/LT - 1; jersey LT 0.632, EM about 21 %: 242 N/m; shirting fabric C LT 0.597, EM 6.6 %: 2560 N/m), both ways (the source gives no wale / course split)"},
+  {"preset": "rib", "name": "Rib Knit", "short": "Rib", "weight_gsm": 220.0, "bending_uNm": 6.0,
+   "stretch_N_m": 15.0, "shear_N_m": 14.5, "thickness_mm": 0.75, "bend_hyst_per_m": 41.0,
+   "source": "one layer of a 1x1 rib (2026-11-02, replaces 'Rib Knit (folded)', the one sheet that stood for a rib folded in two): half of each number of that sheet (APPROVED 'T シャツの衿リブの生地', user 2026-10-17: stretch 30 N/m, shear 29 N/m, bending 12 uN m, weight 440 g/m2, thickness 1.5 mm), so a rib folded in two with Fold and both layers kept is that sheet again (two loose layers add; estimate, not run). No measured rib found yet (KES of a 1x1 cotton rib); bend_hyst: the table's"}
+ ],
+ "interlinings": [
+  {"preset": "fusible_tricot", "name": "Fusible Tricot", "weight_gsm": 47.0, "bending_uNm": 54.0,
+   "source": "estimate, not measured: a poplin collar with it at 60 uN m (6 + 54, x10; fused collars measured 6-34x the shell, a 2018 HUST study read from its abstract only); weight: a typical light tricot fusible"}
+ ]
+}

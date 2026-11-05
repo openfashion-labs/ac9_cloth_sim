@@ -1,0 +1,26 @@
+schema_version = "1.0.0"
+
+id = "ac9_cloth_sim"
+version = "0.1.0"
+name = "AC9 Cloth Sim"
+tagline = "Sew garment patterns and drape them on avatars in Blender"
+maintainer = "AC9 <cg-tech@omnisinc.co>"
+type = "add-on"
+
+blender_version_min = "5.2.0"
+
+license = ["SPDX:GPL-3.0-or-later"]
+
+tags = ["Physics", "Modeling"]
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".*",
+  "/*.zip",
+  "*.blend[1-9]",
+  "/CLAUDE.md",
+  "/docs/",
+  "/.github/",
+  "/CHANGELOG.md",
+]

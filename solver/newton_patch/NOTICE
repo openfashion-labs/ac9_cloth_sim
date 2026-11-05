@@ -1,0 +1,12 @@
+This folder contains modified copies of two files from NVIDIA Newton 1.6.0
+(https://github.com/newton-physics/newton):
+
+  newton/_src/solvers/vbd/particle_vbd_kernels.py -> particle_vbd_kernels.py
+  newton/_src/solvers/vbd/solver_vbd.py           -> solver_vbd.py
+
+Copyright (c) 2025 The Newton Developers.
+Licensed under the Apache License, Version 2.0 (see LICENSE in this folder).
+
+Both files were changed by AC9 Cloth Sim. Each file's header says that it was
+modified and what was changed. The rest of AC9 Cloth Sim is licensed under
+GPL-3.0-or-later (see LICENSE at the top of the repository).
