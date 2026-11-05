@@ -107,3 +107,5 @@ AI アシスタント向けの補足（操作の ID や状態の読み方）は 
 ## ライセンス
 
 [GPL-3.0-or-later](LICENSE)。計算には NVIDIA の Newton を使っています。
+
+Copyright (C) 2026 OpenFashion. 本プログラムはフリーソフトウェアです。Free Software Foundation が公表した GNU General Public License のバージョン 3、またはそれ以降の任意のバージョンの条件の下で、再配布および改変ができます。`solver/newton_patch/` は NVIDIA Newton の改変コピーで、Apache-2.0（同じフォルダの `LICENSE`・`NOTICE`）です。

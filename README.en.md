@@ -107,3 +107,5 @@ Please post them in [Issues](https://github.com/openfashion-labs/ac9_cloth_sim/i
 ## License
 
 [GPL-3.0-or-later](LICENSE). The simulation uses NVIDIA Newton.
+
+Copyright (C) 2026 OpenFashion. This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. `solver/newton_patch/` is a modified copy of NVIDIA Newton under Apache-2.0 (its `LICENSE` and `NOTICE` in the same folder).
