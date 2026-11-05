@@ -90,6 +90,7 @@ GPU の確かめ方: タスクマネージャーを開き、「パフォーマ�
 ## 説明書
 
 - [説明書（日本語）](docs/ja/index.md): はじめに、Blender の基本、はじめての 1 着、考え方、機能ごとの説明、困ったとき、用語集。ドキュメントのサイトと同じ中身です。
+- [User guide (English)](docs/en/index.md): 英語の説明書です。
 - ドキュメントのサイト: 準備中です。
 
 AI アシスタント向けの補足（操作の ID や状態の読み方）は [LLM/procedures.md](LLM/procedures.md) にあります（`LLM/README.md` は説明書の一部の写しです）。

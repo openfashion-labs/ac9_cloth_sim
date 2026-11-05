@@ -70,7 +70,7 @@ The button names are the ones shown in the English interface. The detailed steps
 
 - **The run buttons are not in the sidebar but in the Tool tab of the Properties editor at the bottom right.** If the Properties editor shows another tab (Render and so on), you won't find them.
 - **Patterns cannot be fixed with Blender's usual editing (Edit Mode, G/R/S).** Use the **Transform Pattern** tool to move whole pieces and the **Edit Pattern** tool to fix corners and edges.
-- **A piece's role** (front, placket, collar stand, sleeve, cuff ...) decides the order it is sewn in, how it is placed (bands as a ring, sleeve panels side by side round the arm) and its start shape. After checking the seams and before placing, press **Propose Roles** in the **Piece Roles** panel and look again at the pieces marked for checking. See "Piece roles and what they decide" in the user guide.
+- **A piece's role** (front, placket, collar stand, sleeve, cuff ...) decides the order it is sewn in, how it is placed (bands as a ring, sleeve panels side by side round the arm) and its start shape. After checking the seams and before placing, press **Propose Roles** in the **Piece Roles** panel and look again at the pieces marked for checking. See [Piece Roles and What Gets Decided Automatically](docs/en/features/roles.md) in the user guide.
 - **Hover over a button that cannot be pressed (gray) to see why.**
 - On a **laptop** without a middle button or numpad, turning on "Emulate 3 Button Mouse" and "Emulate Numpad" under Preferences → Input makes moving the view easier.
 - **Keyboard shortcuts don't work while a Japanese (or other) input method (IME) is on.**
@@ -85,11 +85,12 @@ The button names are the ones shown in the English interface. The detailed steps
 | The screen differs from the guide, or "cannot import name …" appears | Did you restart Blender after installing a new version? |
 | The result differs a little every time | In the alpha the result varies even with the same settings. Run it a few times and compare. |
 
-For other symptoms, see "Troubleshooting" in the user guide.
+For other symptoms, see [Troubleshooting](docs/en/troubleshooting.md) in the user guide.
 
 ## User guide
 
-- [User guide (Japanese)](docs/ja/index.md): getting started, Blender basics, your first garment, concepts, each feature, troubleshooting, glossary. The same content as the documentation site. An English guide is not available yet.
+- [User guide (English)](docs/en/index.md): getting started, Blender basics, your first garment, concepts, each feature, troubleshooting, glossary. The same content as the documentation site.
+- [User guide (Japanese)](docs/ja/index.md)
 - Documentation site: in preparation.
 
 Notes for AI assistants (operation IDs, how to read the state) are in [LLM/procedures.md](LLM/procedures.md) (`LLM/README.md` is a copy of part of the user guide).
