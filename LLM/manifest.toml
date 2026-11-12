@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.1.1"
-build_id = "d1eb8318f1223973b91a325f4a5f403cbe32c21b9048dd4906664ec9c60f12c0"
+build_id = "cae6731ab6696753b87412c7a81a8d9de84c388d884e0df5b9c8776c3aaafb11"
 
 [[documents]]
 id = "guide_blender"
@@ -809,11 +809,11 @@ sha256 = "91e399cba639df55b7edc2f65b2f2ff459700d28090f55eeb7d90fb1d5b1bdce"
 
 [[sources]]
 path = "solver/native_experimental_small_tiles.py"
-sha256 = "186fb3635a80557ac75d892cfdabea48751e0d3feb96e7bd723809719208c52d"
+sha256 = "48c499071105396d5604357882da04856eaca3cf6c0dc24f59e04e71dbccabc7"
 
 [[sources]]
 path = "solver/native_experimental_sparse_contacts.py"
-sha256 = "33ea9370305b018774714c346a4db8500d99c0a8133a855a5b0843ed9569d6e8"
+sha256 = "f8e953b87fdcab5464aeb1a62dadfda90aabf66f33e1ab3dd1ae3ce9672c9d28"
 
 [[sources]]
 path = "solver/native_graph.py"

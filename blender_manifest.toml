@@ -23,7 +23,7 @@ wheels = [
 ]
 copyright = [
   "2026 OpenFashion (AC9)",
-  "2025 The Newton Developers (newton, Apache-2.0; solver/newton_patch holds changed copies)",
+  "2025 The Newton Developers (newton, Apache-2.0; solver/newton_patch and four solver/native_experimental_* files hold changed copies)",
   "2022-2026 NVIDIA Corporation (warp-lang, Apache-2.0, with NVIDIA components under their own licenses)",
 ]
 

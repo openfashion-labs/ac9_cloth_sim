@@ -1,4 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
+# Modified by AC9: Newton 1.6.0's self-contact and planar truncation kernels (particle_vbd_kernels.py) run from
+# per-color queues of primitives that have contacts; the contact functions are Newton's (with AC9's layer patch).
 """Experimental sparse scheduling. The original contact function is retained."""
 import warp as wp
 from native_experimental_contacts import SelfArgs, SelfArgs_func

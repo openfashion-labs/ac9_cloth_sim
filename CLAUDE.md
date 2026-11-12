@@ -5,8 +5,9 @@
 
 ## 何のアドオンか
 型紙（BOM.xml・DXF・UV シーム付きメッシュ、またはゼロから描いた型紙）を縫い合わせ、Blender の中でアバターに着せる。
-計算は NVIDIA Newton（VBD）を別プロセスの Python で回す（`solver/`）。`solver/newton_patch/` は Newton 1.6.0 の改変コピーで
-Apache-2.0（同じフォルダの `LICENSE`・`NOTICE`）。それ以外は GPL-3.0-or-later。
+計算は NVIDIA Newton（VBD）を別プロセスの Python で回す（`solver/`）。`solver/newton_patch/` と
+`solver/native_experimental_*.py`（`coloring` を除く）は Newton 1.6.0 から作った改変コピーで Apache-2.0（`solver/newton_patch/` の
+`LICENSE`・`NOTICE`、各ファイルの先頭に改変した旨）。それ以外は GPL-3.0-or-later。
 
 ## 命名
 - クラスは `AC9_OT_*`／`AC9_PT_*`、オペレーターの bl_idname は `ac9_cloth_sim.*`、シーンのプロパティは `scene.ac9_cloth_sim`。

@@ -1,5 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 The Newton Developers
 # SPDX-License-Identifier: Apache-2.0
-# Derived from Newton; AC9 work scheduling probes with all original material functions.
+# Modified by AC9: Newton 1.6.0's particle elasticity solve kernel (particle_vbd_kernels.py) rescheduled onto
+# smaller thread tiles; the material functions are Newton's, unchanged.
 import warp as wp
 from newton._src.solvers.vbd.particle_vbd_kernels import MeshAdjacencyData, ParticleFlags, SIMSPIKE_BUCKLE_RATIO, SIMSPIKE_MEMBRANE_BW, TILE_SIZE_TRI_MESH_ELASTICITY_SOLVE, VBD_DEBUG_PRINTING_OPTIONS, evaluate_bw_membrane_force_hessian, evaluate_dihedral_angle_based_bending_force_hessian, evaluate_neo_hookean_membrane_force_hessian, evaluate_volumetric_neo_hookean_force_and_hessian, get_vertex_adjacent_edge_id_order, get_vertex_adjacent_face_id_order, get_vertex_adjacent_tet_id_order, get_vertex_num_adjacent_edges, get_vertex_num_adjacent_faces, get_vertex_num_adjacent_tets, simspike_buckle_factor
 @wp.func_native('return value;\n')
