@@ -11,6 +11,8 @@ sidebar_position: 1
 
 上から次のパネルが並びます。
 
+<!-- screenshot: サイドバーの AC9 Cloth Sim のタブ（N で出す） -->
+
 - 「**セットアップ**」（Setup）: 型紙の読み込みと書き出し、作業画面の切り替え、服の切り替え。
 - 「**型紙**」（Pattern）: 型紙を直す・描く・縫い目を付ける道具とボタンの道具（「**留め具**」（Fasteners））のボタン。
 - 「**リスト**」（Lists）: 一覧を見て選ぶ場所。タブが 6 つあります（「**縫い目**」（Seams）、「**ピース**」（Pieces）、「**生地**」（Fabrics）、「**コリジョン**」（Collision）、「**テープ**」（Tapes）、「**留め具**」（Fasteners））。一覧は見て選ぶだけで、選んだ物の設定は Tool タブに出ます。行の名前をクリックで 1 つ、Shift＋クリックで足す・外す、はどの一覧も同じです。
@@ -22,6 +24,8 @@ sidebar_position: 1
 ## Properties エディタの Tool タブ
 
 選んだものの設定が、右下の Properties エディタの Tool タブに出ます。出るパネルは、最後に触った物で切り替わります。
+
+<!-- screenshot: Tool タブ全体（AC9 実行と AC9 服） -->
 
 - 「**AC9 実行**」（AC9 Run）: いちばん上に常に出ます。実行のボタン（「**フェーズシム**」（Phase Sim）、「**ライブシム**」（Live Sim）、「**ローカルシム**」（Local Sim）、「**手で直す**」（Fix by Hand））、型紙の直しを 3D に写すかどうか（「**編集を 3D に写す**」（3D Follows Edits）と「**3D を更新**」（Update 3D））、進み具合です。
 - 「**AC9 服**」（AC9 Garment）: 何も選んでいないとき。服の設定、生地、結果。
@@ -39,16 +43,20 @@ Blender 標準の Options や Workspace のパネルが先に出ることがあ�
 
 オブジェクトモードの道具の列の末尾に、AC9 の道具が並びます。長押しで同じ仲間の道具が出ます（▾）。
 
-`Transform Pattern ｜ Edit Pattern ｜ Draw Piece ▾ Rectangle Piece ▾ Ellipse Piece ｜ Internal Line ▾ Internal Rectangle ▾ Internal Ellipse ｜ Edit Seams ▾ Add Seam ▾ Add Seam (M:N) ── Edit Measure ▾ Tape Around ▾ Tape Along ▾ Tape Straight ｜ Place`
+<!-- screenshot: 道具の列 -->
+
+`Whole Pieces ｜ Edit Pieces ｜ Draw Piece ▾ Rectangle Piece ▾ Ellipse Piece ｜ Internal Line ▾ Internal Rectangle ▾ Internal Ellipse ｜ Edit Seams ▾ Add Seam ▾ Add Seam (M:N) ── Edit Measure ▾ Tape Around ▾ Tape Along ▾ Tape Straight ｜ Place`
 
 - 区切り線より前の型紙の道具は、「**セットアップ**」（Setup）パネルの「**型紙のツール**」（Pattern Tools）をオンにしたときだけ出ます。型紙を読み込むか描くと、そのファイルで一度だけ自動でオンになります（自分で切ればオフのまま）。ほかのパネルの道具のボタンを押したときも、自動でオンになります。
-- 道具を持つと、道具のオプション行に「Works on: …」（使える相手）と、その道具の操作キーが出ます。「**型紙編集**」（Edit Pattern）では、カーソルの下にある物に効くキーだけが出ます（全部のキーは「**型紙**」（Pattern）パネルの下の「**キー一覧**」（Keys））。使えない相手の上にカーソルを置くと、カーソルの横に黄色の案内が出ます。
+- 道具を持つと、道具のオプション行に「Works on: …」（使える相手）と、その道具の操作キーが出ます。「**ピース編集**」（Edit Pieces）では、カーソルの下にある物に効くキーだけが出ます（全部のキーは「**型紙**」（Pattern）パネルの下の「**キー一覧**」（Keys））。使えない相手の上にカーソルを置くと、カーソルの横に黄色の案内が出ます。
 - 道具は、クリックした相手で働きを変えます（型紙、体、着た服など）。
 - 「**作業画面**」（Work Screen）の真ん中の型紙のビューでは、道具の列に AC9 の道具と、Blender の Select・Move・Rotate・Annotate だけが出ます（ほかの道具は見えないだけで、キーは効きます）。
-- **右クリック**: 操作の途中なら取り消しです。何もしていないときは、カーソルの下の物に使えるメニューが出ます（「**型紙変形**」（Transform Pattern）・「**型紙編集**」（Edit Pattern）・「**縫い目編集**」（Edit Seams）・「**配置**」（Place）・「**採寸を直す**」（Edit Measure）と、着た服の上）。右クリックした物が先に選ばれ、メニューの項目はキーやボタンと同じ働きです。
+- **右クリック**: 操作の途中なら取り消しです。何もしていないときは、カーソルの下の物に使えるメニューが出ます（「**ピース全体**」（Whole Pieces）・「**ピース編集**」（Edit Pieces）・「**縫い目編集**」（Edit Seams）・「**配置**」（Place）・「**採寸を直す**」（Edit Measure）と、着た服の上）。右クリックした物が先に選ばれ、メニューの項目はキーやボタンと同じ働きです。
 - サイドバーの道具のボタンは、押されている物をもう一度押すと **Select Box**（Blender の普通の選択）に戻ります。
 - **X** と「**削除**」（Delete）は、AC9 の道具を持っているとき、カーソルの下の角・合印・内部線の端を消します。無ければ選んでいる内部線・縫い目・採寸を消します。ピースは確認が出てから消えます。オブジェクトそのものは消しません。
 
 ## 作業画面（Work Screen）
 
 「**セットアップ**」（Setup）パネルの「**作業画面**」（Work Screen）を押すと、作業用のワークスペース（名前は AC9 Cloth Sim）が出ます。左に 3D、真ん中に型紙（真上から見る平行投影、回転は固定）、右に Properties の Tool タブが並びます（Outliner とタイムラインはありません）。2 回目からは同じ画面に切り替えるだけで、増えません。前の版のアドオンで作った作業画面は、押したときに新しいものへ置き換わります。型紙を直す作業は、この真ん中の 3D ビューで行います。
+
+<!-- screenshot: 作業画面の全体（番号つき） -->

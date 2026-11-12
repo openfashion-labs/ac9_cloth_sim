@@ -6,9 +6,9 @@ import importlib.metadata
 import numpy as np
 
 VERSION = 1
-AUDITED_KEYS = frozenset('fps substeps density tri_ke tri_ka tri_kd edge_ke edge_kd stitch_kd particle_radius body_gap filter_rings rest_from_flat internal_filter_rings seam_bend pattern crop iterations stitch_ke self_margin self_gap body_mu fold_deg frames live active_pieces frozen_pieces stitch_ramp_frames live_every init_xv mi friction_epsilon membrane tri_ks bw_hess_reg fric_anchor bend_fric2 fold_ke_scale grab_file params_file fabric_pieces guard jitter layers stitch_edge_filter checkpoint_in checkpoint_out start_check gravity_z stitch_rest_mm temp_stitches'.split())
+AUDITED_KEYS = frozenset('fps substeps density tri_ke tri_ka tri_kd edge_ke edge_kd stitch_kd particle_radius body_gap filter_rings rest_from_flat internal_filter_rings seam_bend pattern crop iterations stitch_ke self_margin self_gap body_mu fold_deg frames live active_pieces frozen_pieces stitch_ramp_frames live_every init_xv mi friction_epsilon membrane tri_ks bw_hess_reg fric_anchor bend_fric2 fold_ke_scale grab_file params_file fabric_pieces guard jitter layers stitch_edge_filter checkpoint_in checkpoint_out start_check gravity_z stitch_rest_mm temp_stitches strengthen_pieces'.split())
 GLOBAL_FIELDS = ('BF2', 'FANCH', 'FOLD_RAMP', 'FOLD_CARRY', 'ELASTIC', 'ELASTIC_FROM',
-                 'DELAY', 'KE0', 'RL', 'DL0', 'L0s', 'LIVEP', 'TERMINAL_FIELD_STATE')
+                 'STRENGTHEN', 'DELAY', 'KE0', 'RL', 'DL0', 'L0s', 'LIVEP', 'TERMINAL_FIELD_STATE')
 
 
 def _digest(value):
@@ -138,6 +138,11 @@ def storage_layout(roots):
 def save(path, g, frame):
     import warp as wp
     wp.synchronize()
+    if g['cfg'].get('native_three'):
+        from native_three_contract import SHAPE_ONLY_CHECKPOINT
+        raise ValueError(SHAPE_ONLY_CHECKPOINT)
+    if g.get('STRENGTHEN_TERMINAL_DIRTY'):
+        raise ValueError('Strengthen changed with End Taper during Live; restart from the shown shape before a full-state checkpoint')
     if g.get('TERMINAL_FIELD_DIRTY'):
         raise ValueError('End taper or its fold angle changed during Live; restart from the shown shape before a full-state checkpoint')
     if g['N_G'] != len(g['d']['Xinit']) or not np.array_equal(g['sel'],np.arange(g['N_G'])):

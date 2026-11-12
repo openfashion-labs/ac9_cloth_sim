@@ -13,8 +13,8 @@ Everything about one garment (the pattern shapes, seams, placement, fold lines, 
 
 - The flat patterns you see on screen are a **display** rebuilt from this data.
 - That means **you can't fix a pattern with Blender's ordinary editing (Edit Mode, G/R/S).** Use AC9's tools instead.
-  - Move or rotate a whole piece: **Transform Pattern**
-  - Fix corners, edges, or points on internal lines: **Edit Pattern**
+  - Move or rotate a whole piece: **Whole Pieces**
+  - Fix corners, edges, or points on internal lines: **Edit Pieces**
 - Every time you load a pattern (Import BOM, Import DXF, From Mesh), one more set of pattern data (= one garment) is added. What the panels show belongs to the one garment you picked in the **Garment** field.
 
 <!-- figure: Figure 2: the pattern data and what it creates in the scene -->
@@ -44,7 +44,7 @@ There are three buttons for going back to an earlier shape, and they differ in h
 |---|---|---|
 | **Back to Placed** | The dressed garment or the shape pulled toward the seams -> the prepared shape from before pulling | The dressed result and the effect of pulling toward seams. Hand placement, vertex edits, and folds are kept |
 | **Back to Guide** | -> the placement on the guide | The dressed result and anything you moved by hand |
-| **Back to Flat** | -> the flat pattern | The placement, hand edits, and 3D shape of the target pieces. Patterns and seams are kept |
+| **Back to Flat** | -> flat where it is | The hand edits and the bent shape of the target pieces (their place and turn stay). Patterns and seams are kept |
 
 Select pieces and press it to affect only those pieces; press it with nothing selected to affect the whole garment (a confirmation appears for the whole garment).
 Linked mirrored pieces go back together. Even with Back to Flat, the dressed shape of unselected pieces stays.

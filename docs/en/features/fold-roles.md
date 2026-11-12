@@ -26,7 +26,7 @@ This feature places cloth folded along an internal line (for example, turning a 
 - For a line that can't fold in the placed shape, a one-line reason and **Local Sim** appear. A line that stops inside a piece (a tuck, for example) folds in the simulation but has no A or B.
 - The same fold goes into the partner's line of a left and right pair. Internal lines that a seam runs along also fold.
 - A line with an angle is treated as an ironed crease in every step of the simulation (it keeps its angle with 10 times the stiffness of the cloth's bending).
-- **Elastic**: the rate of shrinking along the line (100 % means no shrinking). Below it are the seams sewn to the line, **Cut (Ctrl+K)** (cuts into two pieces), **Delete (X)**, and the buttons for the distances to the surroundings.
+- **Elastic**: the rate of shrinking along the line (100 % means no shrinking). Below it are the seams sewn to the line the distances to the surroundings and **Move by Number...**. Cutting into two pieces (**Cut Along Line**) and deleting (X) are in the right-click menu.
 
 A line you newly give an angle starts as "No Side." Folds in earlier files keep their turning side (if the side is missing from an old record, it is Side A as before). Even with "No Side," you can choose the layers to calculate separately.
 

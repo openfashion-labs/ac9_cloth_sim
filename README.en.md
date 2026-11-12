@@ -69,7 +69,7 @@ The button names are the ones shown in the English interface. The detailed steps
 ### Common stumbling points
 
 - **The run buttons are not in the sidebar but in the Tool tab of the Properties editor at the bottom right.** If the Properties editor shows another tab (Render and so on), you won't find them.
-- **Patterns cannot be fixed with Blender's usual editing (Edit Mode, G/R/S).** Use the **Transform Pattern** tool to move whole pieces and the **Edit Pattern** tool to fix corners and edges.
+- **Patterns cannot be fixed with Blender's usual editing (Edit Mode, G/R/S).** Use the **Whole Pieces** tool to move whole pieces and the **Edit Pieces** tool to fix corners and edges.
 - **A piece's role** (front, placket, collar stand, sleeve, cuff ...) decides the order it is sewn in, how it is placed (bands as a ring, sleeve panels side by side round the arm) and its start shape. After checking the seams and before placing, press **Propose Roles** in the **Piece Roles** panel and look again at the pieces marked for checking. See [Piece Roles and What Gets Decided Automatically](docs/en/features/roles.md) in the user guide.
 - **Hover over a button that cannot be pressed (gray) to see why.**
 - On a **laptop** without a middle button or numpad, turning on "Emulate 3 Button Mouse" and "Emulate Numpad" under Preferences → Input makes moving the view easier.

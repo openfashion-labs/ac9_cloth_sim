@@ -7,7 +7,6 @@ unmodified from PyPI:
   licenses/warp-lang-nvrtc-LICENSE.txt, licenses/warp-lang-libmathdx-LICENSE.txt); LICENSE gives the additional
   permission (GPLv3 section 7) to combine with them. Its other components keep their licenses in the wheel's
   warp_lang-1.17.0.dist-info/licenses/.
-- scipy 1.18.1 by the SciPy Developers, BSD-3-Clause (licenses/scipy-LICENSE.txt).
 
 Changed copies of two Newton 1.6.0 files, Apache License 2.0, MODIFIED by AC9 (OpenFashion):
   solver/newton_patch/particle_vbd_kernels.py  (newton/_src/solvers/vbd/particle_vbd_kernels.py)

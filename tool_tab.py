@@ -110,7 +110,10 @@ def resolve(context, spec):
             return 'EDGES'
     if k == 'SEAM' and store.active_seam(context, spec) is not None:
         return 'SEAM'
-    if k in ('PIECE', None) and _selected_piece(context, spec) is not None:
+    # whatever was touched last and is gone now (an edge, an internal line, a seam no longer picked) gives the tab
+    # back to the selected piece: a click on a piece already selected changes no selection, so _on_depsgraph does
+    # not run and the tab stayed on the garment
+    if spec is not None and _selected_piece(context, spec) is not None:
         return 'PIECE'
     return 'GARMENT'
 
@@ -268,13 +271,7 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
             layout.label(text=tx("Garment: {0}", gname), icon='STICKY_UVS_LOC')
         if len(sel) > 1:
             layout.label(text=tx("{0} pieces selected: a change sets all", len(sel)), icon='INFO')
-        twin = next((b if a == name else a for a, b in S.twins(spec) if name in (a, b)), None)
-        if twin:
-            apart = any(name in p for p in U.twins_apart(spec))
-            r = layout.row()
-            r.alert = apart
-            r.label(text=tx("Pair: {0}", twin) + (tx(" (no longer mirrored)") if apart else ""),
-                    icon='ERROR' if apart else 'MOD_MIRROR')
+        draw_pair_box(layout, context, spec, name)
         # edited symmetrically about its center line (a piece's setting, user 2026-10-21: here, not in the Pattern
         # panel). Switched on but no longer symmetric: red, it does nothing
         from .core import draft as DR
@@ -372,6 +369,8 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
             r = col.row()
             r.active = False
             r.label(text=tx("Default: {0}", d['material']) if d else "No look (none for the garment)")
+        field("piece_strengthen", tx("Strengthen"), lambda n: bool(pcs[n].get('strengthen')))
+        field("piece_strengthen_factor", tx("Strength Factor"), lambda n: S.piece_strengthen_factor(pcs[n]))
         field("piece_thickness", "Thickness", lambda n: pcs[n].get('thickness', True) is not False)
         # the layer (user 2026-10-25): higher = kept outside the lower while they differ; a person sets
         # them back to 0 (the arrow: every piece's)
@@ -385,7 +384,7 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
                 sub.operator_context = 'EXEC_DEFAULT'
                 sub.operator("ac9_cloth_sim.piece_mesh", text="", icon='LOOP_BACK').mesh_mm = 0.0
 
-        field("piece_distance", "Distance (mm)", lambda n: pcs[n].get('mesh_mm') or 0, back)
+        field("piece_distance", "Particle Distance (mm)", lambda n: pcs[n].get('mesh_mm') or 0, back)
         field("piece_elastic", "Elastic", lambda n: EL.piece_ratio(spec, n))
         if pc.get('enabled', True):
             from . import button_ui as BU       # the piece it buttons onto (user 2026-10-22, by hand)
@@ -393,14 +392,25 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
         placed = name in spec.get('placement', {})
         layout.label(text="Placed" if placed else "Not placed yet (Place in the sidebar)",
                      icon='CHECKMARK' if placed else 'ERROR')
-        if placed:
+        if placed and S.is_flat(spec['placement'][name]):
+            # laid flat (user 2026-11-10): no guide to go round or along. Its turn on the face it lies on takes the
+            # seat Around / Height / Tilt have for a guide's piece (user 2026-11-11, REVIEW_fable_flat_turn_snap_mirror_ui
+            # §1: one field, never shown beside those); the folded transform below stays the hand move
+            pcol = layout.column()
+            pcol.use_property_split = True
+            pcol.use_property_decorate = False
+            row = pcol.row(align=True)
+            row.prop(props, "piece_turn", text=tx("Orientation (deg)"))
+            row.operator("ac9_cloth_sim.turn_flat_90", text="", icon='FILE_REFRESH')
+            draw_transform(layout, spec, name)
+        elif placed:
             # where it is on its guide, set without dragging, and turned over (user 2026-11-01: the angle changed
             # alone, the collar's outer edge to the neck; a press of Place always slides)
             pcol = layout.column()
             pcol.use_property_split = True
             pcol.use_property_decorate = False
             pcol.prop(props, "piece_around", text=tx("Around (deg)"))
-            pcol.prop(props, "piece_height", text=tx("Height (mm)"))
+            pcol.prop(props, "piece_height", text=tx("Height"))
             row = pcol.row(align=True)
             row.prop(props, "piece_tilt", text=tx("Tilt (deg)"))
             row.operator("ac9_cloth_sim.flip_up_down", text="", icon='FILE_REFRESH')
@@ -411,10 +421,89 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
                 row = pcol.row(align=True)
                 row.prop(props, "piece_ring", text=tx("Ring Size (x)"))
                 row.prop(props, "piece_ring_auto", text=tx("Auto"), toggle=True)
+            # the placed shape's location and rotation, folded (user 2026-11-10: the sidebar's Item tab is far from
+            # here). The placed object's own transform: typing in it is a hand move, as G / R are
+            draw_transform(layout, spec, name)
         # the fold lines are set on the line itself now: click it (AC9 Internal Line, user 2026-10-21)
         n_lines = sum(1 for x in pc.get('internals', []) if x.get('kind') != 'baseline')
         if n_lines:
             layout.label(text=tx("{0} internal line(s): click one for its fold / elastic", n_lines), icon='INFO')
+
+
+def draw_pair_box(layout, context, spec, name):
+    """The Pair box (user 2026-11-11, REVIEW_fable_pair_ui_2026-11-11 b-1): which piece it pairs with and how, its
+    mirror plane, and every pair button in one place (the Placement panel's pair rows moved here; the right-click
+    menus keep theirs). Symmetric Edit (one piece's own halves) is not a pair setting and stays outside."""
+    from .core import spec as S
+    from .core import mirror_result as MR_
+    from . import dress as DR_
+    pl = spec.get('placement', {})
+    twin = next((b if a == name else a for a, b in S.twins(spec) if name in (a, b)), None)
+    paired = next((p[1] if p[0] == name else p[0] for p in spec.get('pairs', []) if name in p), None)
+    box = layout.box()
+    head = box.row()
+    head.label(text="Pair", icon='MOD_MIRROR')
+    if twin is None and paired is None:
+        box.label(text="No pair (Mirror Copy, or select two pieces and Pair)")
+        box.operator("ac9_cloth_sim.pair", text="Pair", icon='MOD_MIRROR')
+        return
+    other = twin or paired
+    if twin:
+        apart = any(name in p for p in U.twins_apart(spec))
+        unlinked = bool(pl.get(name, {}).get('unlinked') or pl.get(twin, {}).get('unlinked'))
+        r = box.row()
+        r.alert = apart
+        r.label(text=tx("With {0}", other) + (tx(" (no longer mirrored)") if apart else ""),
+                icon='ERROR' if apart else 'BLANK1')
+        r = box.row()
+        r.active = not unlinked
+        r.label(text=tx("Unlinked: each side moves on its own") if unlinked
+                else tx("Linked: moves as its mirror image"), icon='UNLINKED' if unlinked else 'LINKED')
+        # the mirror plane (user 2026-11-11): Left / Right, Front / Back
+        plane = S.plane_of(S.piece_index(spec)[name])
+        row = box.row(align=True)
+        row.label(text="Mirror Plane")
+        for v, t in (('x', "Left / Right"), ('y', "Front / Back")):
+            row.operator("ac9_cloth_sim.pair_plane", text=t, depress=plane == v).plane = v
+        row = box.row(align=True)
+        row.operator("ac9_cloth_sim.unlink_pair", text=tx("Link") if unlinked else tx("Unlink"),
+                     icon='LINKED' if unlinked else 'UNLINKED')
+        row.operator("ac9_cloth_sim.swap_sides", text="Swap Sides", icon='ARROW_LEFTRIGHT')
+        if unlinked:
+            box.operator("ac9_cloth_sim.mirror_pose", text="Mirror Placement", icon='MOD_MIRROR')
+    else:
+        box.label(text=tx("Paired with {0}", other), icon='BLANK1')
+        row = box.row(align=True)
+        row.operator("ac9_cloth_sim.pair", text="Unpair", icon='X')
+        row.operator("ac9_cloth_sim.swap_sides", text="Swap Sides", icon='ARROW_LEFTRIGHT')
+        box.operator("ac9_cloth_sim.mirror_pose", text="Mirror Placement", icon='MOD_MIRROR')
+    # simulated: one side's shape onto the other (the pairs Mirror 3D to Pair copies between, as its poll)
+    g_ = bpy.data.objects.get(DR_.garment_name(spec))
+    have_ = (set(DR_.garment_pieces(g_)) - set(DR_.hidden_pieces(g_, spec) or ())
+             - {p['name'] for p in spec['pieces'] if S.piece_state(p) == 'off_all'}
+             if g_ is not None and DR_.has_result(g_) else set())
+    mate = next((b if a == name else a for a, b in MR_.pairs(spec) if name in (a, b)), None)
+    if mate and name in have_ and mate in have_:
+        box.operator("ac9_cloth_sim.mirror_result", text="Mirror 3D to Pair", icon='MOD_MIRROR')
+
+
+def draw_transform(layout, spec, name):
+    """A folded Transform under a placed piece: its placed object's Location and Rotation (the object of a pair
+    holds both pieces; nothing to show until the placed shape is made)."""
+    from . import placed_view as PLV
+    head, body = layout.panel("ac9_cloth_sim_piece_transform", default_closed=True)
+    head.label(text="Location & Rotation")
+    if body is None:
+        return
+    ob = PLV.objects(spec).get(name)
+    if ob is None:
+        body.label(text="No placed shape yet (Move by Hand)", icon='INFO')
+        return
+    col = body.column()
+    col.use_property_split = True
+    col.use_property_decorate = False
+    col.prop(ob, "location", text="Location")
+    col.prop(ob, "rotation_euler", text="Rotation")
 
 
 def fabric_lines(f):

@@ -21,6 +21,7 @@ from . import dart as DT
 from . import draft as D
 from . import spec as S
 from . import spread as SP
+from . import elastic as EL
 
 ON_LINE_MM = 0.5      # an internal line's point this close to the cut line is on it (either half)
 
@@ -40,6 +41,101 @@ def _near_line(P, Q, tol):
     t = np.clip(((Q[:, None, :] - A[None]) * Dd[None]).sum(2) / ll[None], 0, 1)
     d = np.linalg.norm(A[None] + t[..., None] * Dd[None] - Q[:, None, :], axis=2)
     return d.min(1) < tol
+
+
+def _interval_parts(ol, side, arc_ids):
+    """Resolve every nonempty part, including intervals crossing the outline origin."""
+    start, span = ol.s_of(*side['from']), ol.span(side)
+    direction = 1 if span >= 0 else -1
+    length = abs(span)
+    stops = [0.0, length]
+    stops += [float((direction * (ol.edges[e][0] - start)) % ol.L)
+              for e in ol.order]
+    stops = sorted(set(s for s in stops if 0 <= s <= length))
+    parts = []
+    for a, b in zip(stops, stops[1:]):
+        if b > a:
+            eid, _ = ol.edge_t(start + direction * (a + b) / 2)
+            half = 'a' if eid in arc_ids['a'] else 'b'
+            if parts and parts[-1][0] == half:
+                parts[-1][2] = b
+            else:
+                parts.append([half, a, b])
+    if not parts:
+        parts = [[_seam_side_arc(ol, side, arc_ids), 0, 0]]
+    return [(half, dict(side, **{'from':list(ol.edge_t(start + direction*a)),
+                                  'to':list(ol.edge_t(start + direction*b))}))
+            for half,a,b in parts]
+
+
+def _split_band_safe(ol, side, cut_points):
+    """Certify a straight band normal to a straight cut, including the solver's 0.001 mm line quantization."""
+    line = ol.side_polyline(side)
+    delta, cut_delta = line[-1] - line[0], cut_points[-1] - cut_points[0]
+    length, cut_length = np.linalg.norm(delta), np.linalg.norm(cut_delta)
+    if min(length, cut_length) < 1e-8:
+        return False
+    tangent, cut_tangent = delta / length, cut_delta / cut_length
+    # The solver rounds sampled lines to 0.001 mm. A diagonal re-sampled in two parts can acquire different
+    # tiny zigzags; a rounded cut endpoint off the actual cut also loses a thin part of an end cap. Only grid-aligned
+    # axis directions certify exact partitioning without changing that existing solver input contract.
+    if (min(abs(tangent[0]), abs(tangent[1])) > 1e-9
+            or np.max(np.abs(cut_points - np.round(cut_points, 3))) > 1e-9):
+        return False
+    def straight(points, axis):
+        offsets = points - points[0]
+        return np.max(np.linalg.norm(offsets - (offsets @ axis)[:, None]*axis, axis=1)) < 1e-7
+    return (abs(float(tangent @ cut_tangent)) < 1e-9
+            and straight(line, tangent) and straight(cut_points, cut_tangent))
+
+
+def _polyline_distance(P, Q):
+    """Minimum segment distance, not a sampled-point clearance test."""
+    P, Q = np.asarray(P, float), np.asarray(Q, float)
+    distance = float('inf')
+    for points, line in ((P, Q), (Q, P)):
+        for k in range(0, len(points), 128):
+            distance = min(distance, float(D._dist_to_polyline(points[k:k+128], line).min()))
+    # In 2D the minimum is at an endpoint unless two segments intersect.
+    def cross(a, b):
+        return a[..., 0]*b[..., 1] - a[..., 1]*b[..., 0]
+    c, d = Q[:-1], np.diff(Q, axis=0)
+    for k in range(0, len(P)-1, 128):
+        a = P[:-1][k:k+128, None]
+        b = np.diff(P, axis=0)[k:k+128, None]
+        offset = c[None] - a
+        determinant = cross(b, d[None])
+        nonparallel = np.abs(determinant) > 1e-12
+        denominator = np.where(nonparallel, determinant, 1.0)
+        t = cross(offset, d[None]) / denominator
+        u = cross(offset, b) / denominator
+        if np.any(nonparallel & (t >= 0) & (t <= 1) & (u >= 0) & (u <= 1)):
+            return 0.0
+    return distance
+
+
+def _elastic_line(spec, el):
+    side = (dict(piece=el['piece'], line=el['line'], **{'from':0., 'to':1.})
+            if el.get('line') is not None else dict(el['side'], piece=el['piece']))
+    return np.round(S.side_polyline(spec, side), 3)  # elastic._entry's actual solver line
+
+
+def _band_reaches_cut(spec, el, cut_points):
+    # A finite-width band can cross the cut even when its center interval does not.
+    # The shared cut is the separating boundary of the two regions. Testing every segment gives a clearance
+    # certificate for all points in the opposite region, with the same 1e-7 mm geometric tie tolerance as points.
+    return _polyline_distance(_elastic_line(spec, el), cut_points) + 1e-7 < float(el.get('w', EL.W_DEFAULT))
+
+
+def _feature_sides(spec, name):
+    """Non-seam intervals and their authoritative owner, without activating held features."""
+    for el in spec.get('elastic') or []:
+        if el.get('piece') == name and isinstance(el.get('side'), dict):
+            yield el['side'], el
+    for att in spec.get('attach') or []:
+        sd = att.get('side')
+        if isinstance(sd, dict) and sd.get('piece') == name:
+            yield sd, None
 
 
 def _cut_edges(it, P, used):
@@ -84,8 +180,22 @@ def _cut_one(spec, name, line_id, new_name):
         raise ValueError(rpt("the cut line's ends are on the same point of the outline"))
     n = len(pc['edges'])
     # a seam running through a cut end becomes two there
+    split_map = []
     for k in (k0, k1):
-        DT._split_seams_at(spec, name, pc['edges'][(k - 1) % n]['id'], pc['edges'][k]['id'])
+        DT._split_seams_at(spec, name, pc['edges'][(k - 1) % n]['id'], pc['edges'][k]['id'], split_map=split_map)
+    for parent, child in split_map:
+        for key in ('folds', 'attach'):
+            rows = spec.get(key) or []
+            for row in list(rows):
+                if row.get('seam') != parent:
+                    continue
+                new = copy.deepcopy(row)
+                new['seam'] = child
+                if key == 'attach' and 'id' in new:
+                    used = {entry.get('id') for entry in rows}
+                    while new['id'] in used:
+                        new['id'] += 'c'
+                rows.append(new)
     arcs = {'a': SP._arc(n, k0, k1), 'b': SP._arc(n, k1, k0)}
     regions = {'a': np.vstack([SP._arc_pts(pc, arcs['a']), P[::-1][1:-1]]),
                'b': np.vstack([SP._arc_pts(pc, arcs['b']), P[1:-1]])}
@@ -109,6 +219,37 @@ def _cut_one(spec, name, line_id, new_name):
             sd = sm[k]
             if sd['piece'] == name and 'line' not in sd:
                 side_half.append((sd, _seam_side_arc(ol, sd, arc_ids)))
+    owned_sides = []
+    added_elastic = []
+    for sd, owner in list(_feature_sides(spec, name)):
+        if 'line' not in sd:
+            parts = _interval_parts(ol, sd, arc_ids)
+            if len(parts) == 1 and owner is not None and _band_reaches_cut(spec, owner, P):
+                raise ValueError(rpt("the elastic band reaches across the cut; remove that setting before cutting"))
+            if len(parts) > 1 and (owner is None or not _split_band_safe(ol, sd, P)):
+                raise ValueError(rpt("a saved interval crosses the cut and cannot retain its band; remove that setting before cutting"))
+            template = copy.deepcopy(owner)
+            for index, (h, part) in enumerate(parts):
+                row = owner if index == 0 else copy.deepcopy(template)
+                target = sd if index == 0 else row['side']
+                target.update(part)
+                side_half.append((target, h))
+                if row is not None:
+                    owned_sides.append((row, h))
+                    if index:
+                        added_elastic.append(row)
+    if added_elastic:
+        spec['elastic'].extend(added_elastic)
+    zipper_sides = []
+    for zipper in spec.get('zippers') or []:
+        for key in ('a', 'b'):
+            sd = zipper[key]
+            if sd['piece'] != name:
+                continue
+            owners = {h for h in 'ab' if set(sd['edges']) & arc_ids[h]}
+            if len(owners) != 1:
+                raise ValueError(rpt("a zipper crosses the cut; remove the zipper before cutting"))
+            zipper_sides.append((sd, owners.pop()))
     # internal lines: which half
     line_half = {}
     for jt in pc.get('internals', []):
@@ -133,6 +274,22 @@ def _cut_one(spec, name, line_id, new_name):
         else:
             raise ValueError(rpt("internal line {0} crosses the cut line: cut it first or remove it", jt['id']))
     # the two outlines: each half's edges, closed by the cut line
+    shared_line_elastic = []
+    for el in spec.get('elastic') or []:
+        lid = el.get('line') or (el.get('side') or {}).get('line')
+        if el.get('piece') != name or lid is None:
+            continue
+        if lid == line_id:
+            raise ValueError(rpt("the cut line has elastic; remove that setting before cutting"))
+        if line_half.get(lid) == 'both':
+            # A baseline already retained in full on both halves can represent the original band exactly.
+            clone = copy.deepcopy(el)
+            clone['piece'] = new_name
+            if isinstance(clone.get('side'), dict):
+                clone['side']['piece'] = new_name
+            shared_line_elastic.append(clone)
+        elif _band_reaches_cut(spec, el, P):
+            raise ValueError(rpt("the elastic band reaches across the cut; remove that setting before cutting"))
     edges_of = {k: [copy.deepcopy(pc['edges'][j]) for j in arcs[k]] for k in 'ab'}
     used = {e['id'] for e in pc['edges']}
     chain = _cut_edges(it, P, used)                               # E0 -> E1, one edge per span of the line
@@ -162,9 +319,15 @@ def _cut_one(spec, name, line_id, new_name):
     if notches:
         pc['notches'] = keep_notches
     spec['pieces'].insert(spec['pieces'].index(pc) + 1, new_pc)
+    if shared_line_elastic:
+        spec['elastic'].extend(shared_line_elastic)
     # outline seam sides: to the half they lie in; an end on a cut corner named by the other half's edge is named
     # again on its own half's outline
     halves = {keep: pc, other: new_pc}
+    for owner, h in owned_sides:
+        owner['piece'] = halves[h]['name']
+    for sd, h in zipper_sides:
+        sd['piece'] = halves[h]['name']
     for sd, h in side_half:
         tgt = halves[h]
         sd['piece'] = tgt['name']
@@ -182,15 +345,43 @@ def _cut_one(spec, name, line_id, new_name):
     for f in spec.get('folds', []):
         if f.get('piece') == name and line_half.get(f.get('line')) == other:
             f['piece'] = new_name
+        if f.get('turn') == name and f.get('seam'):
+            seam = next((sm for sm in spec['seams'] if sm['id'] == f['seam']), None)
+            if seam is not None and name not in (seam['a']['piece'], seam['b']['piece']):
+                if new_name in (seam['a']['piece'], seam['b']['piece']):
+                    f['turn'] = new_name
     spec['folds'] = [f for f in spec.get('folds', []) if not (f.get('piece') == name and f.get('line') == line_id)]
     for m in (spec.get('measure') or {}).get('pattern') or []:
         for k in ('a', 'b'):
             q = m.get(k)
             if isinstance(q, dict) and q.get('piece') == name and q.get('edge') in arc_ids[other]:
                 q['piece'] = new_name
+    internal_sides = list(_feature_sides(spec, name))
     for el in spec.get('elastic', []):
+        if el.get('piece') == name and el.get('line') == line_id:
+            raise ValueError(rpt("the cut line has elastic; remove that setting before cutting"))
         if el.get('piece') == name and line_half.get(el.get('line')) == other:
             el['piece'] = new_name
+    for sd, owner in internal_sides:
+        if sd.get('line') == line_id:
+            raise ValueError(rpt("the cut line has a saved setting; remove that setting before cutting"))
+        if 'line' in sd and line_half.get(sd['line']) == other:
+            sd['piece'] = new_name
+            if owner is not None:
+                owner['piece'] = new_name
+    # Cartesian features retain their point, but belong to the half containing it.
+    def point_owner(q):
+        Q = np.asarray([q], float)
+        # A point just beside the cut still belongs to that half; only a geometric tie stays with the old ID.
+        return name if _near_line(P, Q, 1e-7)[0] or DT._inside(regions[keep], Q)[0] else new_name
+    for button in spec.get('buttons') or []:
+        for point in (button, button.get('hole')):
+            if isinstance(point, dict) and point.get('piece') == name:
+                point['piece'] = point_owner(point['pt'])
+    for tack in spec.get('tacks') or []:
+        for key in ('a', 'b'):
+            if tack.get(key) == name:
+                tack[key] = point_owner(tack['p' + key])
     pl = spec.get('placement', {}).get(name)
     if pl is not None:                               # the same numbers: the half lands where it was
         spec['placement'][new_name] = copy.deepcopy(pl)
@@ -204,7 +395,7 @@ def _cut_one(spec, name, line_id, new_name):
     return {'new': new_name, 'seam': sid, 'kept': keep}
 
 
-def cut(spec, name, line_id, twins=True):
+def _cut_mutating(spec, name, line_id, twins=True):
     """Cut piece `name` in two along its internal line `line_id` (drawn from outline to outline). Returns
     {piece: {'new': the new half's name, 'seam': the seam sewing the cut, 'kept': 'a' / 'b'}} (the twin too). A piece
     edited symmetrically is cut along the line's mirror image too (that cut in the first entry's 'more': [(piece cut,
@@ -245,3 +436,19 @@ def cut(spec, name, line_id, twins=True):
                 pc.pop('mirror_edit', None)
                 pc.pop('mirror_axis', None)
     return out
+
+
+def cut(spec, name, line_id, twins=True):
+    """Plan all halves first; a rejected cut leaves geometry and saved references untouched."""
+    names = {name}
+    if twins:
+        twin = D.twin_of(spec, name)
+        if twin is not None:
+            names.add(twin)
+    planned = D.edit_copy(spec, names)
+    for key in ('folds', 'placement', 'buttons', 'tacks'):
+        if key in spec:
+            planned[key] = copy.deepcopy(spec[key])
+    result = _cut_mutating(planned, name, line_id, twins=twins)
+    spec.update(planned)
+    return result

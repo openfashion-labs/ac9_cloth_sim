@@ -11,7 +11,7 @@ the placed one on the same count -- vertices inside the body + edges through oth
 the piece starts where it was placed. Every outcome is one line in run_log 'lay'.
 """
 import numpy as np
-from scipy.spatial import cKDTree
+from spatial import cKDTree
 
 from crossings import crossing_edges
 

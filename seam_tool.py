@@ -5,7 +5,7 @@ on the other.
 Steps: A start -> A end -> B start -> B end -> confirm. The two sides are paired from their start
 clicks, so click both starts at the same end of the seam. While placing an end, the stretch runs the
 shorter way round from the start; F runs it the other way. Points snap to the corners of the outline
-(where one edge meets the next). Backspace steps back, Esc cancels, Enter / click confirms at the end.
+(where one edge meets the next) and to its notches. Backspace steps back, Esc cancels, Enter / click confirms at the end.
 A start clicked on the middle of an edge takes the whole edge (or internal line) as that side, starting at
 its end nearer the click (user 2026-10-22, DECISIONS cloth-sim-edge-select-2026-10-22); Ctrl+click puts a
 free start point there instead.
@@ -28,7 +28,7 @@ from .core import seam_edit as SE
 from .core import spec as S
 
 SNAP_PX = 14          # pick distance to an outline
-CORNER_PX = 10        # snap to a corner inside this
+CORNER_PX = 10        # snap to a corner or a notch inside this
 
 
 SEP = "\x1f"          # track key of an internal line: piece + SEP + line id (an outline's key is the piece name)
@@ -72,6 +72,7 @@ class OutlineIndex:
     def __init__(self, spec, outlines, names=None):
         segA, segB, owner, s_at = [], [], [], []
         self.corners = {}
+        notches = {pc['name']: pc.get('notches') or [] for pc in spec['pieces']}
         self.tracks = tracks_of(spec, outlines)
         if names is not None:
             self.tracks = {key: tr for key, tr in self.tracks.items() if key.split(SEP)[0] in names}
@@ -82,7 +83,10 @@ class OutlineIndex:
                 segA.append(B)
                 segB.append(np.roll(B, -1, 0))
                 s_at.append(tr.cum[:n])
-                self.corners[key] = np.array([tr.edges[e][0] for e in tr.order])
+                # the corners and the notches on the outline: a point clicked near one lands on it (sew notch to
+                # notch, user 2026-11-11)
+                nt = [tr.s_of(n['edge'], float(n['t'])) for n in notches.get(key, ()) if n.get('edge') in tr.edges]
+                self.corners[key] = np.array([tr.edges[e][0] for e in tr.order] + nt)
             else:
                 n = len(B) - 1
                 segA.append(B[:-1])
@@ -246,7 +250,7 @@ class _AddSeamBase:
         return ol.at(s0 + np.linspace(0.0, span, n))
 
     def _status(self, context):
-        names = ["A: click an edge (whole) or a START (corner / Ctrl+click)", "A: click the END",
+        names = ["A: click an edge (whole) or a START (corner / notch / Ctrl+click)", "A: click the END",
                  "B: click an edge or a START (same end as A's start)", "B: click the END",
                  ">>> Enter / click: add the seam <<<"]
         txt = names[min(self.step, 4)]
@@ -266,7 +270,7 @@ class _AddSeamBase:
         elif self._preview_side():
             from .shape_tool import fmt
             txt += tx("   length {0}", fmt(context, S.polyline_len(self._side_poly(*self._preview_side()))))
-        txt += "   Backspace: back   Esc: cancel"
+        txt += "   Backspace: back   Esc / right click: cancel"
         context.area.header_text_set(txt)
 
     # ---------------------------------------------------------------- draw
@@ -459,7 +463,7 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
     def _status(self, context):
         ab = "AB"[self.side]
         if self.half == 0:
-            txt = tx("M:N side {0}: click an edge (whole) or a START (corner / Ctrl+click)", ab)
+            txt = tx("M:N side {0}: click an edge (whole) or a START (corner / notch / Ctrl+click)", ab)
             if self.runs[self.side]:
                 txt += tx("   >>> Enter: {0} <<<", 'go to side B' if self.side == 0 else 'add the seam')
         else:
@@ -467,11 +471,12 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
             if is_closed(self.outlines[self.cur_piece]):
                 txt += tx("   F: other way round ({0})", 'ccw' if self.cur_dir > 0 else 'cw')
         la, lb = self._lengths(0), self._lengths(1)
-        txt += f"   A {sum(la):.1f} mm ({len(la)})"
+        from . import units as U
+        txt += f"   A {U.fmt(context, sum(la))} ({len(la)})"
         if self.side == 1:
-            txt += f"   B {sum(lb):.1f} mm ({len(lb)})"
+            txt += f"   B {U.fmt(context, sum(lb))} ({len(lb)})"
             if la and lb:
-                txt += tx("  diff {0:+.1f}", sum(la) - sum(lb))
+                txt += tx("  diff {0}", U.num(context, sum(la) - sum(lb), signed=True))
         if self.runs[0] and self.runs[1] and self.half == 0:
             txt += tx("   -> {0} seam(s)", len(self._pairs()))
         txt += "   Backspace: back   Esc / right-click: cancel"

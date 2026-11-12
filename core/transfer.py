@@ -22,6 +22,7 @@ import numpy as np
 from ._i18n import rpt
 
 from . import spec as S
+from .shape_source import same_layout
 
 
 def _outline_s(ol, P):
@@ -68,8 +69,7 @@ def _same_outline(pa, pb):
     at once; only the others go to allclose (it was 0.12 s of a 0.76 s pants edit for 133 pieces, 2026-10-27)."""
     ea, eb = pa['edges'], pb['edges']
     return len(ea) == len(eb) and all(x['id'] == y['id'] and len(x['pts']) == len(y['pts'])
-                                      and (x['pts'] == y['pts'] or np.allclose(np.asarray(x['pts'], float),
-                                                                               np.asarray(y['pts'], float), atol=1e-6))
+                                      and (x['pts'] == y['pts'] or same_layout(x['pts'], y['pts']))
                                       for x, y in zip(ea, eb))
 
 
@@ -486,12 +486,12 @@ def _carry(old_spec, new_spec, old_pat, old_idx, X_old, new_pat, new_tris, rigid
         T = F[fp == j] - offs[j]
         Vn = np.asarray(new_pat[f"V{i}"], float)
         if n in reset:                                  # its placed shape, the new pattern laid on it where drawn
-            out[n] = Xo.copy() if len(Vn) == len(Vo) and np.allclose(Vn, Vo, atol=1e-6) else bind(Vn, Vo, T, Xo)
+            out[n] = Xo.copy() if len(Vn) == len(Vo) and same_layout(Vn, Vo) else bind(Vn, Vo, T, Xo)
             rep['pieces'][n] = 'reset (placed)'
             continue
         if n in skip:
             continue
-        if len(Vn) == len(Vo) and np.allclose(Vn, Vo, atol=1e-6):
+        if len(Vn) == len(Vo) and same_layout(Vn, Vo):
             out[n] = Xo.copy()
             rep['pieces'][n] = 'unchanged'
             continue

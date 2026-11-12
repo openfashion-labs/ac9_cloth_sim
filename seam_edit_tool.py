@@ -18,6 +18,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
 from .i18n import rpt, tx
+from . import units as U
 
 from . import overlay
 from . import click_log as CL
@@ -320,10 +321,10 @@ class AC9_OT_SimSeamClick(bpy.types.Operator):
             for i in dr['changed']:
                 sm = next(x for x in sp['seams'] if x['id'] == i)
                 la, lb = S.side_length(sp, sm['a']), S.side_length(sp, sm['b'])
-                txt += f"   {i}: {la:.1f} / {lb:.1f} ({la - lb:+.1f})"
+                txt += f"   {i}: {U.num(context, la)} / {U.num(context, lb)} ({U.num(context, la - lb, signed=True)})"
         else:
             txt += "   NOT ALLOWED: " + dr['bad']
-        txt += "   Ctrl: no snapping   right click: cancel"
+        txt += "   Ctrl: no snapping   Esc / right click: cancel"
         context.area.header_text_set(txt)
 
     def _end(self, context):
@@ -347,7 +348,7 @@ class AC9_OT_SimSeamClick(bpy.types.Operator):
                 sm = next(x for x in sp['seams'] if x['id'] == i)
                 sm['source'] = 'user'
             msg = commit_seams(context, sp, self.spec, dr['changed'])
-            self.report({'INFO'}, rpt("Moved the end {0:+.1f} mm", self.ds) + (rpt("; {0}", msg) if msg else ""))
+            self.report({'INFO'}, rpt("Moved the end {0}", U.fmt(context, self.ds, signed=True)) + (rpt("; {0}", msg) if msg else ""))
             self._end(context)
             return {'FINISHED'}
         elif event.value == 'PRESS' and event.type in {'ESC', 'RIGHTMOUSE'}:
@@ -436,7 +437,7 @@ class AC9_OT_SimSeamMoveSide(bpy.types.Operator):
             if dist <= PICK_PX * mmpx and (best is None or dist < best[2]):
                 best = (key, s, dist)
         if best is None:
-            context.area.header_text_set(tx("Move side {0} of {1} ({2:.1f} mm): point at an outline or an internal line   Esc: cancel", self.k.upper(), self.sid, self.length))
+            context.area.header_text_set(tx("Move side {0} of {1} ({2}): point at an outline or an internal line   Esc / right click: cancel", self.k.upper(), self.sid, U.fmt(context, self.length)))
             return
         key, s, _ = best
         tr = self.trk[key]
@@ -458,10 +459,10 @@ class AC9_OT_SimSeamMoveSide(bpy.types.Operator):
         if dr['preview'] is not None:
             sm = next(x for x in sp['seams'] if x['id'] == self.sid)
             la, lb = S.side_length(sp, sm['a']), S.side_length(sp, sm['b'])
-            txt += f"   {la:.1f} / {lb:.1f} ({la - lb:+.1f})"
+            txt += f"   {U.num(context, la)} / {U.num(context, lb)} ({U.num(context, la - lb, signed=True)})"
         else:
             txt += "   NOT ALLOWED: " + dr['bad']
-        txt += tx("   F: other way ({0})   click: here   Ctrl: no snapping   Esc: cancel", 'ccw' if self.dir > 0 else 'cw')
+        txt += tx("   F: other way ({0})   click: here   Ctrl: no snapping   Esc / right click: cancel", 'ccw' if self.dir > 0 else 'cw')
         context.area.header_text_set(txt)
 
     def _end(self, context):
@@ -508,6 +509,8 @@ class AC9_OT_SimPieceLabel(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     piece: bpy.props.StringProperty(options={'HIDDEN'})
+    owner_scene: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    owner_text: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     label: bpy.props.StringProperty(name="Name", description="Empty: show the piece's id")
 
     @classmethod
@@ -531,12 +534,33 @@ class AC9_OT_SimPieceLabel(bpy.types.Operator):
             self.report({'WARNING'}, "Point at a piece (or select one)")
             return {'CANCELLED'}
         self.piece = name
+        self.owner_scene = str(context.scene.session_uid)
+        self.owner_text = str(store.text(context).session_uid)
+        self._label_owner = store.edit_owner(context)
         self.label = S.piece_index(spec)[name].get('label', '')
         return context.window_manager.invoke_props_dialog(self, title=tx("Name piece {0}", name))
 
     def execute(self, context):
+        current = store.text(context)
+        if current is None:
+            return {'CANCELLED'}
+        if getattr(self, 'owner_text', ''):
+            if (self.owner_scene != str(context.scene.session_uid)
+                    or self.owner_text != str(current.session_uid)):
+                self.report({'WARNING'}, rpt("The pattern changed during this edit; start the edit again"))
+                return {'CANCELLED'}
+        else:
+            # Direct EXEC binds once too; redo retains the hidden owner IDs.
+            self.owner_scene = str(context.scene.session_uid)
+            self.owner_text = str(current.session_uid)
+        owner = getattr(self, '_label_owner', None)
+        if owner is not None and not owner.matches(context, content=True):
+            self.report({'WARNING'}, rpt("The pattern changed during this edit; start the edit again"))
+            return {'CANCELLED'}
         spec, _ = store.get(context)
-        return {'FINISHED'} if set_label(context, spec, self.piece, self.label) else {'CANCELLED'}
+        changed = set_label(context, spec, self.piece, self.label)
+        self._label_owner = None
+        return {'FINISHED'} if changed else {'CANCELLED'}
 
 
 def set_label(context, spec, piece, label):

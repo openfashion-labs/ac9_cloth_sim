@@ -8,6 +8,7 @@ is written to a PC2 point cache and played by a Mesh Cache modifier on the timel
 
 Job folder: <blend folder>/AC9_ClothSim_jobs/<time>/ (or the system temp folder for an unsaved file).
 """
+import copy
 import hashlib
 import json
 import os
@@ -17,6 +18,8 @@ import sys
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
+from contextlib import contextmanager
 from .i18n import CTX, rpt, tx, wrap
 
 import bpy
@@ -32,6 +35,7 @@ from . import pattern_view as PV
 from . import placement as PL
 from . import placed_view as PLV
 from . import store
+from . import prepare_build as PB
 from .core import attach as AT
 from .core import body_axes as BA
 from .core import buttons as BT
@@ -41,6 +45,8 @@ from .core import fabric as FA
 from .core import pattern_build
 from .core import phase_from as PHF
 from .core import presets
+from .core import prepare_plan as PP
+from .core import shape_source as SH
 from .core import recipe
 from .core import roles
 from .core import seam_path as SPATH
@@ -49,6 +55,9 @@ from .core import spec as S
 from .solver import arm_mask
 from .solver.lifecycle_trace import mark as _trace, directory as _trace_dir
 from .solver import preload_status as _preload_status
+from .solver import preload_config as _preload_config
+from .core import prepared_candidate as _prepared_candidate
+from .core import live_session as _live_session
 from .solver.stop_control import STAGE_START_S, STUCK_MIN_S, PendingStop, retire, retired_running, reap_retired, process_running
 from . import selection as SEL
 
@@ -83,33 +92,71 @@ def job_alive(d):
     run before the .blend was saved) is emptied by Windows' cleanup (Storage Sense) but left, with the drape.pc2 the
     file kept open: it is lost as a folder that is gone is, and the garment goes on from its own shape
     (job_or_from_mesh). It crashed Live with job.json not found (user 2026-11-01)."""
-    return (os.path.isfile(os.path.join(d, 'job.json'))
-            and os.path.isfile(os.path.join(d, 'scene.idx.npz')))
+    from . import result_reference as RR
+    return RR.inspect(d).has_reference_files
 
 
 def job_of(g):
-    """The job folder of a garment's result: its 'ac9_job', or -- when that is gone while the result is still on the
-    object (an undo can take the property back but leave the shape and its drape cache) -- the folder of the
-    drape.pc2 its Mesh Cache modifier plays, which is then written back. None when there is no result. A Live after a
-    finished Dress was refused "Nothing to continue" (user 2026-10-13, cause not reproduced)."""
-    if g is None:
-        return None
-    j = g.get('ac9_job')
-    if j and job_alive(str(j)):
-        return str(j)
-    for m in g.modifiers:
-        if m.type == 'MESH_CACHE' and m.filepath:
-            d = os.path.dirname(bpy.path.abspath(m.filepath))
-            if os.path.exists(os.path.join(d, 'scene.idx.npz')):
-                g['ac9_job'] = d
-                return d
-    return None
+    """Read the stored/cache-derived result folder without repairing saved properties.
+
+    A legacy index-only cache remains readable; job_alive describes the stricter two-file capability.
+    Operations that need to persist a recovered reference call repair_job_reference explicitly.
+    """
+    from . import result_reference as RR
+    ref = RR.resolve(g)
+    return ref.path if ref is not None else None
+
+
+def repair_job_reference(g):
+    from . import result_reference as RR
+    return RR.repair(g)
 
 
 def collider_objects(context, exclude=None):
     # the other garments with a result are obstacles on their own (other_garments): not twice
     return [ob for ob in context.scene.objects if ob.type == 'MESH' and ob.get(COLLIDER_PROP) and ob != exclude
             and not ob.name.startswith(GARMENT_PREFIX)]
+
+
+FLOOR_HALF_MM = 5000.0       # the floor box's half size in x and y (mm): wider than any garment or bag
+FLOOR_DEPTH_MM = 20.0        # its depth under Z = 0 (mm): a 20 mm box let no cloth through where a plane could
+
+
+def floor_arrays():
+    """The floor (scene.ac9_cloth_sim.floor) as an obstacle: a box from Z = -FLOOR_DEPTH_MM to 0, its faces facing
+    out, (vertices mm, triangles). Added to the obstacles as a Collision object is (collider arrays)."""
+    a, d = FLOOR_HALF_MM, FLOOR_DEPTH_MM
+    co = np.array([[x, y, z] for z in (-d, 0.0) for y in (-a, a) for x in (-a, a)], np.float64)
+    # 0..3 the bottom (z -d), 4..7 the top (z 0); in each: (-a,-a) (a,-a) (-a,a) (a,a)
+    tri = np.array([[4, 5, 7], [4, 7, 6],          # top, up
+                    [0, 3, 1], [0, 2, 3],          # bottom, down
+                    [0, 1, 5], [0, 5, 4],          # y = -a
+                    [2, 6, 7], [2, 7, 3],          # y = +a
+                    [0, 4, 6], [0, 6, 2],          # x = -a
+                    [1, 3, 7], [1, 7, 5]], np.int64)   # x = +a
+    return co, tri
+
+
+NO_SUPPORT = ("  No body, Collision object or floor: sewn without gravity and stopped there "
+              "(turn on Floor (Z = 0) or add a Collision object to drape)")
+
+
+def _no_support_stages(stg):
+    """The stages run with nothing to land on: those without gravity; with none, the last one without it."""
+    kept = [s_ for s_ in stg if float(s_[1].get('gravity_z', -9.81)) == 0.0]
+    if not kept:
+        kept = [stg[-1]]
+        kept[0][1]['gravity_z'] = 0.0
+    return kept
+
+
+def collider_arrays(context, exclude=None):
+    """(the Collision objects, [(vertices mm, triangles)] of them and of the floor when it is on)."""
+    cols = collider_objects(context, exclude=exclude)
+    arr = [PL.body_arrays(context, ob) for ob in cols]
+    if context.scene.ac9_cloth_sim.floor:
+        arr.append(floor_arrays())
+    return cols, arr
 
 
 def job_last_frame(job):
@@ -228,6 +275,8 @@ def garment_specs():
         else:
             try:
                 sp = S.loads(s)
+                from . import look_reference as LR
+                LR.bind_owner(t, sp, reader='garment_specs')
             except Exception:
                 sp = None
             _SPECS_CACHE[t.name] = (k, sp)
@@ -250,7 +299,41 @@ def _frames_of(g, job):
 
 # files of other garments' frames dropped as a run started (other_garments): deleted once the run wrote a frame.
 # A run that wrote none is undone (Ctrl+Z state), and the garments must find their frames again (2026-11-01)
+@dataclass(frozen=True)
+class PendingCacheDelete:
+    path: str
+    job: str
+    owner_uid: int
+
+
 _DROP_LATER = []
+
+
+def _canonical_path(path, library=None):
+    return os.path.normcase(os.path.realpath(bpy.path.abspath(str(path), library=library)))
+
+
+def _job_readers(job, exclude_uid=None, include_owner_cache=False):
+    """Loaded result owners, including objects in other scenes and cache-only legacy readers."""
+    target = _canonical_path(job)
+    readers = []
+    for ob in bpy.data.objects:
+        if ob.type != 'MESH':
+            continue
+        excluded = ob.session_uid == exclude_uid
+        stored = ob.get('ac9_job')
+        direct = not excluded and bool(stored) and _canonical_path(stored, ob.library) == target
+        cached = (not excluded or include_owner_cache) and any(
+            m.type == 'MESH_CACHE' and m.filepath
+            and _canonical_path(os.path.dirname(bpy.path.abspath(m.filepath, library=ob.library))) == target
+            for m in ob.modifiers)
+        if direct or cached:
+            readers.append(ob)
+    return readers
+
+
+def _queued_cache(path):
+    return any(item.path == path for item in _DROP_LATER)
 
 
 def drop_later_done(keep):
@@ -258,27 +341,53 @@ def drop_later_done(keep):
     files, _DROP_LATER[:] = list(_DROP_LATER), []
     if keep:
         return
-    for f in files:
+    for item in files:
+        # A copy can acquire the result after deletion was queued.
+        if _job_readers(item.job, exclude_uid=item.owner_uid, include_owner_cache=True):
+            continue
         try:
-            os.remove(f)
+            os.remove(item.path)
         except OSError:
             pass
 
 
-def drop_frames(context, g, later=False):
-    """Another garment is simulated: this one keeps its last shape only (user 2026-10-13; DECISIONS
-    cloth-sim-other-garment-drops-frames-2026-10-13). The shape on screen at its end -- the last frame, or the hand
-    edit after Fix by Hand -- goes into the mesh and into the job's final.npy (with final.json: which stage it came
-    from); then the stages' frames.npy / live.npy and drape.pc2 are deleted and the Mesh Cache removed. The job's
-    pattern, mesh and settings stay, so the garment can go on later (Simulate from final.npy). Returns the number of
-    files deleted (0: nothing to drop)."""
+@dataclass(frozen=True)
+class FrameDropPlan:
+    object: object
+    object_uid: int
+    mesh_uid: int
+    job: str
+    caches: tuple
+    files: tuple
+    shared: bool
+    positions: np.ndarray
+    original: np.ndarray
+    scene: object
+    world_matrix: np.ndarray
+
+    def require_current(self):
+        g = self.object
+        current = tuple(PB.modifier_values(m) for m in g.modifiers if m.type == 'MESH_CACHE')
+        raw = np.empty(len(g.data.vertices) * 3, np.float32)
+        g.data.vertices.foreach_get('co', raw)
+        if (g.session_uid != self.object_uid or g.data.session_uid != self.mesh_uid or job_of(g) != self.job
+                or self.scene.objects.get(g.name) != g or current != self.caches
+                or bool(_job_readers(self.job, exclude_uid=g.session_uid)) != self.shared
+                or not np.array_equal(np.array(g.matrix_world), self.world_matrix)
+                or not np.array_equal(raw.reshape(-1, 3), self.original)):
+            raise ValueError('An obstacle changed during preparation; its result was kept')
+
+
+def plan_frame_drop(context, g):
+    """Resolve the existing last-frame/hand-edit precedence without retiring any cache or writing a file."""
     job = job_of(g)
     if not job:
-        return 0
+        return None
     caches, files = _frames_of(g, job)
-    files = [f for f in files if f not in _DROP_LATER]
+    shared = bool(_job_readers(job, exclude_uid=g.session_uid))
+    files = [] if shared else [f for f in files if not _queued_cache(f)]
     if not caches and not files:
-        return 0
+        return None
     playing = any(m.show_viewport for m in caches)
     X = job_last_frame(job) if playing else None
     if X is not None and len(X) != len(g.data.vertices):
@@ -286,10 +395,23 @@ def drop_frames(context, g, later=False):
     if X is None:
         X = shown_shape(context, g) * 0.001 if not playing else None
     if X is None:
-        return 0
+        return None
     if g.mode == 'EDIT':
         g.update_from_editmode()
-    for m in caches:
+    X = _valid_positions(X, len(g.data.vertices))
+    raw = np.empty(len(g.data.vertices) * 3, np.float32)
+    g.data.vertices.foreach_get('co', raw)
+    return FrameDropPlan(g, int(g.session_uid), int(g.data.session_uid), job,
+                         tuple(PB.modifier_values(m) for m in caches), tuple(files), shared,
+                         X.copy(), raw.reshape(-1, 3), context.scene, np.array(g.matrix_world))
+
+
+def apply_frame_drop(plan, later=False):
+    """Commit a preflighted retirement; the prepare boundary owns rollback when committing several owners."""
+    g, job, files, shared, X = plan.object, plan.job, plan.files, plan.shared, plan.positions
+    if g.data.users > 1:
+        g.data = g.data.copy()
+    for m in [m for m in g.modifiers if m.type == 'MESH_CACHE']:
         g.modifiers.remove(m)
     g.data.vertices.foreach_set('co', np.asarray(X, np.float32).ravel())
     g.data.update()
@@ -299,13 +421,14 @@ def drop_frames(context, g, later=False):
         b = os.path.basename(os.path.dirname(f))
         if os.path.basename(f) == 'frames.npy' and b[1:].isdigit():
             stage = max(stage, int(b[1:]))
-    np.save(os.path.join(job, 'final.npy'), np.asarray(X, np.float32))
-    json.dump({'stage': stage, 'dropped': time.strftime('%Y-%m-%d %H:%M:%S')},
-              open(os.path.join(job, 'final.json'), 'w', encoding='utf-8'))
+    if not shared:
+        np.save(os.path.join(job, 'final.npy'), np.asarray(X, np.float32))
+        json.dump({'stage': stage, 'dropped': time.strftime('%Y-%m-%d %H:%M:%S')},
+                  open(os.path.join(job, 'final.json'), 'w', encoding='utf-8'))
     n = 0
     for f in files:
         if later:
-            _DROP_LATER.append(f)
+            _DROP_LATER.append(PendingCacheDelete(f, job, g.session_uid))
             n += 1
             continue
         try:
@@ -317,7 +440,13 @@ def drop_frames(context, g, later=False):
     return n
 
 
-def other_garments(context, spec):
+def drop_frames(context, g, later=False):
+    """Keep the existing last shape and retire its frames at an explicit operation boundary."""
+    plan = plan_frame_drop(context, g)
+    return apply_frame_drop(plan, later=later) if plan is not None else 0
+
+
+def other_garments(context, spec, *, _build=None):
     """The other garments with a result, as obstacles (P1 #9 step A, user 2026-10-13: automatic): the
     shape each shows (its frames dropped first, drop_frames), without the triangles of its pieces that are Off
     (Pattern / All). Returns ([(name, co mm, tri)], report lines)."""
@@ -333,10 +462,36 @@ def other_garments(context, spec):
         if names and off >= set(names):
             rep.append(f"  {ob.name[len(GARMENT_PREFIX):]}: all its pieces are off, not an obstacle")
             continue
-        nd = drop_frames(context, ob, later=True)
+        planned = plan_frame_drop(context, ob) if _build is not None else None
+        if planned is not None:
+            _build.stage_obstacle(planned)
+        nd = len(planned.files) if planned is not None else (drop_frames(context, ob, later=True) if _build is None else 0)
         if nd:
             rep.append(f"  {ob.name[len(GARMENT_PREFIX):]}: its frames dropped, the last shape kept ({nd} files)")
-        me = ob.data
+        co, tri = _obstacle_arrays(ob, names, off, planned.positions if planned is not None else None)
+        # its pattern changed after its result: it is still an obstacle in the old shape (not stopped, said)
+        stale = False
+        try:
+            js = json.load(open(os.path.join(job_of(ob), 'ac9_spec.json'), encoding='utf-8'))
+            edges = lambda s_: {p['name']: [e['pts'] for e in p['edges']] for p in s_['pieces']
+                                if p.get('enabled', True)}
+            stale = sp is not None and edges(js) != edges(sp)
+        except (OSError, ValueError, KeyError):
+            pass
+        rep.append(f"  obstacle {ob.name[len(GARMENT_PREFIX):]}: {len(tri)} triangles"
+                   + (f" ({len(off & set(names))} piece(s) off left out)" if off & set(names) else "")
+                   + (" -- its pattern changed after its result (old shape)" if stale else ""))
+        out.append((ob.name, co, tri))
+    return out, rep
+
+
+def _obstacle_arrays(ob, names, off, positions=None):
+    """Read the planned frozen shape, including its own n-gon triangulation, without changing the original mesh."""
+    me = ob.data.copy() if positions is not None else ob.data
+    try:
+        if positions is not None:
+            me.vertices.foreach_set('co', np.asarray(positions, np.float32).ravel())
+            me.update()
         me.calc_loop_triangles()
         nv = len(me.vertices)
         co = np.empty(nv * 3, np.float64)
@@ -354,20 +509,10 @@ def other_garments(context, spec):
             me.loop_triangles.foreach_get('polygon_index', poly)
             offi = [i for i, n in enumerate(names) if n in off]
             tri = tri[~np.isin(fpc[poly], offi)]
-        # its pattern changed after its result: it is still an obstacle in the old shape (not stopped, said)
-        stale = False
-        try:
-            js = json.load(open(os.path.join(job_of(ob), 'ac9_spec.json'), encoding='utf-8'))
-            edges = lambda s_: {p['name']: [e['pts'] for e in p['edges']] for p in s_['pieces']
-                                if p.get('enabled', True)}
-            stale = sp is not None and edges(js) != edges(sp)
-        except (OSError, ValueError, KeyError):
-            pass
-        rep.append(f"  obstacle {ob.name[len(GARMENT_PREFIX):]}: {len(tri)} triangles"
-                   + (f" ({len(off & set(names))} piece(s) off left out)" if off & set(names) else "")
-                   + (" -- its pattern changed after its result (old shape)" if stale else ""))
-        out.append((ob.name, co, tri))
-    return out, rep
+        return co, tri
+    finally:
+        if positions is not None:
+            bpy.data.meshes.remove(me)
 MARGIN = 8.0          # mm: every vertex starts at least this far outside the body
 RING_FRACTION = 0.9   # a piece that goes this far round its guide is a closed band
 RING_GAP = 6.0        # mm left open where a band's ends meet (the seam closes it)
@@ -381,13 +526,13 @@ def addon_prefs(context):
     return a.preferences if a else None
 
 
-SOLVER_MODULES = ('warp', 'newton', 'scipy')
+SOLVER_MODULES = ('warp', 'newton')
 
 
 def newton_python(context):
     """The Python that runs the solver: the preference, else AC9_CLOTH_SIM_PYTHON, else the development
     checkout's environment next to the add-on folder, else Blender's own Python when the release's bundled wheels
-    are installed (the release ZIP: warp, newton and scipy in the extensions' site-packages)."""
+    are installed (the release ZIP: warp and newton in the extensions' site-packages)."""
     prefs = addon_prefs(context)
     for p in ((prefs.newton_python if prefs else ''), os.environ.get('AC9_CLOTH_SIM_PYTHON', ''),
               os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'sim_spike', 'newton_env', 'Scripts',
@@ -521,7 +666,10 @@ def _clearance(bvh, X_mm, skip=None):
     """Signed distance (mm) of each point to the body: < 0 inside (by the nearest face's normal). skip: faces
     (bool per BVH face) that do not count -- a point whose nearest face is one of them is clear. With the BVH kept
     (_body_kept) the same points are answered from memory: every press of a placed-shape tool makes the start shapes
-    again, the pieces it did not move searching the same radii (310 of 670 ms on the pants, prepare_cache t4)."""
+    again, the pieces it did not move searching the same radii (310 of 670 ms on the pants, prepare_cache t4).
+    No BVH (no body, Collision object or floor): every point clear."""
+    if bvh is None:
+        return np.full(len(X_mm), 1e9)
     memo = _BODY_KEEP['clear'] if bvh is _BODY_KEEP['bvh'] else None
     if memo is not None:
         X_mm = np.ascontiguousarray(X_mm, float)
@@ -553,8 +701,10 @@ LAYER = 8.0           # mm between pieces that lie on top of each other round on
 
 
 def _girth(body, guide_name, z):
-    """Convex (tape-measure) girth of the body section the guide wraps, at height z (mm); None if none."""
+    """Convex (tape-measure) girth of the body section the guide wraps, at height z (mm); None if none (or no body)."""
     from mathutils.geometry import convex_hull_2d
+    if body is None:
+        return None
     if guide_name in ('torso', 'neck'):
         P = body.torso(z)
     else:
@@ -682,8 +832,10 @@ def _auto_ring(names, pl, pat, body, guide='torso', closures=()):
     shut_any = set().union(*shut) if shut else set()
     cand = [i for i, n in enumerate(names) if pl[n]['guide'] == guide and n not in shut_any]
     side = {i: {} for i in cand}                 # piece -> {'L' / 'R': partner}
+    # the layout points as placed: a turn on the pattern after placing does not change which side is which
+    Vs = {i: S.spun(pl[names[i]], pat[f"V{i}"]) for i in cand}
     for i in cand:
-        V = pat[f"V{i}"]
+        V = Vs[i]
         Vb = V[:int(pat['nb'][i])]
         h_ = float(np.ptp(Vb[:, 1]))
         xm = 0.5 * (Vb[:, 0].min() + Vb[:, 0].max())
@@ -710,13 +862,13 @@ def _auto_ring(names, pl, pat, body, guide='torso', closures=()):
                 return seq, False
             seq.append(nxt)
             out, cur = ('R' if came == 'L' else 'L'), nxt
-    for start in sorted((i for i in cand if side[i]), key=lambda i: -float(np.ptp(pat[f"V{i}"][:int(pat['nb'][i]), 0]))):
+    for start in sorted((i for i in cand if side[i]), key=lambda i: -float(np.ptp(Vs[i][:int(pat['nb'][i]), 0]))):
         right, closed = walk(start, 'R')
         left = [] if closed else walk(start, 'L')[0]
         ring = left[::-1] + [start] + right
         if len(ring) < 2:
             continue
-        wid = sum(float(np.ptp(pat[f"V{i}"][:int(pat['nb'][i]), 0])) for i in ring)
+        wid = sum(float(np.ptp(Vs[i][:int(pat['nb'][i]), 0])) for i in ring)
         z = float(np.mean([pl[names[i]]['h'] for i in ring]))
         return [names[i] for i in ring], wid, z
     return [], 0.0, 0.0
@@ -786,9 +938,14 @@ def initial_shape(spec, pat, body_bvh, body, arm_faces=None, cs=None):
     sleeved = arm_faces is not None and (any(pl[n]['guide'].startswith('arm') for n in names)
                                          or spec.get('recipe') == 'sleeved')
 
+    spun_V = {}
+
     def laid(i):
-        """Piece i's layout points (its Tilt is laid by _wrap / _ring_wrap: it bends the piece out of the cylinder)."""
-        return pat[f"V{i}"]
+        """Piece i's layout points as placed (its Tilt is laid by _wrap / _ring_wrap: it bends the piece out of the
+        cylinder; a turn given on the pattern after placing is turned back, core/spec.spun)."""
+        if i not in spun_V:
+            spun_V[i] = S.spun(pl[names[i]], pat[f"V{i}"])
+        return spun_V[i]
 
     def order(i):
         n = names[i]
@@ -804,7 +961,7 @@ def initial_shape(spec, pat, body_bvh, body, arm_faces=None, cs=None):
     # foundation_2026-09-30/RESULT_G3 note 14). Only when named: found automatically (_auto_ring) it moved the pieces
     # away from where Place left them -- a pair of trouser fronts placed before their backs went to the sides whatever
     # angle they were released at (user 2026-10-25, DECISIONS cloth-sim-no-auto-placement-2026-10-25)
-    ring = [n for n in (spec.get('ring_pieces') or cs['ring_pieces']) if n in pl]
+    ring = [n for n in (spec.get('ring_pieces') or cs['ring_pieces']) if n in pl and not S.is_flat(pl[n])]
     ring_r = None
     if ring:
         gname = pl[ring[0]]['guide']
@@ -832,6 +989,14 @@ def initial_shape(spec, pat, body_bvh, body, arm_faces=None, cs=None):
     for i in sorted(range(len(names)), key=order):
         name = names[i]
         p = pl[name]
+        if S.is_flat(p):
+            # laid flat (user 2026-11-10): where it was put, rigid, never pushed out (what is in the body or an
+            # obstacle is said, a person moves it); no band, ring or layer
+            X[i] = BA.lay_flat(p['flat'], laid(i), p['anchor'])
+            k_in = int((_clearance(body_bvh, X[i]) < 0).sum())
+            rep.append(f"  {name:<18} flat   laid flat" + (f", WARNING {k_in} vertices inside the body or an obstacle"
+                                                            if k_in else ""))
+            continue
         g = guides[p['guide']]
         V = laid(i)
         Vb = V[:int(pat['nb'][i])]
@@ -1495,7 +1660,7 @@ def _from_last_result(job, pat, X, shown=None, redo=(), redo_shown=False):
         Xr = last[offs[j]:offs[j + 1]]
         T = F[fp == j] - offs[j]
         V = pat[f"V{i}"]
-        if len(V) == len(Vr) and np.allclose(V, Vr, atol=1e-6):
+        if len(V) == len(Vr) and SH.same_layout(V, Vr):
             out[i] = Xr.copy()
         else:
             out[i] = _bary_map(V, Vr, T, Xr)
@@ -1504,11 +1669,14 @@ def _from_last_result(job, pat, X, shown=None, redo=(), redo_shown=False):
     return out, carried
 
 
-def job_dir(context):
+def job_dir(context, *, owned=False):
     base = os.path.dirname(bpy.data.filepath) if bpy.data.filepath else tempfile.gettempdir()
-    d = os.path.join(base, "AC9_ClothSim_jobs", time.strftime("%Y%m%d_%H%M%S"))
-    os.makedirs(d, exist_ok=True)
-    return d
+    label = time.strftime('%Y%m%d_%H%M%S') + '_' + str(time.time_ns())
+    directory = PB.OwnedJobDirectory.create(os.path.join(base, 'AC9_ClothSim_jobs'), label)
+    if owned:
+        return directory
+    directory.release()
+    return str(directory)
 
 
 def _laid(spec, piece):
@@ -1538,24 +1706,22 @@ def _hand_placed(spec, pat, X, bvh=None, tris=None, skip=None, only=None):
         if ob is None or ob.get(PLV.PROP) != n:
             continue                      # no object, or the mirrored half of a pair's object (follows its source)
         if ob.name not in done:
-            done[ob.name] = PLV.is_moved(ob)
-        if not done[ob.name]:
+            done[ob.name] = PLV.shape_snapshot(ob, only_moved=True)
+        source = done[ob.name]
+        if source is None:
             continue
-        hs = PLV.hand_shape(ob)
-        if hs is None:
-            continue
-        Vp, Tp, Wp = hs
+        Vp, Tp, Wp = source.flat, source.triangles, source.world_mm
         V = np.asarray(pat[f"V{i}"], float)
-        if ob.get(PLV.NV_PROP) is not None and len(Vp) != int(ob[PLV.NV_PROP]):
+        if source.made_vertex_count is not None and len(Vp) != int(source.made_vertex_count):
             # vertices added or deleted in Edit Mode have no layout point: the piece is placed from its numbers
-            rep.append(f"  {n}: WARNING its placed object has {len(Vp)} vertices, made with {int(ob[PLV.NV_PROP])} "
+            rep.append(f"  {n}: WARNING its placed object has {len(Vp)} vertices, made with {int(source.made_vertex_count)} "
                        f"(added or deleted by hand): placed from the guide instead -- Back to Guide, then move it")
             DG.mark(ob, 'hand', None, "vertices added or deleted by hand")
             continue
-        stale = (len(V) != len(Vp)) if ob.get(PLV.KK_PROP) else (ob.get(PLV.KEY_PROP) != PLV.layout_key(V))
+        stale = (len(V) != len(Vp)) if source.vertex_identity else (source.layout_key != PLV.layout_key(V))
         if stale:
             rep.append(f"  {n}: the pattern changed since Move by Hand -- its placed object is mapped through the layout")
-        same = len(V) == len(Vp) and (ob.get(PLV.KK_PROP) or np.allclose(V, Vp, atol=1e-3))
+        same = len(V) == len(Vp) and (source.vertex_identity or SH.same_layout(V, Vp, atol=1e-3))
         X[i] = Wp.copy() if same else _bary_map(V, Vp, Tp, Wp)
         took.add(i)
         warn = []
@@ -1578,19 +1744,22 @@ def _hand_placed(spec, pat, X, bvh=None, tris=None, skip=None, only=None):
     return X, took, rep
 
 
-def _mirror_hand(X, took, pairs, cx):
-    """A linked pair (pairs = [(src, tgt)] piece indices) with one side taken from its placed object (moved by hand,
-    took): the other side made its mirror image about x = cx, as a Dress from the start does. A Reset of a pair put
-    the side its object's Mirror modifier shows back to the guide's place: the two sleeves at different heights
-    (user 2026-10-14)."""
+def _mirror_hand(X, took, pairs, spec, names):
+    """A linked pair (pairs = [(src, tgt)] piece indices, names: the pieces' names by index) with one side taken from
+    its placed object (moved by hand, took): the other side made its mirror image in the pair's plane (S.pair_plane:
+    about x = the center, front / back about y), as a Dress from the start does. A Reset of a pair put the side its
+    object's Mirror modifier shows back to the guide's place: the two sleeves at different heights (user
+    2026-10-14)."""
     for s_, t_ in pairs:
         if (s_ in took) != (t_ in took):
             a, b = (s_, t_) if s_ in took else (t_, s_)
-            X[b] = np.asarray(X[a], float) * np.array([-1.0, 1.0, 1.0]) + np.array([2.0 * cx, 0.0, 0.0])
+            pl_ = S.pair_plane(spec, str(names[a]))
+            X[b] = S.mirror_points(X[a], pl_, S.mirror_center(spec, pl_, str(names[a])))
     return X
 
 
-def sync_placed(context, h):
+@PB.prepared_consumer
+def sync_placed(context, h, *, preparation=None):
     """Before a Dress from the start: the placed objects' moves written to the spec (placed_view.sync_pose), and a
     piece moved by hand (a pose in the spec) whose placed object is gone made again with it, so Dress starts from
     the same shape either way. Report lines."""
@@ -1598,6 +1767,7 @@ def sync_placed(context, h):
     sp = PLV.sync_pose(context, spec)
     if sp is not None:
         store.put(context, sp)
+        PB.replan_source(preparation)
         spec = sp
     pl = spec.get('placement', {})
     obs = PLV.objects(spec)
@@ -1605,7 +1775,7 @@ def sync_placed(context, h):
             and pc['name'] not in obs]
     if not miss:
         return []
-    res = prepare(context, h, shapes_only=True)
+    res = prepare(context, h, shapes_only=True, preparation=preparation)
     PLV.build(context, spec, res['pat'], res['tris'], res['X'], res['pairs'])
     return [f"  placed objects made again with their hand moves (pose): {', '.join(miss)}"]
 
@@ -1700,13 +1870,190 @@ def _others_have_frames(context, spec):
             job = job_of(ob)
             if job:
                 caches, files = _frames_of(ob, job)
-                if caches or any(f not in _DROP_LATER for f in files):
+                if caches or (not _job_readers(job, exclude_uid=ob.session_uid)
+                              and any(not _queued_cache(f) for f in files)):
                     return True
     return False
 
 
+class Preparation:
+    """One explicit owner for a user operation, including every child shape plan and its final consumer."""
+    def __init__(self, context):
+        self.context = context
+        self.build = PB.PreparationBuild(context, lambda ctx: job_dir(ctx, owned=True))
+        self.result = self.failure = None
+        self.canceled = False
+        self.retire_objects = {}
+        self.attempts = []
+        self.initial_owner = store.edit_owner(context)
+        self.owned_bodies = {self.initial_owner.body}
+
+    def prepare(self, h=6.0, **options):
+        if self.failure is not None or self.canceled:
+            raise ValueError('This preparation failed; start the operation again') from self.failure
+        try:
+            result = _prepare(self.context, h, _build=self.build, _owner=self, **options)
+            self.result = result
+            return result
+        except Exception as exc:
+            self.failure = exc
+            raise
+
+    def cancel(self):
+        """A handled child refusal still prevents the operation from committing its pending preparation."""
+        self.canceled = True
+
+    def refuse(self, reason):
+        """A batch may restore one expected refusal; an unscoped refusal cancels the standalone operation."""
+        if self.attempts:
+            self.attempts[-1].refused = True
+        else:
+            self.cancel()
+        return False, reason
+
+    @contextmanager
+    def attempt(self):
+        """An explicit piece/fold savepoint. Only an accepted child contributes its shapes and pending plans."""
+        backup = PLV.PreparedResetBackup(self.context, store.get(self.context)[0])
+        backup.preparation_owner = self
+        build = self.build
+        state = (copy.deepcopy(build.source), build.owner, copy.deepcopy(build.migration), dict(build.obstacles), list(build.directories),
+                 self.result, dict(self.retire_objects), set(self.owned_bodies))
+        class Attempt:
+            accepted = refused = False
+            def accept(child):
+                if child.refused:
+                    raise ValueError('A refused child needs recovery before it can be accepted')
+                child.accepted = True
+        child = Attempt()
+        self.attempts.append(child)
+        try:
+            yield child
+            if child.refused or not child.accepted:
+                if not backup.can_restore():
+                    raise store.EditChanged('The source changed during a refused child operation')
+                backup.rollback()
+                previous_dirs = state[4]
+                for directory in build.directories:
+                    if directory not in previous_dirs:build._remove(directory)
+                (build.source, build.owner, build.migration, build.obstacles, build.directories,
+                 self.result, self.retire_objects, self.owned_bodies) = state
+                # Fatal prepare exceptions/cancel are intentionally not cleared by a piece savepoint.
+        finally:
+            self.attempts.pop()
+            backup.close()
+
+    def replan_source(self):
+        """An intentional source write discards the old compatibility view; it never merely changes its owner."""
+        self.initial_owner.require(self.context, content=False)
+        self.owned_bodies.add(store.text(self.context).as_string())
+        if self.failure is not None or self.canceled or self.build.source is None:
+            return
+        if self.build.directories:
+            raise ValueError('A failed or built job cannot be rebound; start a new preparation')
+        if self.build.owner is not None:
+            self.build.owner.require(self.context, content=False)
+            for plan in self.build.obstacles.values():plan.require_current()
+        spec = store.get(self.context)[0]
+        if self.build.source is not None and spec.get('name') != self.build.source.get('name'):
+            raise ValueError('A different garment needs a new preparation')
+        inputs = PP.resolve(spec, self.context.scene.ac9_cloth_sim,
+                            environ=None if bpy.app.background else {})
+        self.build.source, self.build.owner = spec, store.edit_owner(self.context)
+        self.build.migration = inputs.migrated
+
+    def can_restore(self, backup):
+        if not self.initial_owner.matches(self.context, content=False):return False
+        bodies = self.owned_bodies | {backup.text_value}
+        if self.build.committed_owner is not None:bodies.add(self.build.committed_owner.body)
+        return backup.text.as_string() in bodies
+
+    def retire_after_commit(self, ob):
+        """A transient Local Sim result remains restorable until every placed-shape consumer has succeeded."""
+        self.retire_objects[int(ob.session_uid)] = (ob, ob.data)
+
+    def finish(self):
+        if self.failure is not None:
+            raise self.failure
+        for uid, (ob, mesh) in self.retire_objects.items():
+            if ob.session_uid != uid or ob.data != mesh or self.context.scene.objects.get(ob.name) != ob:
+                raise ValueError('The result owner changed during preparation')
+        result = self.build.finish(self.result) if self.result is not None else None
+        for ob, mesh in self.retire_objects.values():
+            try:
+                bpy.data.objects.remove(ob, do_unlink=True)
+                if mesh.users == 0:bpy.data.meshes.remove(mesh)
+            except Exception as exc:
+                # Persistence already succeeded; report cleanup separately from the operation's saved result.
+                self.context.scene.ac9_cloth_sim.dress_status = tx('Prepared; result cleanup failed: {0}', exc)
+        if self.retire_objects:
+            try:
+                from . import display_state
+                display_state.apply(self.context, store.get(self.context)[0])
+            except Exception as exc:
+                self.context.scene.ac9_cloth_sim.dress_status = tx('Prepared; display refresh failed: {0}', exc)
+        return result
+
+    def abort(self):
+        self.build.abort()
+
+
+@contextmanager
+def preparation(context, *, consumer_backup=None, owner=None):
+    """Keep the current garment backup alive through all consumers and the final other-garment/spec commit."""
+    if owner is not None:
+        yield owner
+        return
+    owner = Preparation(context)
+    backup = PLV.PreparedResetBackup(context, store.get(context)[0]) if consumer_backup is None else None
+    guarded_backup = backup if backup is not None else consumer_backup
+    if not callable(guarded_backup):guarded_backup.preparation_owner = owner
+    rollback = backup.rollback if backup is not None else (consumer_backup if callable(consumer_backup) else consumer_backup.rollback)
+    try:
+        yield owner
+        if owner.canceled:
+            owner.abort()
+            rollback()
+        else:
+            owner.finish()
+    except Exception as exc:
+        owner.abort()
+        if backup is not None:rollback()
+        if owner.build.cleanup_errors:
+            raise RuntimeError(str(exc) + '; temporary resource cleanup failed: ' + '; '.join(owner.build.cleanup_errors)) from exc
+        raise
+    finally:
+        if backup is not None:
+            try:backup.close()
+            except Exception as cleanup:
+                # Cleanup after a committed operation must not turn success into an apparent rollback.
+                note = 'Temporary backup cleanup failed: ' + str(cleanup)
+                try:context.scene.ac9_cloth_sim.dress_status = note
+                except Exception:pass
+
+
 def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=None, live=False, shapes_only=False,
-            redo=(), redo_shown=False, placed_only=False, local=None, new_placed=None, phase_at=None):
+            redo=(), redo_shown=False, placed_only=False, local=None, new_placed=None, phase_at=None, *, preparation=None):
+    """Compatibility immediate consumer, or one child plan of the explicit operation owner supplied by a caller."""
+    options = dict(xinit_from=xinit_from, continue_job=continue_job, continue_shown=continue_shown, live=live,
+                   shapes_only=shapes_only, redo=redo, redo_shown=redo_shown, placed_only=placed_only,
+                   local=local, new_placed=new_placed, phase_at=phase_at)
+    if preparation is not None:
+        return preparation.prepare(h, **options)
+    owner = Preparation(context)
+    try:
+        result = owner.prepare(h, **options)
+        owner.finish()
+        return result
+    except Exception as exc:
+        owner.abort()
+        if owner.build.cleanup_errors:
+            raise RuntimeError(str(exc) + '; temporary resource cleanup failed: ' + '; '.join(owner.build.cleanup_errors)) from exc
+        raise
+
+
+def _prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=None, live=False, shapes_only=False,
+             redo=(), redo_shown=False, placed_only=False, local=None, new_placed=None, phase_at=None, *, _build, _owner=None):
     """Everything up to the solver input. Returns a job dict (paths, stages) or raises ValueError.
     phase_at: with continue_job, a phase_point dict -- the Phase Sim's own stages from that stage and frame (the shape
     continue_shown, the frame's), not the Continue stages.
@@ -1720,54 +2067,26 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
     new_placed: with continue_job, what flush_placed(new_placed=...) filled -- pieces of redo the last result does
     not have, started from their moved placed shapes."""
     PLV.leave_edit(context)            # a placed object still in Edit Mode: its edits, and its layout points, readable
-    rep_pose = [] if shapes_only or continue_job else sync_placed(context, h)
+    rep_pose = [] if shapes_only or continue_job else sync_placed(context, h, preparation=_owner)
     spec, _ = store.get(context)
+    _build.bind_source(spec, store.edit_owner(context))
     props = context.scene.ac9_cloth_sim
-    # every piece has one fabric, the garment's default one of the list (core/fabric.py, user 2026-10-20): a garment
-    # saved before gets its default from the old Dress panel's Weight / Bending -- its solver input unchanged --
-    # written back to the scene's spec
-    fab_mig = []
-    if FA.needs_migrate(spec):                  # (the copy below cost 20 ms a call on a shirt when nothing changed)
-        sp_ = S.loads(S.dumps(spec))
-        if FA.migrate(sp_, props.fabric_weight, props.fabric_bending, fab_mig):
-            store.put(context, sp_)
-            spec = sp_
-    # the settings set (core/presets.py): the scene's preset (empty on the screen = 'default'); the old test
-    # environment variables are read by headless runs only
-    cs = presets.resolve(getattr(props, 'preset', ''), props, environ=None if bpy.app.background else {})
-    # the garment's cloth is its default fabric (a test set may fix the weight / bending)
-    dflt = FA.default_fabric(spec)
-    gv = FA.garment_values(dflt)
-    for k_ in ('weight_gsm', 'bending_uNm'):
-        if k_ not in cs['fixed_fabric']:
-            cs[k_] = gv[k_]
-    cs['membrane'], cs['kappa_y'], cs['default_fabric'] = list(gv['membrane']), gv['kappa_y'], dflt['name']
-    spec = presets.spec_for_job(spec, cs)
-    spec['placement'], rep_tw = S.mirror_twins(spec)
-    cx = PLV.center_x(spec)            # the plane a pair mirrors about: the body's center (was x = 0)
-    if props.body is None:
-        raise ValueError("Pick the body object (Placement panel)")
-    if not spec.get('guides'):
-        raise ValueError("Detect Guides first")
-    on = [p['name'] for p in spec['pieces'] if p.get('enabled', True)]
-    missing = [n for n in on if n not in spec.get('placement', {})]
-    if missing:
-        # Unplaced pieces are absent from 3D, so leave them out of every run, including nested preparation calls.
-        # spec_for_job is a shallow copy: copy the changed pieces to preserve the stored enabled states.
-        spec = dict(spec, pieces=[dict(pc, enabled=False) if pc['name'] in missing else pc for pc in spec['pieces']])
-    placed_on = {pc['name'] for pc in spec['pieces'] if pc.get('enabled', True)}
-    if not placed_on or (local is not None and not placed_on.intersection(local)):
-        raise ValueError(tx("No placed pieces to simulate"))
+    inputs = PP.resolve(spec, props, environ=None if bpy.app.background else {}, local=local)
+    spec, cs, fab_mig, rep_tw, cx = (inputs.spec, inputs.settings, inputs.fabric_notes,
+                                      inputs.twin_notes, inputs.center_x)
+    if inputs.migrated is not None:
+        _build.stage_migration(inputs.migrated, store.edit_owner(context))
     t0 = time.time()
     _resume_gate = _resume_note = None
     _fast_live = live and local is None and bool(cs.get('fast_live'))
+    _native_three = live and local is None and bool(cs.get('native_three'))
     if not shapes_only:
         from . import live_resume
-        _resume_gate = live_resume.capture(context, h)
-        if live and not _fast_live and continue_job and local is None and not (redo or new_placed or xinit_from):
-            _resume_dir = job_dir(context)
+        _resume_gate = live_resume.capture(context, h, spec=_build.source_spec())
+        if live and not (_fast_live or _native_three) and continue_job and local is None and not (redo or new_placed or xinit_from):
+            _resume_dir = _build.job_dir()
             if os.path.abspath(_resume_dir) == os.path.abspath(continue_job):
-                _resume_dir += '_resume_' + str(time.time_ns())
+                _resume_dir = _build.sibling(_resume_dir, 'resume')
             _resumed, _resume_note = live_resume.prepare(context, h, continue_job, continue_shown,
                                                        _resume_dir, _resume_gate, job_last_frame)
             if _resumed is not None:
@@ -1782,11 +2101,11 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
     if (shapes_only and not (redo or new_placed or continue_job or xinit_from)
             and not _others_have_frames(context, spec)):
         co, tri = PL.body_arrays(context, props.body)
-        cols = collider_objects(context, exclude=bpy.data.objects.get(garment_name(spec)))
-        col_arr = [PL.body_arrays(context, ob) for ob in cols]
-        obst_g, rep_o = other_garments(context, spec)
+        cols, col_arr = collider_arrays(context, exclude=bpy.data.objects.get(garment_name(spec)))
+        obst_g, rep_o = other_garments(context, spec, _build=_build)
         pkey = ((_shapes_spec_key(spec), float(h), bool(placed_only), None if local is None else tuple(sorted(local)),
-                 json.dumps(cs, sort_keys=True, default=str), props.body.name, tuple(ob.name for ob in cols),
+                 json.dumps(cs, sort_keys=True, default=str), props.body.name if props.body else '',
+                 tuple(ob.name for ob in cols) + (('(floor)',) if props.floor else ()),
                  tuple(n_ for n_, _c, _t in obst_g), tuple(rep_o)),
                 [co, tri] + [a_ for ct_ in col_arr for a_ in ct_] + [a_ for _n, c2, t2 in obst_g for a_ in (c2, t2)])
         hit = _shapes_get(pkey)
@@ -1800,23 +2119,23 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
         raise ValueError("Could not mesh: " + ", ".join(bad))
     if pre is None:
         co, tri = PL.body_arrays(context, props.body)
-        # obstacles (a garment already on): part of the solver's static body and of the start-clearance test
-        cols = collider_objects(context, exclude=bpy.data.objects.get(garment_name(spec)))
-        col_arr = [PL.body_arrays(context, ob) for ob in cols]
+        # obstacles (a garment already on, the floor): part of the solver's static body and of the start-clearance test
+        cols, col_arr = collider_arrays(context, exclude=bpy.data.objects.get(garment_name(spec)))
     else:
         co, tri, col_arr, obst_g, rep_o = pre
-    body_only = _body_kept(co, tri)                 # one Body while the body stays (its loops remembered)
+    # no body (pieces laid flat, user 2026-11-10): nothing measured on it, no arms to leave out
+    body_only = _body_kept(co, tri) if len(tri) else None   # one Body while the body stays (its loops remembered)
     co_body, tri_body = co, tri                     # the avatar alone (attach lifts its tapes off it)
     for c2, t2 in col_arr:
         tri = np.vstack([tri, t2 + len(co)])
         co = np.vstack([co, c2])
     if pre is None:
-        obst_g, rep_o = other_garments(context, spec)
+        obst_g, rep_o = other_garments(context, spec, _build=_build)
     for _n, c2, t2 in obst_g:
         tri = np.vstack([tri, t2 + len(co)])
         co = np.vstack([co, c2])
-    bvh = _bvh_kept(co, tri)                        # one BVH while the body and obstacles stay (clearances remembered)
-    if not cs['arm_legacy'] and spec.get('guides', {}).get('torso'):
+    bvh = _bvh_kept(co, tri) if len(tri) else None  # one BVH while the body and obstacles stay (clearances remembered)
+    if not cs['arm_legacy'] and spec.get('guides', {}).get('torso') and body_only is not None:
         # the arms (left out of the body while the torso is sewn, and not counted when the torso pieces are placed)
         # are the faces beyond the torso's half width along x at their height (arm_mask.arm_tris), for the placement
         # and the solver's stage-1 body alike. Before (settings arm_legacy, was env AC9_SIM_ARM_LEGACY=1): |x| > 1.4 x the half width at the
@@ -1840,7 +2159,8 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
             'o': [float(gt['o'][0]), float(gt['o'][1])], 'zs': [float(z) for z in zs_], 'rs': [float(r) for r in hw_],
             'pad': float(cs['arm_profile_pad_mm'])})
     arm_faces = np.zeros(len(tri), bool)
-    arm_faces[:len(body_only.T)] = arm_mask.arm_tris(co[body_only.T].mean(1), recipe.drop_arms(spec))
+    if body_only is not None:
+        arm_faces[:len(body_only.T)] = arm_mask.arm_tris(co[body_only.T].mean(1), recipe.drop_arms(spec))
     X, rings, rep2, short_bands, overlaps = initial_shape(spec, pat, bvh, body_only, arm_faces=arm_faces, cs=cs)
     rep2 = rep_pose + rep_tw + rep_o + rep2
     # pieces whose placed object the user moved start from it (placed_view): before the folds and the small parts
@@ -2067,11 +2387,15 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
             j = int(j)
             if frozenset((nm_[i], nm_[j])) not in linked:
                 continue
+            pl_ = S.pair_plane(spec, nm_[i])
             if (i in took) != (j in took):
                 src, tgt = (i, j) if i in took else (j, i)
+            elif pl_ == 'y':                  # front / back: from the piece mirrored from (the twin's source)
+                src, tgt = j, i
             else:
                 src, tgt = (i, j) if X[i][:, 0].mean() > X[j][:, 0].mean() else (j, i)
-            X[tgt] = X[src] * np.array([-1.0, 1.0, 1.0]) + np.array([2.0 * cx, 0.0, 0.0])
+            X[tgt] = S.mirror_points(X[src], pl_, S.mirror_center(spec, pl_, nm_[src])) if pl_ == 'y' else \
+                X[src] * np.array([-1.0, 1.0, 1.0]) + np.array([2.0 * cx, 0.0, 0.0])
             mpairs.append((src, tgt))
     if shapes_only:
         out = {'pat': pat, 'tris': tris, 'X': X, 'pairs': list(mpairs), 'rep': rep2, 'short_bands': short_bands,
@@ -2087,6 +2411,8 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
             rep2 = rep2 + [f"  mirrored start (not kept every frame): " + ", ".join(
                 f"{pat['names'][t]} <- {pat['names'][s_]}" for s_, t in mpairs)]
             mpairs = []
+        # the solver's every-frame mirror is x -> -x only: a front / back pair is mirrored at the start, not kept
+        mpairs = [p for p in mpairs if S.pair_plane(spec, nm_[p[0]]) != 'y']
         if mpairs:
             rep2 = rep2 + [f"  mirrored every frame: " + ", ".join(f"{pat['names'][t]} <- {pat['names'][s_]}"
                                                                 for s_, t in mpairs)]
@@ -2112,7 +2438,7 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
             i = nm_n.index(n)
             Vp, Tp, Xp = new_placed[n]
             V = np.asarray(pat[f"V{i}"], float)
-            X[i] = Xp.copy() if len(V) == len(Vp) and np.allclose(V, Vp, atol=1e-6) else _bary_map(V, Vp, Tp, Xp)
+            X[i] = Xp.copy() if len(V) == len(Vp) and SH.same_layout(V, Vp) else _bary_map(V, Vp, Tp, Xp)
         if new_h:
             rep2 = rep2 + [f"  not in the last result, from their placed shapes: {', '.join(sorted(new_h))}"]
         if redo and redo_shown and continue_shown is not None:
@@ -2122,7 +2448,8 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
             nm_h = [str(n) for n in pat['names']]
             X, took_r, rep_h = _hand_placed(spec, pat, X, bvh, tris, skip=lambda i: None if str(
                 pl_h.get(nm_h[i], {}).get('guide', '')).startswith('arm') else arm_faces, only=set(redo))
-            X = _mirror_hand(X, took_r, [p for p in pairs0 if nm_h[p[0]] in redo and nm_h[p[1]] in redo], cx)
+            X = _mirror_hand(X, took_r, [p for p in pairs0 if nm_h[p[0]] in redo and nm_h[p[1]] in redo], spec,
+                             nm_h)
             rep2 = rep2 + [f"  put back by Reset, from their placed shapes: {', '.join(sorted(redo))}"] + rep_h
         try:
             pz_ = np.load(os.path.join(continue_job, 'scene.idx.npz'))
@@ -2131,23 +2458,13 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
             from_h = None
         new = [str(n) for n in pat['names'] if str(n) not in carried]
         rep2 = rep2 + [f"  (continued from {os.path.basename(continue_job)}; new pieces: {', '.join(new) or 'none'})"]
-    names = [str(n) for n in pat['names']]
-    offs, F_all, fp, flat = [], [], [], []
-    o = 0
-    for i in range(len(names)):
-        offs.append(o)
-        F_all.append(tris[i] + o)
-        fp.append(np.full(len(tris[i]), i))
-        flat.append(pat[f"V{i}"])
-        o += len(pat[f"V{i}"])
-    F_all, fp = np.vstack(F_all), np.concatenate(fp)
-    flat, Xinit = np.vstack(flat), np.vstack(X)
+    arrays = PP.assemble(pat, tris, X)
+    names, offs, F_all, fp, flat, Xinit, E_st = (arrays.names, arrays.offsets, arrays.triangles,
+                                              arrays.face_pieces, arrays.flat, arrays.initial, arrays.stitches)
     st = pat['stitch']
-    E_st = np.stack([np.array(offs)[st[:, 0]] + st[:, 1], np.array(offs)[st[:, 2]] + st[:, 3]], 1)
-    d = job_dir(context)
+    d = _build.job_dir()
     if continue_job and os.path.abspath(d) == os.path.abspath(continue_job):
-        d += '_next_' + str(time.time_ns())
-        os.makedirs(d, exist_ok=False)
+        d = _build.sibling(d, 'next')
     mirror_map = None
     if mpairs:
         tg, sr = [], []
@@ -2175,6 +2492,13 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
         extra['E_seam_off'] = pat['stitch_off_seam']
     np.savez(os.path.join(d, 'scene.idx.npz'), offs=np.array(offs), E_st=E_st, fp=fp, Xclo=Xinit, Xinit=Xinit,
              flat=flat, F=F_all, **extra)
+    # nothing to land on (no body, Collision object, floor or other garment; user 2026-11-10): the solver still gets
+    # one 1 mm triangle 100 m under the origin to hold as its static body (its arrays are read in many places), and
+    # the stages with gravity are left out below (no_support)
+    no_support = len(tri) == 0
+    if no_support:
+        co = np.array([[0.0, 0.0, -1e5], [1.0, 0.0, -1e5], [0.0, 1.0, -1e5]])
+        tri = np.array([[0, 1, 2]], np.int64)
     np.savez(os.path.join(d, 'avatar.npz'), body_co=(co * 0.001).astype(np.float64), body_tri=tri)
     crop = [float(co[:, 2].min() - 10), float(co[:, 2].max() + 10), 10000.0]
 
@@ -2289,7 +2613,7 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
             cfg['params_file'] = os.path.join(d, 'params.json')
             if os.path.exists(cfg['params_file']):
                 os.remove(cfg['params_file'])
-            if not (props.local_gravity if local is not None else props.live_gravity):
+            if not (props.local_gravity if local is not None else props.live_gravity) or no_support:
                 cfg['gravity_z'] = 0.0
         # TEST (user decision 2026-09-30 night, DECISIONS cloth-sim-fold-bake-2026-09-30): a fold that never opens
         # again (a back vent pressed and stitched down) is taken out of the simulation: its turned side follows the
@@ -2416,6 +2740,9 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
         kind, stg = presets.build_stages(spec, names, rings, os.path.join(d, 'pattern.npz'), crop, h, cs,
                                          extras=extras, hand=sorted(set(redo) & set(names)))
         el_fresh[0] = False
+        # with nothing to land on the saved plan had its stages with gravity left out: made and cut the same way
+        if no_support:
+            stg = _no_support_stages(stg)
         plan = [s_[0] for s_ in stg]
         if plan == list(phase_at['plan']):
             k_, j_ = int(phase_at['stage']), int(phase_at['frame'])
@@ -2456,8 +2783,17 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
             if any(k_.split('|')[0] in loc for k_ in cfg.get('fold_deg') or {}):
                 cfg['fold_ramp'] = {'pieces': loc, 'frames': 30}
         stg = [("local (until stopped): " + ', '.join(loc), cfg) for _label, cfg in stg]
+    if no_support:
+        # nothing to land on (user 2026-11-10): the stages without gravity only -- sewn and stopped there, said in
+        # one line; with none of them, the last stage without gravity. The floor (Floor (Z = 0)) or a Collision
+        # object gives the cloth something to fall onto
+        stg = _no_support_stages(stg)
+        rep2 = rep2 + [NO_SUPPORT]
     for _label, cfg in stg:
         one_layer_for_stage(cfg)
+        strengthened = S.strengthen_pieces(spec, names)
+        if strengthened:
+            cfg['strengthen_pieces'] = strengthened
     # the pieces' layers (spec piece "layer"; user 2026-10-25, DECISIONS on layers 2026-10-25): every
     # stage, until a person sets them back to 0 (cfg layers, the solver's cloth-cloth contact with a side)
     layers_ = {p_['name']: S.piece_layer(p_) for p_ in spec.get('pieces', [])
@@ -2510,17 +2846,23 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
         _resume_gate['solver_contract'] = stg[0][1]['fast_live_contract']
         # Only the fully normalized effective configuration may match a saved state.
         if continue_job and not (redo or new_placed or xinit_from):
-            _resume_dir = d + '_resume_' + str(time.time_ns())
+            _resume_dir = _build.sibling(d, 'resume')
             _resumed, _resume_note = live_resume.prepare(context, h, continue_job, continue_shown,
                 _resume_dir, _resume_gate, job_last_frame)
             if _resumed is not None:
                 return _resumed
         rep2 = rep2 + ['AC9 Fast Live: 2 substeps with a correction in each; static body']
+    if _native_three:
+        from .core import native_three as N3
+        N3.preflight(spec, cs)
+        stg = [(label, N3.configure(cfg)) for label, cfg in stg]
+        _resume_note = 'AC9 Native 3 restarts from the shown shape; velocity and contact history are reset'
+        rep2 = rep2 + [_resume_note]
     for k, (label, cfg) in enumerate(stg):
         sd = os.path.join(d, f"s{k + 1}")
         os.makedirs(sd, exist_ok=True)
         json.dump(cfg, open(os.path.join(sd, 'config.json'), 'w', encoding='utf-8'), ensure_ascii=False)
-    info = {'dir': d, 'kind': kind, 'mirror_pairs': [[names[a], names[b]] for a, b in mpairs], 'colliders': [ob.name for ob in cols] + [n_ for n_, _c, _t in obst_g], 'stages': [s[0] for s in stg], 'names': names, 'rings': rings,
+    info = {'dir': d, 'kind': kind, 'mirror_pairs': [[names[a], names[b]] for a, b in mpairs], 'colliders': [ob.name for ob in cols] + (['(floor)'] if props.floor else []) + [n_ for n_, _c, _t in obst_g], 'stages': [s[0] for s in stg], 'names': names, 'rings': rings, **({'no_support': True} if no_support else {}),
             'verts': int(len(flat)), 'tris': int(len(F_all)), 'stitches': int(len(E_st)),
             'prep_s': round(time.time() - t0, 2), 'report': rep + rep2,
             'settings': cs, 'solver_env': presets.solver_env(cs, kind), 'mesh': mesh, 'taper_left_out': taper_out}
@@ -2535,7 +2877,7 @@ def prepare(context, h=6.0, xinit_from=None, continue_job=None, continue_shown=N
     if _resume_note:
         info['state_resume'] = {'status': 'rebuilt', 'reason': _resume_note}
         json.dump(info, open(os.path.join(d, 'job.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-    open(os.path.join(d, 'ac9_spec.json'), 'w', encoding='utf-8').write(S.dumps(store.get(context)[0]))  # what a
+    open(os.path.join(d, 'ac9_spec.json'), 'w', encoding='utf-8').write(S.dumps(_build.source_spec()))  # what a
     #   later pattern edit is carried from (draft_tool.carry_to_3d, _carry_pending)
     what = {'continue': 'Continue', 'live': 'Live Sim'}.get(kind, 'Phase Sim')
     log(context, d, 'start', f"{what}: {len(names)} pieces, mesh {h_now:.1f} mm, {len(flat)} vertices, "
@@ -2792,7 +3134,255 @@ def _thickness_last(ob):
 _STANDBY = {'proc': None, 'key': None, 'log': None}
 _PRELOAD = {'state': 'waiting', 'completed': 0, 'total': 4, 'phase': 'imports'}
 _PRELOAD_SESSION = {'path': None, 'proc': None, 'target': None, 'check_at': 0.0, 'pending': None}
-_STANDBY_CFG = ('membrane', 'bw_comp_ratio', 'bw_comp_width', 'bw_comp_scale', 'bw_hess_reg')
+_STANDBY_CFG = _preload_config.COMPILE_FIELDS + ('native_three',)
+if '_PREPARED' in globals():
+    _prepared_end()
+_PREPARED = _prepared_candidate.Slot()
+_PREPARED_RETIRED = globals().get('_PREPARED_RETIRED', [])
+_PREPARED_TARGET = {'key': None, 'attempted': None, 'idle': 0.0}
+if '_LIVE_SESSION' in globals():_session_end()
+_LIVE_SESSION = None
+_LIVE_SESSION_RETIRED = globals().get('_LIVE_SESSION_RETIRED', [])
+_SESSION_FOREGROUND = False
+_SESSION_WARM_FAILURE = None
+
+
+def _session_reserve(value):
+    global _SESSION_FOREGROUND
+    _SESSION_FOREGROUND=bool(value)
+
+
+def _keep_ready_changed(prefs,context):
+    if prefs.keep_solver_ready:
+        standby_wake(context)
+    elif _LIVE_SESSION is not None and _LIVE_SESSION.lease is not None and _LIVE_SESSION.lease.poll() is None:
+        _LIVE_SESSION.finish_without_reuse()
+        standby_end(preserve_native_session=True)
+    else:standby_end()
+
+
+def _session_enabled(context=None):
+    return (os.environ.get('AC9_NATIVE_SESSION','1')=='1' and standby_enabled(context)
+            and getattr((context or bpy.context).scene.ac9_cloth_sim,'native_three',False))
+
+
+def _session_collect():
+    for session in list(_LIVE_SESSION_RETIRED):
+        try:
+            if session.cleanup():_LIVE_SESSION_RETIRED.remove(session)
+        except (OSError,ValueError):pass
+    return .25 if _LIVE_SESSION_RETIRED else None
+
+
+def _session_end():
+    global _LIVE_SESSION
+    session,_LIVE_SESSION=_LIVE_SESSION,None
+    if session is None:return
+    session.close();_LIVE_SESSION_RETIRED.append(session)
+    pending=retire(session.process,[]);pending.grace=5.;pending.deadline=time.monotonic()+5.
+    if not bpy.app.timers.is_registered(reap_retired):
+        bpy.app.timers.register(reap_retired,first_interval=.25,persistent=True)
+    if not bpy.app.timers.is_registered(_session_collect):
+        bpy.app.timers.register(_session_collect,first_interval=.25,persistent=True)
+
+
+def _session_get(python,env,cfg):
+    global _LIVE_SESSION
+    if _LIVE_SESSION is not None and not _LIVE_SESSION.compatible(python,env,cfg):_session_end()
+    if _LIVE_SESSION is None:
+        # Start the session only after retiring legacy standbys. Hybrid private
+        # candidates may be offered later, once this session is idle.
+        if _STANDBY['proc'] is not None or _PREPARED.candidate is not None:standby_end()
+        reap_retired()
+        if retired_running():return None
+        _LIVE_SESSION=_live_session.Session(python,env,cfg)
+        _trace('native_session_spawned',child_pid=_LIVE_SESSION.process.pid)
+    return _LIVE_SESSION
+
+
+def _session_prepare(context):
+    global _SESSION_WARM_FAILURE
+    if _SESSION_FOREGROUND:return
+    if time.time()-_STANDBY.get('used',0.)>=STANDBY_IDLE_S:
+        _prepared_end('native_session_idle_timeout')
+        _session_end();_PRELOAD.update(state='idle',completed=0);return
+    args=_wake_args(context)
+    if args is None:return
+    target=_standby_key(*args)
+    if _SESSION_WARM_FAILURE==target:
+        _PRELOAD.update(state='failed',completed=0);return
+    if _LIVE_SESSION is not None and _LIVE_SESSION.lease is None:
+        prior=_LIVE_SESSION.status()or{}
+        if prior.get('phase')=='poisoned' or (_LIVE_SESSION.process.poll() is not None and not _LIVE_SESSION.poisoned):
+            _SESSION_WARM_FAILURE=target
+            _session_end();_PRELOAD.update(state='failed',completed=0);return
+    free=_gpu_free_mb() if _LIVE_SESSION is None else None
+    if free is not None and free<STANDBY_MIN_FREE_MB:
+        _PRELOAD.update(state='gpu_wait',completed=0);return
+    try:session=_session_get(*args)
+    except (OSError,ValueError):
+        _SESSION_WARM_FAILURE=target;_PRELOAD.update(state='failed',completed=0);return
+    if session is None:_PRELOAD.update(state='loading',completed=0);return
+    row=session.status() or {}
+    if row.get('phase')=='poisoned':
+        _session_end();_PRELOAD.update(state='failed',completed=0);return
+    ready=row.get('phase') in ('idle','running')
+    _PRELOAD.update(state='ready' if ready else 'loading',completed=4 if ready else 0)
+    # Keep the established ready-candidate fast path. It is constructed only
+    # while the warm session owns no job/reader lease and does no GPU work.
+    if row.get('phase')=='idle' and session.lease is None:
+        free=_gpu_free_mb()
+        if free is None or free>=2*STANDBY_MIN_FREE_MB:
+            _prepared_automatic(context)
+
+
+def _prepared_collect():
+    for candidate in list(_PREPARED_RETIRED):
+        try:
+            if candidate.cleanup():_PREPARED_RETIRED.remove(candidate)
+        except (OSError, ValueError):
+            # Preserve the owner for retry/diagnosis, never broaden the delete.
+            continue
+    return 0.25 if _PREPARED_RETIRED else None
+
+
+def _prepared_end(reason='caller', **details):
+    candidate = _PREPARED.candidate
+    if candidate is not None:
+        _trace('prepared_cancel', reason=reason, caller=sys._getframe(1).f_code.co_name,
+               child_pid=candidate.process.pid, generation=candidate.generation,
+               automatic=getattr(candidate, 'automatic', False),
+               age_s=round(time.monotonic()-candidate.created, 6), **details)
+    old = _PREPARED.clear()
+    _retire_prepared(old)
+
+
+def _retire_prepared(old):
+    if old is not None:
+        old.cancel()
+    if old is not None and old.process.poll() is None:
+        pending = retire(old.process, [str(old.root / 'private')])
+        pending.grace = 5.0
+        pending.deadline = time.monotonic() + 5.0
+        if not bpy.app.timers.is_registered(reap_retired):
+            bpy.app.timers.register(reap_retired, first_interval=0.25, persistent=True)
+
+
+def _prepared_offer(python, env, idx, avatar, config_path, *, positions=None, automatic=False, keep_session=False):
+    """Private evaluation entry; automatic scene snapshotting is a separate step."""
+    standby_end(preserve_native_session=keep_session)
+    reap_retired()
+    if retired_running() or AC9_OT_SimDress.running():return False
+    try:
+        _PREPARED.candidate = _prepared_candidate.Candidate(python, env, idx, avatar, config_path, _PREPARED.generation, positions=positions)
+        _PREPARED.candidate.automatic=automatic
+        _PREPARED_RETIRED.append(_PREPARED.candidate)
+        if not bpy.app.timers.is_registered(_prepared_collect):
+            bpy.app.timers.register(_prepared_collect, first_interval=0.25, persistent=True)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _prepared_automatic(context):
+    """Private read-only forecast from a completed Native3 Live job and frozen mesh.
+
+    This never calls Preparation, flushes edits, migrates a spec or commits a job.
+    A fresh click-time Preparation must still prove the complete input identity.
+    """
+    if os.environ.get('AC9_PREPARED_LIVE', '1') != '1':
+        if getattr(_PREPARED.candidate,'automatic',False):
+            _prepared_end('automatic_disabled');_PREPARED_TARGET.update(key=None,attempted=None,idle=0.0)
+        return False
+    props=context.scene.ac9_cloth_sim
+    if not standby_enabled(context) or not getattr(props,'native_three',False):
+        _prepared_end('mode_disabled');_PREPARED_TARGET.update(key=None,attempted=None,idle=0.0)
+        return False
+    spec=store.get(context)[0]
+    g=bpy.data.objects.get(garment_name(spec)) if spec else None
+    job=job_of(g)
+    if g is None or g.mode!='OBJECT' or not frozen(g) or not job or reset_pieces(g):
+        _prepared_end('garment_ineligible', garment_present=g is not None,
+                      object_mode=getattr(g,'mode',None), frozen=frozen(g),
+                      job_present=bool(job), reset_pieces=reset_pieces(g))
+        _PREPARED_TARGET.update(key=None,attempted=None,idle=0.0)
+        return False
+    step='completed_job'
+    try:
+        with open(os.path.join(job,'job.json'),encoding='utf8') as stream:
+            info=json.load(stream)
+        cfg_path=os.path.join(job,'s1','config.json')
+        with open(cfg_path,encoding='utf8') as stream:
+            cfg=json.load(stream)
+        with open(os.path.join(job,'s1','run_log.json'),encoding='utf8') as stream:
+            completed=json.load(stream)
+        if completed.get('error') or not completed.get('frame_s') or job_last_frame(job) is None:
+            _prepared_end('incomplete_result', result_error=bool(completed.get('error')),
+                          frame_timings=bool(completed.get('frame_s')));return False
+        if len(info['stages'])!=1 or not cfg.get('native_three') or not cfg.get('live'):
+            _prepared_end('stage_ineligible');return False
+        python=newton_python(context)
+        if python is None:return False
+        env=solver_process_env(python,info.get('solver_env',{}))
+        step='shown_shape'
+        positions=shown_shape(context,g)
+        # Forecast changes only the frozen starting shape. Any other discrepancy
+        # is rejected using the entire fresh job at the start boundary.
+        step='input_key'
+        shape_bytes=np.ascontiguousarray(positions).tobytes()
+        spec_bytes=store.text(context).as_string().encode('utf8')
+        standby_key=_standby_key(python,env,cfg_path)
+        digest=hashlib.sha256(shape_bytes)
+        digest.update(str(job).encode('utf8'))
+        digest.update(spec_bytes)
+        digest.update(repr(standby_key).encode('utf8'))
+        key=digest.hexdigest()
+        if key!=_PREPARED_TARGET['key']:
+            components=dict(shape=hashlib.sha256(shape_bytes).hexdigest(),job=str(job),
+                            spec=hashlib.sha256(spec_bytes).hexdigest(),
+                            environment=hashlib.sha256(repr(sorted(env.items())).encode('utf8')).hexdigest(),
+                            standby=hashlib.sha256(repr(standby_key).encode('utf8')).hexdigest())
+            if standby_key is not None:
+                components.update(python=standby_key[0],
+                                  variant=hashlib.sha256(repr(standby_key[2]).encode('utf8')).hexdigest(),
+                                  source_mtime=standby_key[3])
+            previous=_PREPARED_TARGET.get('components',{})
+            changed=[name for name,value in components.items() if previous.get(name)!=value]
+            standby_end('automatic_key_changed', changed=changed, components=components,
+                        preserve_native_session=_session_enabled(context))
+            _PREPARED_TARGET.update(key=key,components=components,attempted=None,idle=time.monotonic())
+        if time.monotonic()-_PREPARED_TARGET['idle']>=STANDBY_IDLE_S:
+            _prepared_end('idle_timeout');return True
+        candidate=_PREPARED.candidate
+        if candidate is not None:
+            step='candidate_status'
+            row=candidate.status() or {}
+            exit_code=candidate.process.poll()
+            if exit_code is not None or row.get('phase')=='failed':
+                _prepared_end('candidate_failed', exit_code=exit_code, phase=row.get('phase'),
+                              worker_reason=row.get('reason'), process_error=getattr(candidate.process,'error',None))
+                _PRELOAD.update(state='failed',completed=0)
+            else:
+                ready=row.get('phase')=='prepared'
+                _PRELOAD.update(state='ready' if ready else 'loading',completed=4 if ready else row.get('completed',0),phase='kernels' if ready else row.get('preload_phase','imports'))
+            return True
+        if _PREPARED_TARGET['attempted']==key:return False
+        reap_retired()
+        if retired_running():return True
+        free=_gpu_free_mb()
+        if free is not None and free<STANDBY_MIN_FREE_MB:
+            _PRELOAD.update(state='gpu_wait',completed=0);return True
+        _PREPARED_TARGET['attempted']=key
+        step='offer'
+        if not _prepared_offer(python,env,os.path.join(job,'scene.idx.npz'),os.path.join(job,'avatar.npz'),cfg_path,
+                               positions=positions,automatic=True,keep_session=_session_enabled(context)):return False
+        _trace('prepared_automatic_offered', child_pid=_PREPARED.candidate.process.pid, key=key,
+               components=_PREPARED_TARGET.get('components'))
+        _PRELOAD.update(state='loading',completed=0,phase='imports')
+        return True
+    except (OSError,ValueError,KeyError,TypeError) as exc:
+        _prepared_end('automatic_exception', step=step, exception=type(exc).__name__, message=str(exc))
+        return False
 
 
 def _standby_key(python, env, cfg1):
@@ -2805,7 +3395,7 @@ def _standby_key(python, env, cfg1):
         mt = max(os.path.getmtime(f) for f in src)
     except (OSError, ValueError):
         return None
-    return (os.path.normcase(python), tuple(sorted(env.items())), tuple((k, c.get(k)) for k in _STANDBY_CFG), mt)
+    return (os.path.normcase(python), tuple(sorted(env.items())), _preload_config.variant_key(c), mt)
 
 
 def _standby_drop_log():
@@ -2814,8 +3404,10 @@ def _standby_drop_log():
         _STANDBY['log'] = None
 
 
-def standby_end():
+def standby_end(reason='standby_caller', *, preserve_native_session=False, **details):
     """End the waiting solver process, if any (a file opened, the add-on disabled, a run it does not fit)."""
+    _prepared_end(reason, standby_caller=sys._getframe(1).f_code.co_name, **details)
+    if not preserve_native_session:_session_end()
     p, _STANDBY['proc'], _STANDBY['key'] = _STANDBY['proc'], None, None
     if p is not None and p.poll() is None:
         try:
@@ -2845,6 +3437,12 @@ def _standby_start(python, env, cfg1):
     standby_end()
     if not python or not standby_enabled():
         return
+    try:
+        with open(cfg1, encoding='utf8') as stream:
+            cfg1 = _preload_config.materialize(_preload_config.snapshot(json.load(stream)))
+    except (OSError, ValueError):
+        _PRELOAD.update(state='failed', completed=0, error='Could not snapshot preload configuration')
+        return
     if retired_running():
         # Do not compile two variants concurrently while the old child is retiring.
         _PRELOAD_SESSION['pending'] = (python, env, cfg1)
@@ -2864,7 +3462,7 @@ def _standby_start(python, env, cfg1):
         _PRELOAD.update(state='loading', completed=0, phase='imports', error='')
         lf = open(os.path.join(tempfile.gettempdir(), f'ac9_cloth_sim_standby_{os.getpid()}.txt'), 'w',
                   encoding='utf-8')
-        _STANDBY['proc'] = subprocess.Popen([python, RUN_STAGES, '--standby', cfg1], stdin=subprocess.PIPE,
+        _STANDBY['proc'] = _prepared_candidate.OwnedProcess([python, RUN_STAGES, '--standby', cfg1], stdin=subprocess.PIPE,
                                             stdout=lf, stderr=subprocess.STDOUT, env=child_env, text=True,
                                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         _trace('standby_spawned', child_pid=_STANDBY['proc'].pid)
@@ -2928,11 +3526,12 @@ def _wake_args(context):
     if python is None:
         return None
     g = bpy.data.objects.get(garment_name(spec))
-    job = g.get('ac9_job') if g is not None else None
+    job = job_of(g)
     if job:
         from .draft_tool import _simulated_root
         job = _simulated_root(job)
     cfg1 = os.path.join(job, 's1', 'config.json') if job else None
+    previous = {}
     if cfg1 and os.path.exists(cfg1):
         try:
             senv = json.load(open(os.path.join(job, 'job.json'), encoding='utf-8')).get('solver_env', {})
@@ -2942,24 +3541,22 @@ def _wake_args(context):
             previous = json.load(stream)
         # A saved run may describe the old fabric mode. Never advertise that variant
         # as ready after the user switches the current mode.
-        if (previous.get('membrane') == 'bw') != props.physical_fabric:
-            cfg1 = None
     else:
         senv = {}
         cfg1 = None
-    if cfg1 is None:
-        cfg1 = os.path.join(tempfile.gettempdir(), f'ac9_cloth_sim_standby_cfg_{os.getpid()}.json')
-        try:
-            json.dump({'membrane': 'bw', 'bw_hess_reg': 1.0} if props.physical_fabric else {},
-                      open(cfg1, 'w', encoding='utf-8'))
-        except OSError:
-            return None
+    try:
+        variant = _preload_config.choose(previous, props.physical_fabric, getattr(props, 'native_three', False))
+        cfg1 = _preload_config.materialize(variant)
+    except (OSError, ValueError):
+        return None
     return python, solver_process_env(python, senv), cfg1
 
 
 def standby_wake(context=None):
     """Start the waiting process soon if there is none (a file opened, a pattern edit, a Place): on a timer, so the
     edit returns first (the GPU check and the start take about 0.1 s)."""
+    global _SESSION_WARM_FAILURE
+    _SESSION_WARM_FAILURE=None
     _ensure_preload_timer()
     if not standby_enabled(context):
         return
@@ -2982,6 +3579,18 @@ def solver_preload_status():
 
 def _preload_tick():
     try:
+        if _session_enabled():
+            if time.monotonic()>=_PRELOAD_SESSION['check_at']:
+                _PRELOAD_SESSION['check_at']=time.monotonic()+2.
+                if not AC9_OT_SimDress.running():_session_prepare(bpy.context)
+            for screen in bpy.data.screens:
+                for area in screen.areas:
+                    if area.type in ('VIEW_3D','PROPERTIES'):area.tag_redraw()
+            return .25
+        if _LIVE_SESSION is not None:
+            if _LIVE_SESSION.lease is not None and _LIVE_SESSION.lease.poll() is None:
+                _LIVE_SESSION.finish_without_reuse()
+            else:_session_end()
         pending = _PRELOAD_SESSION['pending']
         if pending and standby_enabled() and not AC9_OT_SimDress.running():
             reap_retired()
@@ -3000,10 +3609,14 @@ def _preload_tick():
         if time.monotonic() >= _PRELOAD_SESSION['check_at']:
             _PRELOAD_SESSION['check_at'] = time.monotonic() + 2.0
             if not standby_enabled():
+                if getattr(_PREPARED.candidate,'automatic',False):
+                    _prepared_end();_PREPARED_TARGET.update(key=None,attempted=None,idle=0.0)
                 if _STANDBY['proc'] is not None:
                     standby_end()
                 _PRELOAD.update(state='disabled', completed=0)
             elif not AC9_OT_SimDress.running():
+                if _prepared_automatic(bpy.context):
+                    return 0.25
                 args = _wake_args(bpy.context)
                 target = _standby_key(*args) if args else None
                 old_target = _PRELOAD_SESSION['target']
@@ -3027,6 +3640,13 @@ def _preload_tick():
 
 def _wake_now():
     try:
+        if _session_enabled():
+            if not AC9_OT_SimDress.running():_session_prepare(bpy.context)
+            return None
+        if not AC9_OT_SimDress.running() and _prepared_automatic(bpy.context):
+            return None
+        if _PREPARED.candidate is not None:
+            return None
         p = _STANDBY['proc']
         if AC9_OT_SimDress.running():
             return None
@@ -3051,7 +3671,10 @@ def _standby_take(python, env, cfg1):
     """The waiting process if it is alive and fits this run, else None (and it is ended)."""
     p = _STANDBY['proc']
     _trace('standby_take_begin', child_pid=p.pid if p else None)
-    if p is None or p.poll() is not None or _STANDBY['key'] != _standby_key(python, env, cfg1):
+    status_path = _PRELOAD_SESSION.get('path')
+    status = _preload_status.read(status_path) if status_path else None
+    if (p is None or p.poll() is not None or (status and status.get('state') == 'failed')
+            or _STANDBY['key'] != _standby_key(python, env, cfg1)):
         standby_end()
         return None
     _STANDBY['proc'], _STANDBY['key'] = None, None
@@ -3184,6 +3807,7 @@ def job_or_from_mesh(context, g):
     """job_of, or -- for a garment marked on load as having lost its folder -- a job made from its mesh now (the run
     that needs it: Simulate / Continue / Live; design review 10/23: not on load, which would write a folder each time
     the file is opened)."""
+    repair_job_reference(g)
     j = job_of(g)
     if j is None and g is not None and g.get(JOB_MISSING_PROP):
         j = job_from_mesh(context, g, str(g.get(JOB_MISSING_PROP)))
@@ -3198,6 +3822,8 @@ def _relink_jobs(*_):
     instead of dressing again from the placement (user 2026-10-23, another PC). Nothing is written here. Its Mesh
     Cache is pointed at the found folder or taken off."""
     for g in [o for o in bpy.data.objects if o.type == 'MESH' and o.name.startswith(GARMENT_PREFIX)]:
+        if not g.is_editable:
+            continue
         was = str(g.get('ac9_job') or '')
         if was and job_alive(was):
             continue
@@ -3205,7 +3831,7 @@ def _relink_jobs(*_):
                 if was and bpy.data.filepath else '')
         found = cand if cand and os.path.exists(os.path.join(cand, 'scene.idx.npz')) else None
         for m in [m for m in g.modifiers if m.type == 'MESH_CACHE']:
-            if m.filepath and os.path.exists(bpy.path.abspath(m.filepath)):
+            if m.filepath and os.path.exists(bpy.path.abspath(m.filepath, library=g.library)):
                 continue
             pc2 = os.path.join(found, 'drape.pc2') if found else ''
             if pc2 and os.path.exists(pc2):
@@ -3216,8 +3842,11 @@ def _relink_jobs(*_):
             if found:
                 g['ac9_job'] = found
                 g.pop(JOB_MISSING_PROP, None)
-            elif job_of(g) is None and g.get('ac9_piece_names'):  # job_of finds a folder from a Mesh Cache still there
-                g[JOB_MISSING_PROP] = was or '-'
+            else:
+                # Keep the original relocation/cache-removal precedence. Repair only the fallback that survived it.
+                repair_job_reference(g)
+                if job_of(g) is None and g.get('ac9_piece_names'):
+                    g[JOB_MISSING_PROP] = was or '-'
         except Exception as e_:                               # noqa: BLE001 -- a file must open whatever this does
             print("AC9 Cloth Sim: the garment's job folder:", e_)
     # a file saved before the thickness marked its copy (2026-10-23): marked now, the buttons' groups made anew
@@ -3231,23 +3860,45 @@ def _relink_jobs(*_):
         print("AC9 Cloth Sim: the buttons on the thickness:", e_)
 
 
+def _stop_or_retire(proc, stage_dirs):
+    """Transfer a worker to the RNA-free reaper before releasing its UI owner."""
+    if proc is None or not process_running(proc):
+        return
+    if getattr(proc,'is_session_job',False):
+        # Load/reload/abandon owns the whole session, unlike an ordinary Stop.
+        # Never block file loading or retire only a process-like job facade.
+        proc.session.close()
+        stop=retire(proc.session.process,[])
+        stop.grace=5.;stop.deadline=time.monotonic()+5.
+        if not bpy.app.timers.is_registered(reap_retired):
+            bpy.app.timers.register(reap_retired,first_interval=.25,persistent=True)
+        return
+    try:
+        stop_solver(proc, stage_dirs, timeout=10)
+    except Exception as exc:
+        _trace('owner_stop_failed', child_pid=proc.pid, error=str(exc))
+    finally:
+        if process_running(proc):
+            retire(proc, stage_dirs)
+            if not bpy.app.timers.is_registered(reap_retired):
+                bpy.app.timers.register(reap_retired, first_interval=0.25, persistent=True)
+
+
 @bpy.app.handlers.persistent
 def _stop_on_load(*_):
     """Another file opened while a run goes: stop the solver rather than leave it running for a result nobody
     will take (Fable review 2026-10-13). The frames it wrote stay in the job folder."""
+    _session_reserve(False)
+    _prepared_end()
+    _PREPARED_TARGET.update(key=None,attempted=None,idle=0.0)
     cls = AC9_OT_SimDress
-    proc = cls._proc
-    if proc is not None and process_running(proc):
-        try:
-            stop_solver(proc, cls._stage_dirs, timeout=10)
-        except OSError as exc:
-            _trace('owner_stop_failed', child_pid=proc.pid, error=str(exc))
-        if process_running(proc):
-            # No RNA/operator references in this owner: it survives disable and F3 reload.
-            retire(proc, cls._stage_dirs)
-            if not bpy.app.timers.is_registered(reap_retired):
-                bpy.app.timers.register(reap_retired, first_interval=0.25, persistent=True)
     owner = getattr(cls, '_active_instance', None)
+    seen = set()
+    for proc, stages in ((cls._proc, cls._stage_dirs),
+                         (getattr(owner, 'proc', None), getattr(owner, 'stage_dirs', ()))):
+        if proc is not None and id(proc) not in seen:
+            seen.add(id(proc))
+            _stop_or_retire(proc, stages)
     timer = getattr(cls, '_active_timer', None)
     wm = getattr(cls, '_active_wm', None)
     if timer is not None and wm is not None:
@@ -3257,11 +3908,17 @@ def _stop_on_load(*_):
             pass
     if owner is not None:
         try:
+            waiting=getattr(owner,'_prepared_wait',None)
+            if waiting is not None:
+                waiting.cancel();_retire_prepared(waiting.candidate);owner._prepared_wait=None
             owner._abandoned = True
             owner._timer = None
             owner._pending_stop = None
             owner.proc = None
+            owner._release_native_io()
             owner._resume(bpy.context)
+            if getattr(owner, 'log', None) is not None:
+                owner.log.close()
         except (ReferenceError, RuntimeError):
             pass
     cls._active_instance = cls._active_timer = cls._active_wm = cls._active_window = None
@@ -3293,7 +3950,7 @@ def result_info(g):
     Read from the job's job.json, cached by its time stamp: the panel draws on every mouse move."""
     if g is None:
         return None
-    d = g.get('ac9_job')
+    d = job_of(g) or g.get('ac9_job')
     if not d:
         return None
     d = str(d)
@@ -3340,15 +3997,41 @@ def _mesh_back(context, ob, job):
 
 
 def set_positions(ob, X_m):
-    ob.data.vertices.foreach_set('co', np.ascontiguousarray(X_m, np.float32).ravel())
+    positions = _valid_positions(X_m, len(ob.data.vertices))
+    ob.data.vertices.foreach_set('co', positions.ravel())
     ob.data.update()
 
 
+def _valid_positions(values, count):
+    values = np.asarray(values)
+    if (values.shape != (count, 3) or not (np.issubdtype(values.dtype, np.integer)
+                                         or np.issubdtype(values.dtype, np.floating))):
+        raise ValueError("Invalid simulation frame shape or type")
+    with np.errstate(over='ignore', invalid='ignore'):
+        result = np.ascontiguousarray(values, np.float32)
+    if not np.isfinite(result).all():
+        raise ValueError("Non-finite simulation coordinates")
+    return result
+
+
 def write_pc2(path, frames_m):
+    frames_m = np.asarray(frames_m)
+    if frames_m.ndim != 3 or frames_m.shape[2] != 3 or not len(frames_m):
+        raise ValueError("Invalid simulation cache shape")
+    for frame in frames_m:
+        _valid_positions(frame, frames_m.shape[1])
     n_s, n_p = frames_m.shape[0], frames_m.shape[1]
-    with open(path, 'wb') as f:
-        f.write(struct.pack('<12siiffi', b'POINTCACHE2\0', 1, n_p, 1.0, 1.0, n_s))
-        f.write(np.ascontiguousarray(frames_m, np.float32).tobytes())
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='wb', dir=os.path.dirname(os.path.abspath(path)),
+                                         prefix='ac9_pc2_', suffix='.tmp', delete=False) as f:
+            temporary = f.name
+            f.write(struct.pack('<12siiffi', b'POINTCACHE2\0', 1, n_p, 1.0, 1.0, n_s))
+            f.write(np.ascontiguousarray(frames_m, np.float32).tobytes())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None and os.path.exists(temporary):
+            os.remove(temporary)
 
 
 def attach_cache(context, ob, pc2, n_frames):
@@ -3588,6 +4271,10 @@ class AC9_OT_SimDress(bpy.types.Operator):
                     "From the dressed garment the result is the garment's; before one, the placed shapes'. Ctrl+drag "
                     "pulls the cloth (Alt held: through other cloth), Ctrl+Shift+drag smooths it (presses it down and carries it along)")
         if props.mode == 'LIVE':
+            if getattr(context.scene.ac9_cloth_sim, 'native_three', False):
+                return ('AC9 Native 3 (Test): faster Native Live, static body, no Piece Layer recovery. '
+                        'Starts from the shown shape with new velocity/contact history. '
+                        'Ctrl+drag pulls, Ctrl+Shift+drag smooths; Esc stops and keeps the shape')
             if getattr(context.scene.ac9_cloth_sim, 'fast_live', False):
                 return ("AC9 Fast Live (Experimental): 2 substeps with a correction in each, static body and lower "
                         "contact damping. Ctrl+drag pulls the cloth (Alt held: through other cloth), Ctrl+Shift+drag "
@@ -3604,7 +4291,9 @@ class AC9_OT_SimDress(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         spec = store.get(context)[0]
-        return spec is not None and bool(spec.get('guides')) and context.scene.ac9_cloth_sim.body is not None
+        # pieces laid flat run without a body or guides (user 2026-11-10)
+        return spec is not None and ((bool(spec.get('guides')) and context.scene.ac9_cloth_sim.body is not None)
+                                     or any(S.is_flat(p) for p in spec.get('placement', {}).values()))
 
     # the run on screen, kept on the class: pressing the running button again stops it as Esc does (user 2026-10-13:
     # "stopping is pressing the same button again"; a second press used to start a second run and fail). The
@@ -3655,25 +4344,33 @@ class AC9_OT_SimDress(bpy.types.Operator):
         a warning and the pieces off when any piece starts more than 0.1 mm away. Never stops the run (user
         2026-11-04). Returns {piece: its record} of the pieces off."""
         if screen0 is None:
+            self.info['start_check_status'] = {'state': 'not_requested'}
             return {}
         try:
             from . import start_check as SC
             res, head, off_lines = SC.check(screen0, self.info, flat, Xinit)
         except Exception as exc:                      # noqa: BLE001 -- the check must not stop a run
             _trace('start_check_failed', error=repr(exc))
+            self.info['start_check_status'] = {'state': 'failed', 'reason': str(exc)}
             return {}
         off = {n: r for n, r in res.items() if r['checked'] and r['over']}
         self.info['start_check'] = {n: {k: r[k] for k in ('source', 'checked', 'dmax_mm', 'note')}
                                     for n, r in res.items()}
-        log(context, self.info['dir'], 'start' if not off else 'start_warning', head,
-            off={n: r['dmax_mm'] if not r['lost'] else r['lost'] for n, r in off.items()})
-        for ln in off_lines:
-            log(context, self.info['dir'], 'start_warning', ln.strip())
+        self.info['start_check_status'] = {'state': 'checked' if all(r['checked'] for r in res.values()) else 'partial'}
+        try:
+            log(context, self.info['dir'], 'start' if not off else 'start_warning', head,
+                off={n: r['dmax_mm'] if not r['lost'] else r['lost'] for n, r in off.items()})
+            for ln in off_lines:
+                log(context, self.info['dir'], 'start_warning', ln.strip())
+        except Exception as exc:
+            self.info['start_check_status']['log_error'] = str(exc)
+            _trace('start_check_log_failed', error=repr(exc))
         if off:
             self.report({'WARNING'}, rpt("{0} did not start as shown on screen: see the log", ", ".join(sorted(off))))
         return off
 
     def invoke(self, context, event):
+        _trace('operator_invoke_enter',mode=self.mode)
         # Re-dress over a result asks first: the garment is made again from the placement (the old job folder
         # stays). A press while a run goes is a Stop and asks nothing
         if (not type(self).running() and self.mode == 'START' and self.button == 'REDRESS'
@@ -3685,6 +4382,8 @@ class AC9_OT_SimDress(bpy.types.Operator):
         return self.execute(context)
 
     def execute(self, context):
+        click_start=time.time()
+        _trace('operator_execute_enter',mode=self.mode)
         if retired_running():
             context.scene.ac9_cloth_sim.dress_status = tx("stopping...")
             return {'CANCELLED'}
@@ -3698,6 +4397,14 @@ class AC9_OT_SimDress(bpy.types.Operator):
             self.report({'ERROR'}, "Set the Newton Python in the add-on preferences")
             return {'CANCELLED'}
         props = context.scene.ac9_cloth_sim
+        if self.mode == 'LIVE' and getattr(props, 'native_three', False):
+            try:
+                from .core import native_three as N3
+                settings = presets.resolve(props.preset, props, environ=None if bpy.app.background else {})
+                N3.preflight(presets.spec_for_job(store.get(context)[0], settings), settings)
+            except ValueError as exc:
+                self.report({'ERROR'}, str(exc))
+                return {'CANCELLED'}
         if self.mode == 'LIVE' and getattr(props, 'fast_live', False):
             try:
                 from .core import fast_live as FL
@@ -3720,7 +4427,9 @@ class AC9_OT_SimDress(bpy.types.Operator):
                 self.report({'ERROR'}, props.dress_status)
                 return {'CANCELLED'}
         cls_ = type(self)
+        _trace('undo_push_begin')
         self._pushed = cls_._pushed_before or push_before_run(context)   # Phase Sim pushed it before its flush
+        _trace('undo_push_end')
         cls_._pushed_before = False
         self._esc = False
         from . import piece_move as PM                    # a Move Piece handle: the moved shape stays, the handle goes
@@ -3799,6 +4508,9 @@ class AC9_OT_SimDress(bpy.types.Operator):
         spec, _ = store.get(context)
         if self.info.get('state_resume', {}).get('status') == 'rebuilt':
             self.report({'WARNING'}, tx(self.info['state_resume']['reason']))
+        if self.info.get('no_support'):
+            # nothing to land on (user 2026-11-10): said when it starts, as the stages with gravity are left out
+            self.report({'WARNING'}, tx(NO_SUPPORT.strip()))
         if self.info.get('taper_left_out'):
             self.report({'WARNING'}, tx("End Taper not used this run on {0}: the fold there is held another way",
                                         ", ".join(k_.replace('|', ' ') for k_ in sorted(self.info['taper_left_out']))))
@@ -3833,7 +4545,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
             self.ob['ac9_job'] = cj
         self.k = -1
         self.proc = None
-        self.t_start = time.time()
+        self.t_start = click_start
         self.solver_s = []
         pf_ = self.info.get('phase_from')
         props.dress_status = (tx("prepared in {0} s ({1}, {2} verts)", self.info['prep_s'], self.info['kind'], self.info['verts'])
@@ -3842,26 +4554,49 @@ class AC9_OT_SimDress(bpy.types.Operator):
                               + (tx("; {0} modifier(s) of yours off while it runs", self._paused) if self._paused else ""))
         if self._paused:
             log(context, self.info['dir'], 'info', f"{self._paused} modifier(s) on the garment off while it runs")
-        self._next_stage()
+        cls = type(self)
+        cls._active_instance = self
+        try:
+            self._next_stage()
+        except Exception:
+            _stop_or_retire(self.proc, getattr(self, 'stage_dirs', ()))
+            _session_reserve(False)
+            cls._active_instance = None
+            if getattr(self, 'log', None) is not None:
+                self.log.close()
+            self._release_native_io()
+            self._resume(context)
+            raise
+        cls._proc, cls._stage_dirs = self.proc, tuple(self.stage_dirs)
         wm = context.window_manager
         if bpy.app.background:
-            while self.proc is not None or getattr(self, '_deferred_start', None):
-                time.sleep(0.2)
-                self._poll(context)
+            try:
+                while self.proc is not None or getattr(self, '_deferred_start', None):
+                    time.sleep(0.2)
+                    self._poll(context)
+            finally:
+                _stop_or_retire(self.proc, self.stage_dirs)
+                cls._active_instance = None
+                cls._proc, cls._stage_dirs = None, ()
+            self._release_native_io()
             self._resume(context)
             from . import display_state
             display_state.apply(context, store.get(context)[0])
             return {'FINISHED'} if not self.failed else {'CANCELLED'}
         self._window_manager = wm
         self._owner_window = context.window
-        self._timer = wm.event_timer_add(0.25, window=context.window)
-        type(self)._active_instance = self
-        type(self)._active_timer = self._timer
-        type(self)._active_wm = wm
-        type(self)._active_window = context.window
-        if not bpy.app.timers.is_registered(_watch_run_window):
-            bpy.app.timers.register(_watch_run_window, first_interval=0.25, persistent=True)
-        wm.modal_handler_add(self)
+        cls._active_wm, cls._active_window = wm, context.window
+        try:
+            self._timer = wm.event_timer_add(0.05 if getattr(self, '_native_io', None) is not None else 0.25, window=context.window)
+            cls._active_timer = self._timer
+            if not bpy.app.timers.is_registered(_watch_run_window):
+                bpy.app.timers.register(_watch_run_window, first_interval=0.25, persistent=True)
+            wm.modal_handler_add(self)
+        except Exception:
+            _stop_on_load()
+            if getattr(self, 'log', None) is not None:
+                self.log.close()
+            raise
         cls = type(self)
         cls._running_mode, cls._running_t, cls._stop_req = self.mode, time.time(), False
         cls._proc, cls._stage_dirs = self.proc, tuple(self.stage_dirs)
@@ -3872,6 +4607,28 @@ class AC9_OT_SimDress(bpy.types.Operator):
 
     failed = False
     stopped_by_user = False
+
+    def _stage_file(self, name):
+        runtime = getattr(self, '_native_io', None)
+        return runtime.path(name) if runtime is not None else os.path.join(self.stage_dir, name)
+
+    def _control_file(self, name):
+        runtime = getattr(self, '_native_io', None)
+        return runtime.path(name) if runtime is not None else os.path.join(self.info['dir'], name)
+
+    def _release_native_io(self):
+        runtime = getattr(self, '_native_io', None)
+        if runtime is None:
+            return
+        self._native_io = None
+        def collect():
+            result = runtime.close()
+            if result is None:
+                return 0.25
+            _trace('native_runtime_released', collected=result, error=runtime.error)
+            return None
+        if collect() is not None:
+            bpy.app.timers.register(collect, first_interval=0.25, persistent=True)
 
     def _next_stage(self):
         """Start the solver once for every stage (solver/run_stages.py): the Python start, the warp / newton import
@@ -3884,14 +4641,86 @@ class AC9_OT_SimDress(bpy.types.Operator):
         env = solver_process_env(self.python, self.info.get('solver_env', {}))
         args = [os.path.join(d, 'scene.idx.npz'), os.path.join(d, 'avatar.npz'), *self.stage_dirs]
         cfg1 = os.path.join(self.stage_dirs[0], 'config.json')
+        self._native_io = None
+        if self.mode == 'LIVE' and self.info.get('settings', {}).get('native_three'):
+            if len(self.stage_dirs) != 1:
+                raise ValueError('AC9 Native 3 requires one Live stage')
+            from .core.native_three_io import FrontendRuntime
+            self._native_io = FrontendRuntime(cfg1)
         _trace('frontend_job', job=d)
         self._standby_args = (self.python, env, cfg1)
         self._deferred_start = None
+        self._prepared_wait = None
         self._handoff_failed = False
+        def launch():
+            _trace('new_process_begin')
+            if self.log.closed or self.log.name!=os.path.join(d,'solver_stdout.txt'):
+                self.log.close()
+                self.log=open(os.path.join(d,'solver_stdout.txt'),'w',encoding='utf8')
+            proc=subprocess.Popen([self.python,RUN_STAGES,*args],stdout=self.log,stderr=subprocess.STDOUT,
+                                  env=env,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            if self._native_io is not None:self._native_io.launched(proc)
+            _trace('new_process_spawned',child_pid=proc.pid)
+            return proc
+        self._fallback_launch=launch
+        if self._native_io is not None and _session_enabled():
+            _session_reserve(True)
+            candidate=_PREPARED.take(self.python,env,args[0],args[1],cfg1,allow_loading=False)
+            if candidate is not None:
+                self.proc=candidate.process;self._native_io.launched(self.proc)
+                self.log.close();self.log=open(os.devnull,'w')
+                self._prepared_wait=_prepared_candidate.PendingStart(candidate,self.python,env,args[0],args[1],cfg1,self.stage_dir,_PREPARED.generation)
+                _trace('prepared_build_taken',child_pid=self.proc.pid)
+                self._advance_prepared(bpy.context)
+                return
+            # Only the untransferred private Slot candidate can be discarded.
+            # Once a candidate is taken/sent this route can never switch to a
+            # session. The retired owner fences the entire Windows Job tree.
+            old=_PREPARED.candidate
+            _prepared_end('session_fresh_required')
+            if old is not None:
+                pending=retire(old.process,[str(old.root/'private')])
+                pending.grace=0.;pending.deadline=time.monotonic()
+            def session_launch():
+                reap_retired()
+                if retired_running():return None
+                session=_session_get(self.python,env,cfg1)
+                if session is None or session.lease is not None:return None
+                try:
+                    proc=session.submit(args[0],args[1],cfg1,self.stage_dir)
+                except (OSError,ValueError):
+                    # No command was written. Collect this session before a
+                    # normal one-shot fallback can use the unclaimed runtime.
+                    _session_end();self._deferred_start=self._fallback_launch
+                    return None
+                self._native_io.launched(proc)
+                self._handoff_failed=bool(proc.error)
+                if proc.error:_session_end()
+                _STANDBY['used']=time.time()
+                _trace('native_session_job_sent',child_pid=proc.pid,generation=proc.command['generation'])
+                return proc
+            self._deferred_start=session_launch
+            self.proc=session_launch()
+            if self.proc is not None:self._deferred_start=None
+            return
+        candidate = (_PREPARED.take(self.python, env, args[0], args[1], cfg1,allow_loading=True)
+                     if self._native_io is not None else None)
+        if candidate is not None:
+            self.proc = candidate.process
+            self._native_io.launched(self.proc)
+            self.log.close()
+            self.log = open(os.devnull, 'w')
+            self._prepared_wait=_prepared_candidate.PendingStart(candidate,self.python,env,args[0],args[1],cfg1,self.stage_dir,_PREPARED.generation)
+            _trace('prepared_build_taken',child_pid=self.proc.pid)
+            self._advance_prepared(bpy.context)
+            return
+        _prepared_end()
         self.proc = _standby_take(self.python, env, cfg1)
         if self.proc is not None:
             # the process started after the last run (_standby_start): Python, warp and newton are in already
             self.log.close()
+            if self._native_io is not None:
+                self._native_io.launched(self.proc)
             _trace('request_send_begin', child_pid=self.proc.pid)
             try:
                 self.proc.stdin.write(json.dumps({'args': args, 'log': self.log.name}) + '\n')
@@ -3911,12 +4740,6 @@ class AC9_OT_SimDress(bpy.types.Operator):
                 _trace('request_sent', child_pid=self.proc.pid)
                 self.log = open(os.devnull, 'w')
         if self.proc is None:
-            def launch():
-                _trace('new_process_begin')
-                proc = subprocess.Popen([self.python, RUN_STAGES, *args], stdout=self.log, stderr=subprocess.STDOUT,
-                                        env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
-                _trace('new_process_spawned', child_pid=proc.pid)
-                return proc
             if retired_running():
                 self._deferred_start = launch
             else:
@@ -3933,19 +4756,25 @@ class AC9_OT_SimDress(bpy.types.Operator):
             if ok and ('end', k) not in self._logged:
                 self._logged.add(('end', k))
                 try:
-                    rl = json.load(open(os.path.join(self.stage_dirs[k], 'run_log.json')))
-                    nf = len(np.load(os.path.join(self.stage_dirs[k], 'frames.npy'), mmap_mode='r')) - 1
-                    cap = int(json.load(open(os.path.join(self.stage_dirs[k], 'config.json'), encoding='utf-8')).get('frames', nf))
+                    with open(os.path.join(self.stage_dirs[k], 'run_log.json'), encoding='utf-8') as f:
+                        rl = json.load(f)
+                    kept = (0 if isinstance(rl.get('frame_s'), list) else
+                            len(np.load(os.path.join(self.stage_dirs[k], 'frames.npy'), mmap_mode='r')) - 1)
+                    nf, frame_end = simlog.stage_frame_counts(rl, kept)
+                    with open(os.path.join(self.stage_dirs[k], 'config.json'), encoding='utf-8') as f:
+                        cap = int(json.load(f).get('frames', nf))
                 except (OSError, ValueError):
                     continue
                 upd = getattr(self, '_live_n', {}).get(k, 0)
                 log(context, d, 'stage_end', tx("stage {0}/{1} ended: {2} frames in {3:.0f} s", k + 1, n_st, nf, rl.get('t_total', 0))
-                                             + (tx(" (stopped by you)") if 'stopped at frame' in str(rl.get('error', ''))
+                                             + (tx(" (stopped by you)") if 'stopped_at' in rl or 'stopped at frame' in str(rl.get('error', ''))
                                                 or (os.path.exists(os.path.join(self.stage_dirs[k], 'stop'))
-                                                    and nf < cap)
-                                                else tx(" (stopped once still)") if 0 < nf < cap else "")
+                                                    and not rl.get('error') and 0 < cap and frame_end < cap)
+                                                else tx(" (stopped once still)") if not rl.get('error') and nf > 0
+                                                and ('settled_at' in rl or (not isinstance(rl.get('frame_s'), list)
+                                                                          and frame_end < cap)) else "")
                                              + tx(", the screen updated {0} times", upd),
-                    stage=k + 1, frames=nf, frames_cap=cap, solver_s=rl.get('t_total'), screen_updates=upd)
+                    stage=k + 1, frames=nf, frame_end=frame_end, frames_cap=cap, solver_s=rl.get('t_total'), screen_updates=upd)
                 # the stage-start check (solver/start_check.py, 2026-10-19): the pieces joining this stage started
                 # inside the body, through other cloth, or from another job's frames -- warned here, the run went on
                 for p_ in ((rl.get('start_check') or {}).get('problems') or []):
@@ -4011,7 +4840,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
 
     def _progress(self):
         try:
-            with open(os.path.join(self.stage_dir, 'progress.txt')) as f:
+            with open(self._stage_file('progress.txt')) as f:
                 a, b = f.read().split()[:2]
             return int(a), int(b)
         except (OSError, ValueError):
@@ -4053,15 +4882,43 @@ class AC9_OT_SimDress(bpy.types.Operator):
             self.ob_name = ob.name
         return self.ob
 
+    def _advance_prepared(self, context):
+        props = context.scene.ac9_cloth_sim
+        waiting=getattr(self,'_prepared_wait',None)
+        if waiting is not None:
+            if type(self)._stop_req or getattr(self,'_abandoned',False):return True
+            state=waiting.poll()
+            if state=='waiting':
+                row=waiting.candidate.status()or{}
+                _PRELOAD.update(state='loading',completed=row.get('completed',0),phase=row.get('preload_phase','imports'))
+                props.dress_status=tx('Preparing the simulation ({0:.0f} s elapsed)',time.time()-self.t_start)
+                return True
+            self._prepared_wait=None
+            if state=='started':
+                _PRELOAD.update(state='ready',completed=4)
+                _trace('prepared_request_sent',child_pid=self.proc.pid)
+            elif state in ('rejected','canceled'):
+                _PRELOAD.update(state='idle',completed=0)
+                waiting.cancel();_retire_prepared(waiting.candidate)
+                self.proc=None;self._deferred_start=self._fallback_launch
+                _trace('prepared_build_rejected',reason=waiting.reason)
+            else:
+                _PRELOAD.update(state='failed',completed=0)
+                _retire_prepared(waiting.candidate);self._handoff_failed=True
+        return False
+
     def _poll(self, context):
         props = context.scene.ac9_cloth_sim
+        if self._advance_prepared(context):return
         if getattr(self, '_deferred_start', None):
             reap_retired()
             if retired_running():
                 props.dress_status = tx('Waiting for the previous Newton process to end')
                 return
-            launch, self._deferred_start = self._deferred_start, None
+            launch = self._deferred_start
             self.proc = launch()
+            if self.proc is None:return
+            self._deferred_start = None
             type(self)._proc = self.proc
         self._garment(context)
         # the current stage: the first without a run log
@@ -4069,7 +4926,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
         self.k = min(sum(done), len(self.stage_dirs) - 1)
         self.stage_dir = self.stage_dirs[self.k]
         self._log_stages(context, done)
-        live = os.path.join(self.stage_dir, 'live.npy')
+        live = self._stage_file('live.npy')
         if os.path.exists(live):
             try:
                 mt = os.path.getmtime(live)
@@ -4080,14 +4937,17 @@ class AC9_OT_SimDress(bpy.types.Operator):
                     # the garment move only between stages (2026-10-13); this tells it from a run
                     self._live_n = getattr(self, '_live_n', {})
                     self._live_n[self.k] = self._live_n.get(self.k, 0) + 1
-            except Exception:
-                pass
+            except (OSError, ValueError, EOFError) as exc:
+                rejected = (self.stage_dir, str(exc))
+                if rejected != getattr(self, '_live_rejected', None):
+                    _trace('live_frame_rejected', stage=self.stage_dir, error=str(exc))
+                    self._live_rejected = rejected
         f, n = self._progress()
         el = time.time() - self.t_start
         stalled = self._track_frames(f)
         # the solver needs ~10 s to start (Python, warp, kernels) before its first frame: said, not shown as frame 0
         # (user 2026-10-13: a grab in Live did nothing for 15 s)
-        starting = self.k == 0 and not os.path.exists(os.path.join(self.stage_dir, 'progress.txt'))
+        starting = self.k == 0 and not os.path.exists(self._stage_file('progress.txt'))
         frac = None if self.mode in LIVE_MODES else self._overall(done, f, n)
         type(self)._shown = {'frac': frac, 'starting': starting}
         if starting:
@@ -4159,7 +5019,13 @@ class AC9_OT_SimDress(bpy.types.Operator):
 
     def _standby_next(self):
         # after the result is in (started earlier it took the CPU from loading it: Stop -> result +0.1 s)
-        _standby_start(*getattr(self, '_standby_args', (None, None, None)))
+        if _session_enabled() and self.mode=='LIVE' and self.info.get('settings',{}).get('native_three'):
+            _STANDBY['used']=time.time();standby_wake()
+        elif os.environ.get('AC9_PREPARED_LIVE','1')=='1' and self.mode=='LIVE' and self.info.get('settings',{}).get('native_three'):
+            _PREPARED_TARGET.update(key=None,attempted=None,idle=0.0)
+            standby_wake()
+        else:
+            _standby_start(*getattr(self, '_standby_args', (None, None, None)))
 
     def _finish(self, context, err=None):
         d = self.info['dir']
@@ -4168,7 +5034,34 @@ class AC9_OT_SimDress(bpy.types.Operator):
             fp_ = os.path.join(d, f"s{k + 1}", 'frames.npy')
             if not os.path.exists(fp_):
                 break
-            fr.append(np.load(fp_))
+            try:
+                frames = np.load(fp_)
+            except (OSError, ValueError, EOFError) as exc:
+                err = tx("Simulation frames could not be read: {0}", exc)
+                self.failed = True
+                _trace('result_file_rejected', stage=k, error=str(exc))
+                break
+            accepted = 0
+            valid_shape = frames.ndim == 3 and frames.shape[1:] == (len(self.ob.data.vertices), 3)
+            if valid_shape:
+                for frame in frames:
+                    try:
+                        _valid_positions(frame, len(self.ob.data.vertices))
+                    except ValueError:
+                        break
+                    accepted += 1
+            if accepted:
+                fr.append(frames[:accepted])
+            if not valid_shape or accepted != frames.shape[0]:
+                err = tx("Invalid simulation frame rejected; the preceding valid frames are kept")
+                self.failed = True
+                _trace('result_frame_rejected', stage=k, accepted=accepted)
+                break
+        if fr and sum(max(0, len(x) - 1) for x in fr) == 0:
+            fr = []
+        if err and getattr(self, 'failed', False):
+            context.scene.ac9_cloth_sim.dress_status = err
+            self.report({'WARNING'}, err)
         if not fr:
             # failed or stopped before a first frame: nothing new to show; a Continue / Live gets its previous
             # result back (its mesh, cache and link), so it can be continued again
@@ -4187,7 +5080,6 @@ class AC9_OT_SimDress(bpy.types.Operator):
                 self._undo_back = True
                 raise NoFrame("no frame was written", undone=True)
             raise NoFrame("no frame was written" + ("; the previous result is back" if pj else ""))
-        drop_later_done(keep=False)
         allf = np.concatenate([fr[0]] + [x[1:] for x in fr[1:]], 0)
         self._n_frames = len(allf) - 1
         # every 2nd frame, and always the last (the result): with an odd count of steps the last fell off
@@ -4205,6 +5097,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
         write_pc2(pc2, allf)
         set_positions(self.ob, allf[-1])
         attach_cache(context, self.ob, pc2, len(allf))
+        drop_later_done(keep=False)
         self.ob['ac9_job'] = d
         refresh_thickness(context, self.ob)
         try:                    # the buttons drawn on the result (button_view.py); never the run's failure
@@ -4277,7 +5170,10 @@ class AC9_OT_SimDress(bpy.types.Operator):
             try:
                 with open(os.path.join(self.stage_dirs[-1], 'run_log.json'), encoding='utf8') as _state_log:
                     _saved_state = json.load(_state_log).get('checkpoint', {})
-                if _saved_state.get('status') == 'unavailable':
+                from .solver.native_three_contract import expected_shape_restart
+                if self.info.get('settings', {}).get('native_three') and expected_shape_restart(_saved_state):
+                    done += '; ' + tx('Shape saved; AC9 Native 3 restarts with new history')
+                elif _saved_state.get('status') == 'unavailable':
                     done += '; ' + tx('Simulation state was not saved; the shape was kept')
                     self.report({'WARNING'}, tx('The shape was kept, but simulation state could not be saved'))
             except (OSError, ValueError):
@@ -4285,7 +5181,8 @@ class AC9_OT_SimDress(bpy.types.Operator):
         context.scene.ac9_cloth_sim.dress_status = done + seen
         self.report({'INFO'}, context.scene.ac9_cloth_sim.dress_status)
 
-    def _to_placed(self, context, X):
+    @PB.prepared_consumer
+    def _to_placed(self, context, X, *, preparation=None):
         """Local Sim from the placement: the selected pieces' last shape X (m, the run's vertices) written into their
         placed objects -- the user's shape from then on (Phase Sim starts them from it, Back to Guide drops it) --
         and the garment the run made removed: there was none before. Returns (pieces written, notes)."""
@@ -4295,11 +5192,8 @@ class AC9_OT_SimDress(bpy.types.Operator):
         offs = list(np.load(os.path.join(d, 'scene.idx.npz'))['offs']) + [len(X)]
         g = bpy.data.objects.get(self.ob_name)
         if g is not None:
-            me = g.data
-            bpy.data.objects.remove(g)
-            if me is not None and me.users == 0:
-                bpy.data.meshes.remove(me)
-        r = prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, local=self.local)
+            preparation.retire_after_commit(g)
+        r = prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, local=self.local, preparation=preparation)
         PLV.build(context, spec, r['pat'], r['tris'], r['X'], r['pairs'])
         obs = PLV.objects(spec)
         put, notes = [], []
@@ -4343,7 +5237,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
     _note = None                                  # (status text, shown until): a Ctrl+drag that was refused
 
     def _grab_file(self):
-        return os.path.join(self.info['dir'], 'grab.json')     # read by every stage (a grab may span two)
+        return self._control_file('grab.json')     # read by every stage (a grab may span two)
 
     def _write_grab(self, target):
         try:
@@ -4501,8 +5395,10 @@ class AC9_OT_SimDress(bpy.types.Operator):
             return
         props = context.scene.ac9_cloth_sim
         try:
+            # nothing to land on (job no_support): gravity stays off, whatever the switch says (user 2026-11-10)
             p = recipe.live_params(spec, self.info['names'],
-                                   props.local_gravity if self.mode == 'LOCAL' else props.live_gravity,
+                                   (props.local_gravity if self.mode == 'LOCAL' else props.live_gravity)
+                                   and not self.info.get('no_support'),
                                    active_pieces=self.local)
         except ValueError:                         # an End Taper the pattern cannot take yet: the rest goes on
             return
@@ -4528,7 +5424,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
         if p == self._params:
             return
         try:
-            f_ = os.path.join(self.info['dir'], 'params.json')
+            f_ = self._control_file('params.json')
             with open(f_ + '.tmp', 'w', encoding='utf-8') as fo:
                 json.dump(p, fo)
             os.replace(f_ + '.tmp', f_)
@@ -4572,10 +5468,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
             import traceback
             traceback.print_exc()
             if self.proc is not None:
-                try:
-                    stop_solver(self.proc, self.stage_dirs[max(self.k, 0):], timeout=10)
-                except Exception:                                 # noqa: BLE001
-                    pass
+                _stop_or_retire(self.proc, self.stage_dirs[max(self.k, 0):])
                 self.proc = None
             context.scene.ac9_cloth_sim.dress_status = tx("stopped: {0}", exc)
             try:
@@ -4666,6 +5559,12 @@ class AC9_OT_SimDress(bpy.types.Operator):
         if (event.type == 'ESC' and event.value == 'PRESS') or type(self)._stop_req:
             type(self)._stop_req = False
             self._esc = True
+            waiting=getattr(self,'_prepared_wait',None)
+            if waiting is not None:
+                waiting.cancel();_retire_prepared(waiting.candidate)
+                self._prepared_wait=None;self.proc=None
+                _PRELOAD.update(state='idle',completed=0)
+                self._deferred_start=self._fallback_launch
             if self.proc is not None:
                 # Live ends here as its normal end (the solver writes its frames, no error); a staged run keeps
                 # the frames that ran, the stopped stage's too
@@ -4674,7 +5573,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
                 if self.mode not in LIVE_MODES:
                     self.stopped_by_user = True
                 try:
-                    between = self.k > 0 and not os.path.exists(os.path.join(self.stage_dir, 'progress.txt'))
+                    between = self.k > 0 and not os.path.exists(self._stage_file('progress.txt'))
                     self._pending_stop = PendingStop(self.proc, self.stage_dirs[self.k:],
                                                      frame_s=getattr(self, '_frame_s', None),
                                                      min_s=STAGE_START_S if between else STUCK_MIN_S)
@@ -4706,7 +5605,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
                 self._poll(context)
             except Exception as exc:
                 if self.proc is not None:
-                    stop_solver(self.proc, self.stage_dirs[self.k:])
+                    _stop_or_retire(self.proc, self.stage_dirs[self.k:])
                     self.proc = None
                 context.scene.ac9_cloth_sim.dress_status = tx("stopped: {0}", exc)
                 self.report({'ERROR'}, context.scene.ac9_cloth_sim.dress_status)
@@ -4727,7 +5626,14 @@ class AC9_OT_SimDress(bpy.types.Operator):
             context.scene.ac9_cloth_sim.dress_status += tx(" ({0} modifier(s) of yours on again)", n)
 
     def _end(self, context, r):
+        _session_reserve(False)
+        waiting=getattr(self,'_prepared_wait',None)
+        if waiting is not None:
+            waiting.cancel();_retire_prepared(waiting.candidate);self._prepared_wait=None
         drop_later_done(keep=True)
+        self._release_native_io()
+        if getattr(self, 'log', None) is not None:
+            self.log.close()
         self._resume(context)
         if getattr(self, '_undo_back', False):
             self._undo_back = False
@@ -4794,6 +5700,10 @@ class AC9_OT_SimEditFrame(bpy.types.Operator):
         return {'FINISHED'}
 
 
+NOT_SIMULATED_PAIR = ("not simulated yet (or hidden / Off): a placed pair already follows as a mirror image, moving one "
+                      "moves the other. This copies a simulated side's shape to its pair")
+
+
 class AC9_OT_SimMirrorResult(bpy.types.Operator):
     """Give the selected pieces' dressed shape to the other side of their left / right pairs, mirrored (a side grabbed into shape in Live, given to the other side). Select the pieces sewn to it too, so their seams stay together. Where the two sides close over each other (an Over on their seam, or buttons between them), the top one lies outside. Nothing is simulated: Live Sim or Phase Sim goes on from it. Ctrl+Z puts it back"""
     # user 2026-11-04 (DECISIONS cloth-sim-mirror-result-to-pair-2026-11-04): pairs only, a piece cut as one across
@@ -4804,9 +5714,29 @@ class AC9_OT_SimMirrorResult(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        # pressable only for a pair whose two sides are on the simulated garment, the reason said otherwise (user
+        # 2026-11-11, REVIEW_fable_flat_turn_snap_mirror_ui §3: pressed on placed pieces it refused in a line that
+        # did not say their pair already follows as a mirror image). garment_pieces is kept per job (no file read
+        # per redraw)
+        from .core import mirror_result as MR
         spec = store.get(context)[0]
         g = bpy.data.objects.get(garment_name(spec)) if spec is not None else None
-        return g is not None and has_result(g) and bool(SEL.pieces(context))
+        sel = SEL.pieces(context)
+        if g is None or not has_result(g) or not sel:
+            cls.poll_message_set("Select a simulated piece of a left / right pair")
+            return False
+        todo, _ = MR.plan(spec, sel, SEL.lead(context))
+        if not todo:
+            cls.poll_message_set("Select a piece of a left / right pair (both of a pair: click the side to copy last)")
+            return False
+        # on the garment as execute takes them: not hidden (Reset: shown as placed), not Off (All)
+        hidden = set(hidden_pieces(g, spec) or ())
+        off = {pc['name'] for pc in spec['pieces'] if S.piece_state(pc) == 'off_all'}
+        have = set(garment_pieces(g)) - hidden - off
+        if not any(s_ in have and t_ in have for s_, t_ in todo):
+            cls.poll_message_set(NOT_SIMULATED_PAIR)
+            return False
+        return True
 
     def execute(self, context):
         from .core import mirror_result as MR
@@ -4824,7 +5754,7 @@ class AC9_OT_SimMirrorResult(bpy.types.Operator):
         for s_, t_ in todo:
             bad = [n for n in (s_, t_) if n not in rng or n in hidden or states.get(n) == 'off_all']
             if bad:
-                notes.append(f"{s_} -> {t_}: " + ", ".join(bad) + " not on the dressed garment")
+                notes.append(f"{s_} -> {t_}: " + ", ".join(bad) + ": " + NOT_SIMULATED_PAIR)
             else:
                 ok.append((s_, t_))
         if not ok:
@@ -4844,12 +5774,14 @@ class AC9_OT_SimMirrorResult(bpy.types.Operator):
         over = spec.get('closure_over')
         done = []
         for s_, t_ in ok:
-            Xt, how = MR.mirror_piece(X, flat, F, rng[s_], rng[t_], cx)
+            pl_ = S.pair_plane(spec, s_)
+            Xt, how = MR.mirror_piece(X, flat, F, rng[s_], rng[t_], S.mirror_center(spec, pl_, s_), pl_)
             lapped = ""
             # a closure the person marked (an Over on their seam, buttons between them) lies over as Place lays a
-            # band's (closure.py order, 2 mm); nothing is guessed from the pattern (user 2026-11-02)
+            # band's (closure.py order, 2 mm); nothing is guessed from the pattern (user 2026-11-02). A front / back
+            # pair has no left / right closure: not laid over
             side_of = {s_: MR.side(X[rng[s_][0]:rng[s_][1]], cx), t_: MR.side(Xt, cx)}.get
-            marked, top_pc, _by = MR.closure_top(spec, s_, t_, side_of)
+            marked, top_pc, _by = MR.closure_top(spec, s_, t_, side_of) if pl_ != 'y' else (False, None, None)
             if marked:
                 Xt, n_ = MR.lap(Xt, X[rng[s_][0]:rng[s_][1]], axis, top_pc == t_)
                 lapped = tx(", {0} on top", top_pc) if n_ else ""
@@ -4910,7 +5842,8 @@ class MeshMismatch(ValueError):
     with nothing selected can (draft_tool.pending_refused says only those)."""
 
 
-def write_placed(context, g, spec, names, h):
+@PB.prepared_consumer
+def write_placed(context, g, spec, names, h, *, preparation=None):
     """Write the placed shapes (hand moves kept) of pieces `names` into the garment's mesh, in place of their part of
     the result (user 2026-10-14 b-A: after a Dress the garment is the one mesh to work on). Returns the names written;
     raises ValueError when the garment's mesh is not its result's (a pattern change not carried yet)."""
@@ -4924,7 +5857,7 @@ def write_placed(context, g, spec, names, h):
     if len(pidx['flat']) != len(g.data.vertices):
         raise MeshMismatch("The garment's mesh does not match its result (the pattern changed since). Ctrl+Z takes "
                          "the change back; Back to Placed with nothing selected puts the whole garment back")
-    res = prepare(context, h, shapes_only=True)
+    res = prepare(context, h, shapes_only=True, preparation=preparation)
     pat, tris = res['pat'], res['tris']
     # the placed objects went at the Dress (PLV.drop): made for a moment from the pose, read, and removed again
     made = not PLV.objects(spec)
@@ -4932,7 +5865,7 @@ def write_placed(context, g, spec, names, h):
         PLV.build(context, spec, pat, tris, res['X'], res['pairs'])
     try:
         X, took, _ = _hand_placed(spec, pat, list(res['X']), only=set(names))
-        X = _mirror_hand(X, took, res['pairs'], PLV.center_x(spec))
+        X = _mirror_hand(X, took, res['pairs'], spec, pat['names'])
     finally:
         if made:
             PLV.drop(spec)
@@ -4949,7 +5882,7 @@ def write_placed(context, g, spec, names, h):
         Vr = pidx['flat'][offs[j]:offs[j + 1]]
         V = np.asarray(pat[f"V{i}"], np.float64)
         Xi = np.asarray(X[i], np.float64)
-        co[offs[j]:offs[j + 1]] = Xi if len(V) == len(Vr) and np.allclose(V, Vr, atol=1e-6) else _bary_map(Vr, V, tris[i], Xi)
+        co[offs[j]:offs[j + 1]] = Xi if len(V) == len(Vr) and SH.same_layout(V, Vr) else _bary_map(Vr, V, tris[i], Xi)
         done.append(n)
     set_positions(g, co / 1000.0)
     return done
@@ -4987,7 +5920,7 @@ def off_shapes(context, g, spec):
 
 
 # a Reset of some pieces on a dressed garment: those pieces shown as placed objects again (Place, G / R, the pose
-# fields, Mirror to Pair work on them as before a Dress) and their part of the garment hidden by this modifier (the
+# fields, Mirror Placement work on them as before a Dress) and their part of the garment hidden by this modifier (the
 # "reposition the selected pattern", user 2026-10-20). The next Simulate writes the objects' shapes into the garment
 # (flush_placed), takes them away and sews those pieces on from there.
 HIDE_MOD = "AC9_ResetHidden"
@@ -5112,22 +6045,24 @@ def hide_pieces(g, names):
     _thickness_last(g)
 
 
-def reset_to_placed(context, g, spec, names, h):
+@PB.prepared_consumer
+def reset_to_placed(context, g, spec, names, h, *, preparation=None):
     """Pieces `names` of the dressed garment g back to their placed shapes: shown as placed objects (only these and
     the pieces Reset before) and hidden on the garment. While its frames play they go on playing for the other pieces
     (user 2026-11-04), the frame on screen kept for the next Phase Sim to go on from (FROM_FRAME_PROP, the latest
     Reset's); flush_placed writes the shapes into the garment then. Returns the names written."""
     if not frozen(g):
         g[FROM_FRAME_PROP] = int(context.scene.frame_current)
-    done = write_placed(context, g, spec, names, h)
+    done = write_placed(context, g, spec, names, h, preparation=preparation)
     allr = sorted(set(reset_pieces(g)) | set(done))
-    res = prepare(context, h, shapes_only=True)
+    res = prepare(context, h, shapes_only=True, preparation=preparation)
     PLV.build(context, spec, res['pat'], res['tris'], res['X'], res['pairs'], only=set(allr))
     set_shown_as_placed(g, spec, allr)
     return done
 
 
-def flush_placed(context, g, h, new_placed=None):
+@PB.prepared_consumer
+def flush_placed(context, g, h, new_placed=None, *, preparation=None):
     """Before a Simulate / Continue / Live on garment g: the placed objects of pieces Reset on it (moved, placed or
     not) written into its mesh -- their pose synced into the spec first -- then the objects and the hiding go. The
     run then starts those pieces from that shape, as after a Reset. Returns the pieces written ([] if none).
@@ -5154,17 +6089,18 @@ def flush_placed(context, g, h, new_placed=None):
     sp = PLV.sync_pose(context, spec)
     if sp is not None:
         store.put(context, sp)
+        PB.replan_source(preparation)
         spec = sp
     freeze(context, g)
-    done = write_placed(context, g, spec, names, h)
+    done = write_placed(context, g, spec, names, h, preparation=preparation)
     # a piece not in the garment's result (Off at the Dress, On now) moved to its seams by Part to Seam / Band on
     # Edge: its shape kept for prepare, which starts it there (user 2026-10-24, DECISIONS
     # cloth-sim-seam-tools-any-state-settle-2026-10-24); write_placed has no place for it in the garment's mesh
     new = [n for n in names if n not in done] if new_placed is not None else []
     if new:
-        res = prepare(context, h, shapes_only=True)
+        res = prepare(context, h, shapes_only=True, preparation=preparation)
         X, took, _ = _hand_placed(spec, res['pat'], list(res['X']), only=set(new))
-        X = _mirror_hand(X, took, res['pairs'], PLV.center_x(spec))
+        X = _mirror_hand(X, took, res['pairs'], spec, res['pat']['names'])
         pn = [str(n) for n in res['pat']['names']]
         for n in new:
             if n in pn:
@@ -5175,6 +6111,99 @@ def flush_placed(context, g, h, new_placed=None):
     PLV.drop(spec)
     hide_pieces(g, [])
     return done
+
+
+@PB.prepared_consumer
+def reset_result(context, *, names=None, to_guide=False, report=None, preparation=None):
+    """Back to Placed as a child operation; the outer owner commits every preparation once."""
+    report = report or (lambda kinds, message: None)
+    spec = store.get(context)[0]
+    if names is None:
+        from . import placement as PL
+        on = {pc['name'] for pc in spec['pieces'] if pc.get('enabled', True)} & set(spec.get('placement', {}))
+        names = sorted(PL.with_pairs(spec, PL.selected_pieces(context)) & on)
+    restored = []
+    result = _reset_shapes(context, names, to_guide, report, restored, preparation)
+    if result == {'FINISHED'}:
+        PLV.forget_before_seam(spec, restored)
+        from . import piece_move as PM
+        PM.clear(context)
+    else:
+        preparation.cancel()
+    return result
+
+
+def _reset_shapes(context, names, to_guide, report, restored_out, preparation):
+    props = context.scene.ac9_cloth_sim
+    spec, _ = store.get(context)
+    PLV.leave_edit(context)
+    # Names were resolved before the Move Piece handle or any shape is replaced.
+    # Restore both live and archived placed shapes before write_placed reads them.
+    # This also works on a piece added after the garment was simulated.
+    try:
+        reset_names = names or ({pc['name'] for pc in spec['pieces'] if pc.get('enabled', True)}
+                               & set(spec.get('placement', {})))
+        if not names and not to_guide:
+            # the whole garment is never refused (2026-11-01, Fable review b-1): a piece whose shape from before
+            # Part to Seam cannot come back stays as it is now, said in one line
+            kept = []
+            for n_ in sorted(reset_names):
+                try:
+                    PLV.check_before_seam(spec, [n_])
+                except ValueError:
+                    kept.append(n_)
+            if kept:
+                reset_names = set(reset_names) - set(kept)
+                report({'WARNING'}, tx("{0}: kept as it is (its pattern changed after Part to Seam)",
+                                            ", ".join(kept)))
+        # computed shapes (a Local Sim's, one kept while Off) are not the user's: made from the numbers again
+        # (user 2026-11-04: Back to Placed left three pieces in an earlier result's shape)
+        from . import placement as PL_
+        PLV.drop_sim_shapes(spec, PL_.with_pairs(spec, set(reset_names)))
+        restored = ([] if to_guide else
+                    PLV.restore_before_seam(spec, reset_names, consume=False))
+        restored_out[:] = restored
+    except ValueError as exc:
+        report({'ERROR'}, str(exc))
+        return {'CANCELLED'}
+    if restored:
+        sp = PLV.sync_pose(context, spec)
+        if sp is not None:
+            store.put(context, sp)
+            PB.replan_source(preparation)
+            spec = sp
+    g = bpy.data.objects.get(garment_name(spec))
+    if g is not None and context.object == g and context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')          # Fix by Hand's Sculpt / Edit Mode on the result
+    if names and has_result(g):
+        # these pieces only, on the garment itself (user 2026-10-14 b-A / b-B): the result's last shape frozen as
+        # the garment's mesh and these pieces' part of it put back to their placed shapes, at once; the next
+        # Simulate goes on from it and sews them on.
+        # 2026-10-20: shown as placed objects again (Place / G / R move them), their part of the garment hidden
+        from . import placement as PL
+        spec, given = PL.give_shape(context, spec, names, preparation=preparation)
+        names = [n for n in names if n not in given]
+        try:
+            done = reset_to_placed(context, g, spec, names, props.mesh_size, preparation=preparation) if names else []
+        except ValueError as exc:
+            report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        done = list(done) + given
+        n = len(reset_pieces(g))
+        props.dress_status = (tx("{0}{1} back to placed (Place or G / R moves them); the next Phase Sim sews {2} piece(s) on, the rest goes on", ', '.join(done[:4]), ' ...' if len(done) > 4 else '', n))
+        report({'INFO'}, props.dress_status)
+        return {'FINISHED'}
+    # Materialize first: a failed build must leave the result and its cache intact.
+    if spec.get('placement') and props.body is not None:
+        from . import placement as PL
+        if PL.show_placed(context, placed_only=True, report=report, preparation=preparation) != {'FINISHED'}:
+            return {'CANCELLED'}
+    # the whole garment: the result off (the job folder stays), the placed shapes shown
+    if g is not None:
+        preparation.retire_after_commit(g)
+    props.dress_status = tx("Back to placed: the next Phase Sim dresses from the placed shapes")
+    report({'INFO'}, props.dress_status)
+    return {'FINISHED'}
 
 
 class AC9_OT_SimReset(bpy.types.Operator):
@@ -5209,98 +6238,11 @@ class AC9_OT_SimReset(bpy.types.Operator):
         return self.execute(context)
 
     def execute(self, context):
-        spec = store.get(context)[0]
-        backup = PLV.PreparedResetBackup(context, spec)
         try:
-            result = self._execute_reset(context)
-            if result == {'FINISHED'}:
-                PLV.forget_before_seam(spec, getattr(self, '_restored_prepared', []))
-                from . import piece_move as PM
-                PM.clear(context)
-            else:
-                backup.rollback()
-            return result
+            return reset_result(context, to_guide=self.to_guide, report=self.report)
         except (ValueError, RuntimeError) as exc:
-            backup.rollback()
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
-        finally:
-            backup.close()
-
-    def _execute_reset(self, context):
-        props = context.scene.ac9_cloth_sim
-        spec, _ = store.get(context)
-        PLV.leave_edit(context)
-        names = self._names(context, spec)                # read before the Move Piece handle goes (it is selected)
-        # Restore both live and archived placed shapes before write_placed reads them.
-        # This also works on a piece added after the garment was simulated.
-        try:
-            reset_names = names or ({pc['name'] for pc in spec['pieces'] if pc.get('enabled', True)}
-                                   & set(spec.get('placement', {})))
-            if not names and not self.to_guide:
-                # the whole garment is never refused (2026-11-01, Fable review b-1): a piece whose shape from before
-                # Part to Seam cannot come back stays as it is now, said in one line
-                kept = []
-                for n_ in sorted(reset_names):
-                    try:
-                        PLV.check_before_seam(spec, [n_])
-                    except ValueError:
-                        kept.append(n_)
-                if kept:
-                    reset_names = set(reset_names) - set(kept)
-                    self.report({'WARNING'}, tx("{0}: kept as it is (its pattern changed after Part to Seam)",
-                                                ", ".join(kept)))
-            # computed shapes (a Local Sim's, one kept while Off) are not the user's: made from the numbers again
-            # (user 2026-11-04: Back to Placed left three pieces in an earlier result's shape)
-            from . import placement as PL_
-            PLV.drop_sim_shapes(spec, PL_.with_pairs(spec, set(reset_names)))
-            restored = ([] if self.to_guide else
-                        PLV.restore_before_seam(spec, reset_names, consume=False))
-            self._restored_prepared = restored
-        except ValueError as exc:
-            self.report({'ERROR'}, str(exc))
-            return {'CANCELLED'}
-        if restored:
-            sp = PLV.sync_pose(context, spec)
-            if sp is not None:
-                store.put(context, sp)
-                spec = sp
-        g = bpy.data.objects.get(garment_name(spec))
-        if g is not None and context.object == g and context.mode != 'OBJECT':
-            bpy.ops.object.mode_set(mode='OBJECT')          # Fix by Hand's Sculpt / Edit Mode on the result
-        if names and has_result(g):
-            # these pieces only, on the garment itself (user 2026-10-14 b-A / b-B): the result's last shape frozen as
-            # the garment's mesh and these pieces' part of it put back to their placed shapes, at once; the next
-            # Simulate goes on from it and sews them on.
-            # 2026-10-20: shown as placed objects again (Place / G / R move them), their part of the garment hidden
-            from . import placement as PL
-            spec, given = PL.give_shape(context, spec, names)
-            names = [n for n in names if n not in given]
-            try:
-                done = reset_to_placed(context, g, spec, names, props.mesh_size) if names else []
-            except ValueError as exc:
-                self.report({'ERROR'}, str(exc))
-                return {'CANCELLED'}
-            done = list(done) + given
-            n = len(reset_pieces(g))
-            props.dress_status = (tx("{0}{1} back to placed (Place or G / R moves them); the next Phase Sim sews {2} piece(s) on, the rest goes on", ', '.join(done[:4]), ' ...' if len(done) > 4 else '', n))
-            self.report({'INFO'}, props.dress_status)
-            return {'FINISHED'}
-        # Materialize first: a failed build must leave the result and its cache intact.
-        if bpy.ops.ac9_cloth_sim.show_placed.poll():
-            if bpy.ops.ac9_cloth_sim.show_placed(placed_only=True) != {'FINISHED'}:
-                return {'CANCELLED'}
-        # the whole garment: the result off (the job folder stays), the placed shapes shown
-        if g is not None:
-            me = g.data
-            bpy.data.objects.remove(g)
-            if me is not None and me.users == 0:
-                bpy.data.meshes.remove(me)
-            from . import display_state
-            display_state.apply(context, store.get(context)[0])     # the result gone: the placed shapes are shown
-        props.dress_status = tx("Back to placed: the next Phase Sim dresses from the placed shapes")
-        self.report({'INFO'}, props.dress_status)
-        return {'FINISHED'}
 
 
 class AC9_OT_SimCollider(bpy.types.Operator):
@@ -5354,7 +6296,7 @@ class AC9ClothSimPreferences(bpy.types.AddonPreferences):
         description="Start the simulation faster (by 3 to 5 s): the solver is started ahead of the next run and "
                     "waits, holding about 200 MB of GPU memory. It ends after 15 minutes unused. Off: every run "
                     "starts the solver anew",
-        default=True, update=lambda self, context: standby_wake(context) if self.keep_solver_ready else standby_end())
+        default=True, update=_keep_ready_changed)
 
     # the how-to lines in the panels ("Pick pieces, press on a guide, ..."), on for a first user; off once known
     # (user 2026-11-04: the panels are easier to read without them)
@@ -5414,11 +6356,11 @@ class AC9_OT_SimLog(bpy.types.Operator):
     bl_label = "AC9 Simulation Log"
 
     def _job(self, context):
-        obs = [o for o in bpy.data.objects if o.get('ac9_job') and os.path.isdir(str(o['ac9_job']))]
-        ob = context.active_object if context.active_object in obs else None
-        if ob is None and obs:
-            ob = max(obs, key=lambda o: str(o['ac9_job']))
-        return str(ob['ac9_job']) if ob else None
+        from . import result_reference as RR
+        candidates = [(ob, ref.path) for ob in bpy.data.objects
+                      if (ref := RR.resolve(ob, display=True)) is not None and ref.is_directory]
+        active = next((path for ob, path in candidates if ob == context.active_object), None)
+        return active if active is not None else max((path for ob, path in candidates), default=None)
 
     def invoke(self, context, event):
         return context.window_manager.invoke_popup(self, width=520)

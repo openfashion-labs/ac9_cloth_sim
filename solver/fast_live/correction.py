@@ -19,6 +19,15 @@ from . import audit as fast_audit
 import os as _os
 _TIMING=bool(_os.environ.get('AC9_TEST_STAGE_TIMING'))   # test only: synchronized section times in each correction row
 _marks=[]
+
+def _native_membrane_materials(materials):
+    """Match Native's whole-membrane gate without modifying Native's arrays."""
+    result=np.array(materials,dtype=float,copy=True)
+    if not np.isfinite(result).all():raise ValueError('Nonfinite model array: materials')
+    if np.any(result[:,:4]<0):raise ValueError('Invalid BW material or area')
+    enabled=(result[:,0]>0)|(result[:,1]>0)
+    result[~enabled,:4]=0.
+    return result
 def _mark(name):
     if not _TIMING:return
     import warp as wp
@@ -88,6 +97,7 @@ def install(g, out):
     floor=0. # unused: open mesh uses Native local-side semantics
     model={n:v for n,v in [('mass',m.particle_mass.numpy().astype(float)),('tri',m.tri_indices.numpy()),('poses',m.tri_poses.numpy().astype(float)),('materials',m.tri_materials.numpy().astype(float)),('areas',m.tri_areas.numpy().astype(float))]}
     validate_arrays(model,m.particle_inv_mass.numpy(),m.particle_flags.numpy(),k.ParticleFlags.ACTIVE)
+    model['materials']=_native_membrane_materials(model['materials'])
     def spring_array(name):
         if m.spring_count:return getattr(m,name).numpy()
         return np.empty(0,dtype=np.int32 if name=='spring_indices' else np.float32)
@@ -293,6 +303,8 @@ def install(g, out):
                 _mark('lag_and_data');change=reduced.solve(gpu_system,q,hc,residual,dt,data,gpu_system.linear_tol) if reduced is not None else gpu_system.solve(q,hc,residual,dt,data)[0];_mark('solve')
                 if slipping is not None and len(slipping):gpu_system.properties.assign(m.edge_bending_properties.numpy().astype(float))
                 if not np.isfinite(change).all():raise RuntimeError('Nonfinite correction')
+                if np.any(change[~active]):raise RuntimeError('Correction moved a fixed particle')
+                change[~active]=0.
                 if followers is not None:change[followers]=0.
                 if recovering is not None:change[recovering]=0.
                 if ((_os.environ.get('AC9_TEST_DUMP_CHANGE') and np.linalg.norm(change,axis=1).max()>float(_os.environ['AC9_TEST_DUMP_CHANGE'])/1000) or int(_os.environ.get('AC9_TEST_DUMP_FRAME') or -1)==int(g['f'])) and not getattr(gpu_system,'_dumped',False):
@@ -344,7 +356,10 @@ def install(g, out):
                         norm=float(np.linalg.norm(r[active]))
                     else:_mark('ls_assign');final_count=fresh.detect(state_in);norm=None;_mark('ls_detect')
                     Enew,_,metanew=energy.evaluate(candidate,fresh.current_parameters);_mark('ls_energy');Enew+=F.energy(candidate)+grab_energy(candidate)+attach_energy(candidate)+hyst_energy(candidate)+sc_energy(candidate)+lc_energy(candidate);_mark('ls_friction')
-                    work=-float(np.sum(residual[active]*(candidate.astype(float)-q)[active]))
+                    if reduced is None:
+                        work=-float(np.sum(residual[active]*(candidate.astype(float)-q)[active]))
+                    else:
+                        work=-float(np.sum(reduced.origin_rhs_numpy*(candidate.astype(float)-q)))
                     stable=bool(np.array_equal(meta0['hinge_active'],metanew['hinge_active']) and not np.any(meta0['hinge_active']&(np.abs(meta0['hinge_angle32']-metanew['hinge_angle32'])>np.pi)))
                     _mark('ls_checks')
                     path_ok=None
@@ -379,8 +394,11 @@ def install(g, out):
         for key,source in [('mass',m.particle_mass),('poses',m.tri_poses),('materials',m.tri_materials),('areas',m.tri_areas)]:
             value=source.numpy().astype(float)
             if value.shape!=model[key].shape:raise ValueError('Fast Live array shape changed: '+key)
+            if key=='materials':value=_native_membrane_materials(value)
             model[key]=value
             getattr(gpu_system,key).assign(reduced.eval_mass(value) if key=='mass' and reduced is not None else value)
+            if key=='mass' and eval_mass is not None:
+                eval_mass.assign(reduced.eval_mass(value).astype(np.float32))
             if key!='mass':getattr(gpu_system.projector,key).assign(value)
         validate_arrays(model,m.particle_inv_mass.numpy(),m.particle_flags.numpy(),k.ParticleFlags.ACTIVE)
         active[:]=model['mass']>0

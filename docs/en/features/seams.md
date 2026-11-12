@@ -36,7 +36,7 @@ Hold it from **Edit Seams** in the **Pattern** panel (or from the tool column on
 
 ## Add Seam and Add Seam (M:N)
 
-- **Add Seam**: click a start and end point on one piece's outline, then click a start and end point on the partner piece (from the same end). The four points show the lengths of both sides and the difference; look it over and press Enter (or click once more) to add it. Clicking in the middle of an edge takes that whole edge (Ctrl+click for a point in the middle). If a section is taken running the wrong way, press **F** to reverse the direction. Backspace steps back one, and Esc or right-click cancels. Seams you add are named "U1", "U2", and so on.
+- **Add Seam**: click a start and end point on one piece's outline, then click a start and end point on the partner piece (from the same end). The four points show the lengths of both sides and the difference; look it over and press Enter (or click once more) to add it. Clicking in the middle of an edge takes that whole edge (Ctrl+click for a point in the middle). Points snap to corners and notches, so you can sew from notch to notch. If a section is taken running the wrong way, press **F** to reverse the direction. Backspace steps back one, and Esc or right-click cancels. Seams you add are named "U1", "U2", and so on.
 - **Add Seam (M:N)** (called **Add M:N** in the **Pattern** panel): adds a seam where one side is made of several sections. Click a start and end point for each section on side A, then press Enter to move to the other side. Do the same on side B and press Enter to add it. Both sides are divided by the fraction of their joined length and go in as a bundle of one-to-one seams (the same group).
 
 ## Settings for the selected seam (AC9 Seam)

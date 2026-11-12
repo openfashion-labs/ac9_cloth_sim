@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
+import sys
 from .i18n import CTX, rpt, tx
 
 import bpy
@@ -493,7 +494,7 @@ def _path_guides(self, context):
     spec = store.get(context)[0]
     gs = sorted((spec or {}).get('guides') or {})
     return _keep([('PLACED', "Part: Placed", "The body part the seam's piece is placed on")] +
-                 [(g, tx("Part: {0}", g), tx("Go round the {0} guide's axis", g)) for g in gs])
+                 [(g, tx("Part: {0}", g), tx("Go round the {0} guide's axis", g)) for g in gs], owner='path_guides')
 
 
 class _SeamPathBase:
@@ -565,7 +566,7 @@ def _attach_tapes(self, context):
     _ATTACH_ITEMS[:] = [('NONE', "None", "Not attached")] + [
         (n, LABEL.get(n, n), tx("A tape round the body: {0}" if cl else "A tape along the body: {0}", tx(LABEL.get(n, n))))
         for n, cl in AT.tape_names(geo)]
-    return _keep(list(_ATTACH_ITEMS))
+    return _keep(list(_ATTACH_ITEMS), owner='attach_tapes')
 
 
 class AC9_OT_SimSeamAttach(bpy.types.Operator):
@@ -885,6 +886,23 @@ class AC9_OT_SimSelectPiece(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class AC9_OT_SimSetUnits(bpy.types.Operator):
+    """Show every length in this unit: the pattern, the measurements and the fields (the particle distance stays mm). Only how lengths are shown; sizes stay"""
+    bl_idname = "ac9_cloth_sim.set_units"
+    bl_label = "Units"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    unit: bpy.props.EnumProperty(items=[('MM', "mm", ""), ('CM', "cm", ""), ('M', "m", ""), ('IN', "in", "")],
+                                 options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        from . import units
+        units.set_unit(context, self.unit)
+        for a in context.screen.areas if context.screen else ():
+            a.tag_redraw()
+        return {'FINISHED'}
+
+
 class AC9_OT_SimRefresh(bpy.types.Operator):
     """Re-read the spec text (after editing the JSON by hand) and rebuild the pattern objects"""
     bl_idname = "ac9_cloth_sim.refresh"
@@ -1022,6 +1040,27 @@ def set_piece_thickness(context, sel, on):
         D.refresh_thickness(context, g, spec)
     _tag_redraw(context)
     return tx("{0} piece(s): ", len(sel)) + (tx("thickness on") if on else tx("no thickness"))
+
+
+def set_piece_strengthen(context, sel, *, on=None, factor=None):
+    """Set selected pieces and their pairs; retain the multiplier when switched off."""
+    if not sel:
+        return
+    import math
+    S = bom_to_spec.S
+    if factor is not None and (not math.isfinite(float(factor)) or not 1.0 <= float(factor) <= S.STRENGTHEN_MAX):
+        raise ValueError('AC9 Strengthen: multiplier must be finite and between 1 and 100')
+    spec, _ = store.get(context)
+    spec = S.loads(S.dumps(spec))
+    both = set(sel) | _other_halves(spec, sel)
+    for pc in spec['pieces']:
+        if pc['name'] in both:
+            if on is not None:
+                pc['strengthen'] = bool(on)
+            if factor is not None:
+                pc['strengthen_factor'] = S.piece_strengthen_factor({'strengthen_factor': factor})
+    store.put(context, spec, seams=False)
+    _tag_redraw(context)
 
 
 def set_piece_layer(context, sel, k):
@@ -1187,15 +1226,40 @@ class AC9_OT_SimSetStart(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_ENUM_KEEP = {}     # Blender needs the dynamic enum's strings kept alive
+_enum_properties = sys.modules.get(__package__ + '.properties')
+_enum_users_live = any(getattr(cls, 'is_registered', False) for cls in
+                       (*globals().get('CLASSES', ()), *getattr(_enum_properties, 'CLASSES', ())))
+_previous_enum_lists = globals().get('_ENUM_KEEP', {})
+_ENUM_KEEP = ({key: value for key, value in _previous_enum_lists.items() if isinstance(key, str)}
+              if _enum_users_live else {})  # one current list per logical RNA field
+_ENUM_STRINGS = globals().get('_ENUM_STRINGS', {}) if _enum_users_live else {}
+if _enum_users_live:
+    # Upgrade the older value-keyed list table without freeing strings still borrowed by registered old RNA.
+    for _enum_items in _previous_enum_lists.values():
+        for _enum_item in _enum_items:
+            for _enum_value in _enum_item or ():
+                if isinstance(_enum_value, str):_ENUM_STRINGS.setdefault(_enum_value, _enum_value)
+del _previous_enum_lists, _enum_properties
 
 
-def _keep(items):
-    """The one list kept for these items: the same list back while they are the same. The field's get calls the items
-    function too (properties.py), and a new list there freed the strings the field was showing: it read another
-    field's text ("Properties") while the Tool tab scrolled (user 2026-10-21). Every distinct list is kept."""
-    k = tuple(items)
-    return _ENUM_KEEP.setdefault(k, items)
+def _keep(items, owner='compat'):
+    """Keep RNA's strings alive across list changes; retain only each field's current list.
+
+    Historical strings can still be referenced by Blender, so they are released only after both the operator and
+    property RNA classes are gone. List generations are not themselves lifetime owners of those strings.
+    """
+    stable = [tuple(_ENUM_STRINGS.setdefault(value, value) if isinstance(value, str) else value
+                    for value in item) if item is not None else None for item in items]
+    previous = _ENUM_KEEP.get(owner)
+    if previous != stable:
+        _ENUM_KEEP[owner] = stable
+    return _ENUM_KEEP[owner]
+
+
+def release_enum_strings():
+    """Called only after every RNA class consuming these callbacks has been unregistered."""
+    _ENUM_KEEP.clear()
+    _ENUM_STRINGS.clear()
 
 
 def _sel_pieces(context):
@@ -1231,7 +1295,7 @@ def _fabric_items(self, context):
         if p['preset'] not in have:
             items.append((f"preset:{p['preset']}", tx("{0} (preset)", p['name']),
                           f"{p['weight_gsm']:g} g/m², {FA.bending(p):g} µN·m. {p.get('source', '')}"))
-    return _keep(items)
+    return _keep(items, owner='fabric')
 
 
 def _bond_items(self, context):
@@ -1247,7 +1311,7 @@ def _bond_items(self, context):
         if p['preset'] not in have:
             items.append((f"preset:{p['preset']}", tx("{0} (preset)", p['name']),
                           f"+{p['weight_gsm']:g} g/m², +{p['bending_uNm']:g} µN·m. {p.get('source', '')}"))
-    return _keep(items)
+    return _keep(items, owner='bond')
 
 
 class AC9_OT_SimPieceFabric(bpy.types.Operator):
@@ -1345,7 +1409,7 @@ def set_garment_look(context, mat):
 def _garment_fabric_items(self, context):
     """_fabric_items without 'DEFAULT': the choices of the garment's default fabric."""
     items = [it for it in _fabric_items(self, context) if it[0] != 'DEFAULT']
-    return _keep(items)
+    return _keep(items, owner='garment_fabric')
 
 
 def set_garment_fabric(context, v):
@@ -1615,7 +1679,7 @@ class AC9_OT_SimFabricNew(bpy.types.Operator):
 
 def _preset_items(self, context):
     return _keep([(p['preset'], p['name'], f"{p['weight_gsm']:g} g/m², {FA.bending(p):g} µN·m. {p.get('source', '')}")
-                  for p in FA.presets()['fabrics']])
+                  for p in FA.presets()['fabrics']], owner='fabric_preset')
 
 
 class AC9_OT_SimFabricPreset(bpy.types.Operator):
@@ -1717,7 +1781,7 @@ class AC9_OT_SimFabricEdit(bpy.types.Operator):
 
 def _interlining_preset_items(self, context):
     return _keep([(p['preset'], p['name'], f"+{p['weight_gsm']:g} g/m², +{p['bending_uNm']:g} µN·m. {p.get('source', '')}")
-                  for p in FA.presets()['interlinings']])
+                  for p in FA.presets()['interlinings']], owner='interlining_preset')
 
 
 class AC9_OT_SimInterliningNew(bpy.types.Operator):
@@ -1880,7 +1944,7 @@ class AC9_OT_SimInterliningSelect(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (AC9_OT_SimLayersToZero, AC9_OT_SimProposeRoles,AC9_OT_SimSetRole, AC9_OT_SimSetStart, AC9_OT_SimImportBOM, AC9_OT_SimUseSelectedPieces, AC9_OT_SimGarmentFromSelection,
+CLASSES = (AC9_OT_SimSetUnits, AC9_OT_SimLayersToZero, AC9_OT_SimProposeRoles,AC9_OT_SimSetRole, AC9_OT_SimSetStart, AC9_OT_SimImportBOM, AC9_OT_SimUseSelectedPieces, AC9_OT_SimGarmentFromSelection,
            AC9_OT_SimSelectGarment, AC9_OT_SimRenameGarment, AC9_OT_SimEnableAllPieces,
            AC9_OT_SimSeamsFromBOM, AC9_OT_SimSeamEdit, AC9_OT_SimSeamPath, AC9_OT_SimSeamPathPart, AC9_OT_SimSeamAttach, AC9_OT_SimSeamAttachUntil, AC9_OT_SimSetFold, AC9_OT_SimPiecesOnOff, AC9_OT_SimFreeze, AC9_OT_SimPieceState, AC9_OT_SimInvertPieceSelection, AC9_OT_SimSelectPiece, AC9_OT_SimRefresh,
            AC9_OT_SimPieceMesh, AC9_OT_SimPieceElastic, AC9_OT_SimPieceFabric, AC9_OT_SimPieceInterlining,

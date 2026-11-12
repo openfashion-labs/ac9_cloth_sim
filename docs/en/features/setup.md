@@ -7,6 +7,12 @@ sidebar_position: 3
 
 What you do in this panel: bring a pattern into Blender, split garments apart and choose the pieces to use, and open the work screen.
 
+## Units
+
+- **Units** (**mm**, **cm**, **m**, **in**): the unit every length is shown in: the labels on the pattern, the measurement tables, and the fields such as a dart's width or a line's distance. You can type a length in any of these fields with its unit (for example `5cm`), and a number typed while dragging is read in this unit. Only **Particle Distance (mm)** stays in mm.
+- This only changes how lengths are shown. The pattern's sizes do not change.
+- **New Garment** and the imports switch a new scene to mm.
+
 ## Import BOM
 
 - Purpose: Load a pattern from a `BOM.xml` written by 3D garment software.

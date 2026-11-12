@@ -7,6 +7,16 @@ from .i18n import CTX
 from bpy.types import PropertyGroup
 
 
+def _fast_live_choice(self, context):
+    if self.fast_live and self.native_three:
+        self.native_three = False
+
+
+def _native_three_choice(self, context):
+    if self.native_three and self.fast_live:
+        self.fast_live = False
+
+
 def _pattern_tools(self, context):
     self.pattern_tools_set = True       # decided (by the user or the first garment): not turned on by itself again
     from . import toolbar
@@ -110,6 +120,29 @@ def _set_thick(self, v):
         _ops().set_piece_thickness(bpy.context, sel, bool(v))
 
 
+def _get_strengthen(self):
+    spec, n, _ = _act()
+    return bool(next((p for p in (spec or {}).get('pieces', []) if p['name'] == n), {}).get('strengthen'))
+
+
+def _set_strengthen(self, v):
+    spec, n, sel = _act()
+    if spec is not None:
+        _ops().set_piece_strengthen(bpy.context, sel, on=bool(v))
+
+
+def _get_strengthen_factor(self):
+    from .core import spec as S
+    spec, n, _ = _act()
+    return S.piece_strengthen_factor(next((p for p in (spec or {}).get('pieces', []) if p['name'] == n), {}))
+
+
+def _set_strengthen_factor(self, v):
+    spec, n, sel = _act()
+    if spec is not None:
+        _ops().set_piece_strengthen(bpy.context, sel, factor=v)
+
+
 def _get_layer(self):
     from .core import spec as S
     spec, n, _ = _act()
@@ -201,15 +234,30 @@ def _set_tilt(self, v):
         PL.set_tilt(bpy.context, sel, deg=v)
 
 
+def _get_turn(self):
+    from .core import body_axes as BA
+    from .core import spec as S
+    spec, n, _ = _act()
+    p = ((spec or {}).get('placement', {}).get(n) or {})
+    return BA.flat_turn(p['flat']) if S.is_flat(p) else 0.0
+
+
+def _set_turn(self, v):
+    from . import placement as PL
+    spec, n, sel = _act()
+    if spec is not None and abs((v - _get_turn(self) + 180.0) % 360.0 - 180.0) > 1e-6:
+        PL.set_turn(bpy.context, sel, deg=v)
+
+
 def _get_height(self):
-    return _placed('h')
+    return _placed('h') / 1000.0          # a length field (m); the placement's h is mm
 
 
 def _set_height(self, v):
     from . import placement as PL
     spec, n, sel = _act()
-    if spec is not None and abs(v - _get_height(self)) > 1e-6:
-        PL.move_placed(bpy.context, sel, h=v)
+    if spec is not None and abs(v - _get_height(self)) > 1e-9:
+        PL.move_placed(bpy.context, sel, h=v * 1000.0)
 
 
 def _set_elastic(self, v):
@@ -377,7 +425,7 @@ class AC9ClothSimProps(PropertyGroup):
                                            "the body's center")
     # the pattern tools in the left toolbar (user 2026-10-13: a switch at the top of the sidebar, toolbar.py)
     pattern_tools: BoolProperty(name="Pattern Tools", default=False, update=_pattern_tools,
-                                description="Show the pattern tools (Edit Pattern, Draw, Edit Seams) in the left "
+                                description="Show the pattern tools (Edit Pieces, Draw, Edit Seams) in the left "
                                             "toolbar")
     # on by itself the first time the file has a garment (a pattern read in or drawn), user 2026-10-22: from the start
     # in a file that uses Cloth Sim, not in one that only has the add-on installed; turned off, it stays off
@@ -396,14 +444,28 @@ class AC9ClothSimProps(PropertyGroup):
                                          "finer, slower)")
     # gravity in Live Sim (user 2026-10-23, DECISIONS cloth-sim-phase-live-local-sim-2026-10-23): switched while it
     # runs too (core/recipe.live_params)
-    fast_live: BoolProperty(name="AC9 Fast Live (Experimental)", default=False,
+    fast_live: BoolProperty(name="AC9 Fast Live (Experimental)", default=False, update=_fast_live_choice,
         description="Live Sim with 2 substeps and a correction in each (a test feature). Static body only, with lower contact damping. Native remains the default")
+    native_three: BoolProperty(name="AC9 Native 3", default=False, update=_native_three_choice,
+        description="Experimental faster Native Live. Keeps material and timestep settings. Static body, no Piece Layer recovery or full-state resume; mutually exclusive with Accurate")
+    # a floor at Z = 0 for every run (user 2026-11-10, DECISIONS cloth-sim-place-beyond-garments-2026-11-10): a
+    # static box under Z = 0 added to the obstacles, no object in the scene. A box, not a plane: a one-sided plane
+    # let all the cloth through when its normal faced down, a 20 mm box let none through (experiments/
+    # placement_beyond_garments_2026-11-10 M3)
+    floor: BoolProperty(name="Floor", default=False,
+                        description="A floor at Z = 0 the cloth lands on, in every run (nothing is added to the "
+                                    "scene). For bags and other items without an avatar")
     live_gravity: BoolProperty(name="Gravity", default=True,
                                description="Live Sim pulls the cloth down by gravity (can be switched while it runs)")
     # the stroke brush in Live / Local Sim (Ctrl+Shift+drag, user 2026-11-02, DECISIONS cloth-sim-live-stroke-2026-11-02):
     # read when a stroke starts and as it moves, so they can be changed while it runs
     stroke_radius: FloatProperty(name="Smooth Radius (mm)", default=40.0, min=5.0, max=150.0,
                                  description="Radius of the smooth brush (Ctrl+Shift+drag while Live Sim runs)")
+    # the same in the scene's length unit (a length field over stroke_radius, which stays mm in the file)
+    stroke_radius_len: FloatProperty(name="Smooth Radius", min=0.005, max=0.15, precision=1, subtype='DISTANCE',
+                                     unit='LENGTH', get=lambda s: s.stroke_radius / 1000.0,
+                                     set=lambda s, v: setattr(s, 'stroke_radius', v * 1000.0), options=set(),
+                                     description="Radius of the smooth brush (Ctrl+Shift+drag while Live Sim runs)")
     stroke_strength: FloatProperty(name="Smooth Strength", default=1.0, min=0.05, max=1.0,
                                    description="How hard the smooth brush presses the cloth down and carries it "
                                                "along (the cloth's physics stays on)")
@@ -442,7 +504,7 @@ class AC9ClothSimProps(PropertyGroup):
     preset: StringProperty(name="Settings", default="",
                            description="Named settings set of Phase Sim (empty: the default set)")
     # the selected pieces' settings as fields (the functions above)
-    piece_distance: FloatProperty(name="Distance (mm)", min=2.0, max=30.0, precision=1, get=_get_dist,
+    piece_distance: FloatProperty(name="Particle Distance (mm)", min=2.0, max=30.0, precision=1, get=_get_dist,
                                   set=_set_dist, options=set(),
                                   description="Particle distance of the selected pieces in mm (finer for a small "
                                               "part); the arrow beside it gives them back the garment's")
@@ -455,6 +517,11 @@ class AC9ClothSimProps(PropertyGroup):
                                 get=_get_around, set=_set_around, options=set(),
                                 description="Where the selected placed pieces are round their guide, in degrees "
                                             "(their height kept). Several selected move by as much. Their pairs follow")
+    piece_turn: FloatProperty(name="Orientation", translation_context=CTX, min=-180.0, max=180.0, precision=0, step=500,
+                              get=_get_turn, set=_set_turn, options=set(),
+                              description="How far the selected pieces laid flat are turned on the face they lie on, "
+                                          "in degrees: 0 = the pattern's top up the face (on the ground: toward +Y), "
+                                          "90 = turned counter-clockwise. Where they lie stays. Their pairs follow")
     piece_tilt: FloatProperty(name="Tilt", translation_context=CTX, min=-180.0, max=180.0, precision=0, step=500,
                               get=_get_tilt, set=_set_tilt, options=set(),
                               description="How far the selected placed pieces are tilted about the line round their "
@@ -479,10 +546,16 @@ class AC9ClothSimProps(PropertyGroup):
                                   options=set(),
                                   description="Widen the selected bands until they clear the body where they are now "
                                               "(measured again when turned on and when placed)")
-    piece_height: FloatProperty(name="Height", translation_context=CTX, precision=1, step=100,
+    piece_height: FloatProperty(name="Height", translation_context=CTX, precision=1, subtype='DISTANCE', unit='LENGTH',
                                 get=_get_height, set=_set_height, options=set(),
-                                description="How high the selected placed pieces are along their guide, in mm (their "
+                                description="How high the selected placed pieces are along their guide (their "
                                             "angle kept). Several selected move by as much. Their pairs follow")
+    piece_strengthen: BoolProperty(name="Strengthen", translation_context=CTX,
+        get=_get_strengthen, set=_set_strengthen,
+        description="Multiply the piece's stretch, shear, and bending stiffness until switched off")
+    piece_strengthen_factor: FloatProperty(name="Strength Factor", translation_context=CTX,
+        min=1.0, max=100.0, get=_get_strengthen_factor, set=_set_strengthen_factor,
+        description="Stiffness multiplier; mass and rest shape stay the same")
     piece_layer: IntProperty(name="Layer", translation_context=CTX, min=0, max=9, get=_get_layer, set=_set_layer,
                              options=set(),
                              description="The selected pieces' layer (and their pairs'): while pieces have different "

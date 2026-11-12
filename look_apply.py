@@ -11,8 +11,9 @@ import bpy
 import numpy as np
 
 from .core import look as LK
+from . import look_reference as LR
 
-UID_PROP = "ac9_look_uid"
+UID_PROP = LR.UID_PROP
 UV_NAME = "UVMap"
 
 
@@ -26,17 +27,8 @@ def ref(mat):
 
 
 def material(lk):
-    """The material of a reference: the one material with its uid; else the one named (its uid written again);
-    else None. A duplicate (Shift+D, append) carries the uid too: then the name decides."""
-    if not lk:
-        return None
-    hits = [m for m in bpy.data.materials if m.get(UID_PROP) == lk.get('uid')] if lk.get('uid') else []
-    if len(hits) == 1:
-        return hits[0]
-    m = bpy.data.materials.get(lk.get('material') or '')
-    if m is not None and lk.get('uid') and not hits:
-        m[UID_PROP] = lk['uid']
-    return m
+    """Read the UID/name material without changing saved properties; explicit save repair owns migration."""
+    return LR.material(lk)
 
 
 def set_slots(me, mats, index=None):

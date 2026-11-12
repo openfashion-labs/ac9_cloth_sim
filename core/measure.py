@@ -427,6 +427,66 @@ def surface_normal(body, p):
     return n / max(np.linalg.norm(n), 1e-12)
 
 
+def _closest_on_tri(p, a, b, c):
+    """The closest point of the triangle abc to p, as barycentric weights (3,). (Ericson, Real-Time Collision
+    Detection 5.1.5.)"""
+    ab, ac, ap = b - a, c - a, p - a
+    d1, d2 = ab @ ap, ac @ ap
+    if d1 <= 0 and d2 <= 0:
+        return np.array([1.0, 0.0, 0.0])
+    bp = p - b
+    d3, d4 = ab @ bp, ac @ bp
+    if d3 >= 0 and d4 <= d3:
+        return np.array([0.0, 1.0, 0.0])
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0 and d1 >= 0 and d3 <= 0:
+        v = d1 / (d1 - d3)
+        return np.array([1.0 - v, v, 0.0])
+    cp = p - c
+    d5, d6 = ab @ cp, ac @ cp
+    if d6 >= 0 and d5 <= d6:
+        return np.array([0.0, 0.0, 1.0])
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0 and d2 >= 0 and d6 <= 0:
+        w = d2 / (d2 - d6)
+        return np.array([1.0 - w, 0.0, w])
+    va = d3 * d6 - d5 * d4
+    if va <= 0 and (d4 - d3) >= 0 and (d5 - d6) >= 0:
+        w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        return np.array([0.0, 1.0 - w, w])
+    den = 1.0 / (va + vb + vc)
+    v, w = vb * den, vc * den
+    return np.array([1.0 - v - w, v, w])
+
+
+def surface_anchor(body, p, k=12):
+    """Where p sits on the body's skin: (triangle index, barycentric weights (3,), the point (3,)). The triangles
+    round the k nearest vertices are tried. A point kept this way rides the skin when the body is reshaped with the
+    same vertices (a sculpt, a proportion edit), where a point kept in space would float off it or sink in."""
+    B, T = body.B, body.T
+    p = np.asarray(p, float)
+    near = np.argpartition(((B - p) ** 2).sum(1), min(k, len(B) - 1))[:k]
+    cand = np.nonzero(np.isin(T, near).any(1))[0]
+    best = None
+    for ti in cand:
+        a, b, c = B[T[ti]]
+        w = _closest_on_tri(p, a, b, c)
+        q = w @ B[T[ti]]
+        d = float(((q - p) ** 2).sum())
+        if best is None or d < best[0]:
+            best = (d, int(ti), w, q)
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
+def anchor_point(body, tri, bary):
+    """The skin point of a surface_anchor on the body as it is now (None if the triangle is not there)."""
+    if not 0 <= int(tri) < len(body.T):
+        return None
+    return np.asarray(bary, float) @ body.B[body.T[int(tri)]]
+
+
 def tape_taut(body, p, q, n_p=None, n_q=None):
     """A tape pulled taut between p and q (Tape Straight, user 2026-10-21): it lies on the bulges and spans the
     hollows, as a tape measure held tight -- the upper convex hull, in tape_segment's plane, of the surface's way

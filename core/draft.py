@@ -11,7 +11,7 @@ are made from them. Seams hold (edge id, t) with t a fraction of the edge's leng
 Twins (a piece and its mirrored copy, spec.twins) are edited together: the other one gets the mirror-image edit.
 """
 import copy
-from ._i18n import rpt
+from ._i18n import rpt, length as len_text
 
 import numpy as np
 
@@ -20,6 +20,7 @@ from . import spec as S
 STEP = 2.0            # mm between the points of a curved edge
 SELF_TOL = 0.5        # mm: a piece is symmetric about its center line when its corners mirror onto its corners within this
 TWIN_TOL = 0.1        # mm: corners of twins match within this after mirroring (pattern_build.mirror_into's fit)
+LINE_END_ON_EDGE = 1.0  # mm: an internal line's end this close to an outline edge rides on it when the edge moves
 MIN_EDGE = 2.1        # mm: shortest edge allowed (pattern_build merges outline samples closer than MERGE * h = 2.1 mm)
 
 
@@ -171,10 +172,12 @@ def mirror_fn(pa, pb):
         return self_reflect(pa)
     A, B = corners_all(pa), corners_all(pb)
     ca, cb = 0.5 * (A.min(0) + A.max(0)), 0.5 * (B.min(0) + B.max(0))
+    k = 1 if 'y' in (pa.get('mirror_plane'), pb.get('mirror_plane')) else 0      # a front / back pair: across y
 
     def M(q):
-        q = np.asarray(q, float).reshape(-1, 2)
-        return np.stack([cb[0] - (q[:, 0] - ca[0]), q[:, 1] - ca[1] + cb[1]], 1)
+        q = np.asarray(q, float).reshape(-1, 2) - ca
+        q[:, k] *= -1.0
+        return q + cb
     return M
 
 
@@ -267,13 +270,15 @@ def self_axis(pc, c=None):
     return (outline_centroid(pc) if c is None else np.asarray(c, float)), np.array([-np.sin(a), np.cos(a)])
 
 
-def self_reflect(pc, c=None):
-    """The map of a piece onto itself across its center line (self_axis)."""
+def self_reflect(pc, c=None, across=False):
+    """The map of a piece onto itself across its center line (self_axis); across: across the line through the same
+    center at right angles to it (a gusset symmetric front to back under a front / back copy of its panel)."""
     c, u = self_axis(pc, c)
+    s = -1.0 if across else 1.0
 
     def M(q):
         d = np.asarray(q, float).reshape(-1, 2) - c
-        return c + 2 * (d @ u)[:, None] * u - d
+        return c + s * (2 * (d @ u)[:, None] * u - d)
     return M
 
 
@@ -365,6 +370,28 @@ def _move_corners_one(pc, deltas):
     newC = C.copy()
     for k, d in deltas.items():
         newC[k] = C[k] + np.asarray(d, float)
+    # an internal line's end on an edge that changes rides on that edge (the same carry as the edge's own points):
+    # the ends were free points, and moving an outline edge left a line drawn to it short of it or out of the piece
+    # (user 2026-11-11). Found first, on the edges as they were; an end at a corner goes with the corner.
+    ends, seen = [], set()
+    for k, e in enumerate(pc['edges']):
+        k1 = (k + 1) % n
+        if k not in deltas and k1 not in deltas:
+            continue
+        P0 = np.asarray(e['pts'], float)
+        for it in pc.get('internals', []):
+            if it.get('closed') or it.get('kind') == 'baseline' or len(it.get('pts') or ()) < 2:
+                continue
+            for j in (0, len(it['pts']) - 1):
+                if (id(it), j) in seen:
+                    continue
+                q = np.asarray(it['pts'][j], float).reshape(1, 2)
+                if _dist_to_polyline(q, P0)[0] <= LINE_END_ON_EDGE:
+                    seen.add((id(it), j))
+                    ends.append((it, j, _similarity(C[k], C[k1], newC[k], newC[k1])))
+    for it, j, f in ends:                          # one end at a time, the line following it (curves keep shape)
+        q = np.asarray(it['pts'][j], float)
+        _move_internal_one(it, 'start' if j == 0 else 'end', f([q])[0] - q)
     for k, e in enumerate(pc['edges']):
         k1 = (k + 1) % n
         if k not in deltas and k1 not in deltas:
@@ -571,9 +598,41 @@ def make_straight(spec, name, eid, twins=True):
 
 # ---------------------------------------------------------------- splitting and joining
 
+def edit_copy(spec, names, memo=None):
+    """Copy edited geometry and its mutable references; share unrelated geometry and immutable metadata."""
+    memo = {} if memo is None else memo
+    out = dict(spec)
+    out['pieces'] = [copy.deepcopy(pc, memo) if pc['name'] in names else pc for pc in spec['pieces']]
+    out['seams'] = copy.deepcopy(spec.get('seams', []), memo)
+    # the placement too: transform_piece / scale_piece move a piece's anchor in place, and a drag edits a fresh copy
+    # on every redraw, so a shared placement took the move again each time (an anchor 135 m off its piece)
+    for feature in ('placement', 'measure', 'elastic', 'attach', 'zippers'):
+        if feature in spec:
+            out[feature] = copy.deepcopy(spec[feature], memo)
+    return out
+
+
+def outline_sides(spec, name):
+    """Saved outline intervals, using each feature's actual owner convention."""
+    for sm in spec.get('seams', []):
+        for key in ('a', 'b'):
+            side = sm[key]
+            if side['piece'] == name and 'line' not in side:
+                yield side
+    for el in spec.get('elastic') or []:
+        side = el.get('side')
+        # Elastic's outer piece is authoritative (solver_entries uses it too).
+        if el.get('piece') == name and isinstance(side, dict) and 'line' not in side:
+            yield side
+    for entry in spec.get('attach') or []:
+        side = entry.get('side')
+        if isinstance(side, dict) and side.get('piece') == name and 'line' not in side:
+            yield side
+
+
 def point_refs(spec, name):
     """Every point held as (edge id, t) on piece `name`'s outline, as [(get, set)]: get() -> (edge id, t),
-    set(edge id, t). The outline seam ends, the notches and the pattern points of spec['measure'] (core/measure.py).
+    set(edge id, t). Outline interval ends (seams/elastic/held attach), notches and pattern measure points.
     An edit that re-states edges or fractions goes through this one list, so none of them is left behind."""
     out = []
 
@@ -592,11 +651,8 @@ def point_refs(spec, name):
         def put(e, t):
             d[ek], d[tk] = e, round(float(t), 6)
         return get, put
-    for sm in spec.get('seams', []):
-        for k in ('a', 'b'):
-            sd = sm[k]
-            if sd['piece'] == name and 'line' not in sd:
-                out += [seam_end(sd, 'from'), seam_end(sd, 'to')]
+    for side in outline_sides(spec, name):
+        out += [seam_end(side, 'from'), seam_end(side, 'to')]
     pc = piece(spec, name)
     out += [held(n) for n in pc.get('notches') or []]
     for m in (spec.get('measure') or {}).get('pattern') or []:
@@ -645,6 +701,8 @@ def _split_one(spec, pc, k, u, new_id):
             return old, (t / u if u > 0 else 0.0)
         return new_id, ((t - u) / (1 - u) if u < 1 else 1.0)
     _remap_ends(spec, pc['name'], fn)
+    from . import zippers
+    zippers.replace_edges(spec, pc['name'], {old: [old, new_id]})
 
 
 def _split_at(spec, pc, eid, us):
@@ -716,6 +774,8 @@ def _join_one(spec, pc, k, keep_shape=False):
     n = len(pc['edges'])
     if n <= 3:
         raise ValueError(rpt("a piece needs at least 3 corners"))
+    from . import zippers
+    zippers.check_join(spec, pc['name'], [k])
     k0 = (k - 1) % n
     e1, e2 = pc['edges'][k0], pc['edges'][k]
     L1, L2 = S.polyline_len(e1['pts']), S.polyline_len(e2['pts'])
@@ -737,6 +797,8 @@ def _join_one(spec, pc, k, keep_shape=False):
             return a, (L1 + t * L2) / Lt
         return eid, t
     _remap_ends(spec, pc['name'], fn)
+    from . import zippers
+    zippers.replace_edges(spec, pc['name'], {a: [a], b: [a]})
 
 
 def join_at_corner(spec, name, k, twins=True):
@@ -748,6 +810,10 @@ def join_at_corner(spec, name, k, twins=True):
     if len(pc['edges']) - len(ks) < 3:
         raise ValueError(rpt("a piece needs at least 3 corners"))
     jbs = sorted({cmap[x] for x in ks}, reverse=True) if cmap else []
+    from . import zippers
+    zippers.check_join(spec, name, ks)
+    if jbs:
+        zippers.check_join(spec, tw, jbs)
     for x in ks:                                   # the higher index first: the lower keeps its number
         _join_one(spec, pc, x)
     out = [name]
@@ -923,18 +989,25 @@ def shape_box(p0, cur, w=None, h=None, square=False, center=False):
     return np.minimum(a, b), np.maximum(a, b)
 
 
-def mirror_copy(spec, name, gap=50.0, x_axis=None):
+def mirror_copy(spec, name, gap=50.0, x_axis=None, plane='x'):
     """A mirrored copy of the piece beside it (x mirrored), made its twin (same family, one of the two mirrored).
     Seams are not copied here (mirror_group / seam_twin.mirror_seams_group do). x_axis: the mirror line (layout mm),
     by default just right of the piece (mirror_group: right of every piece). What the piece buttons onto (closes_onto) is not copied: mirror_group sets
-    the copy's."""
+    the copy's. plane 'y' (front / back, user 2026-11-11): the copy turned upside down above the piece (x_axis is
+    then the horizontal line, its y; the Mirror Copy operator then moves the copies beside the originals), and both pieces hold mirror_plane 'y'."""
     pc = piece(spec, name)
+    k = 1 if plane == 'y' else 0
     if x_axis is None:
-        x_axis = corners_all(pc)[:, 0].max() + 0.5 * gap      # mirror line just right of the piece
+        x_axis = corners_all(pc)[:, k].max() + 0.5 * gap      # mirror line just right of (above) the piece
+    if plane == 'y':
+        pc['mirror_plane'] = 'y'
+    else:
+        pc.pop('mirror_plane', None)
 
     def M(q):
-        q = np.asarray(q, float).reshape(-1, 2)
-        return np.stack([2 * x_axis - q[:, 0], q[:, 1]], 1)
+        q = np.array(q, float).reshape(-1, 2)
+        q[:, k] = 2 * x_axis - q[:, k]
+        return q
     edges = []
     for e in reversed(pc['edges']):                  # mirroring turns the outline clockwise: run it backwards
         ne = {'id': e['id'], 'pts': _r(M(e['pts'])[::-1])}
@@ -967,7 +1040,7 @@ def has_partner(spec, name):
     return bool(f) and any(family_of(p) == f for p in spec['pieces'] if p['name'] != name)
 
 
-def mirror_group(spec, names, gap=50.0):
+def mirror_group(spec, names, gap=50.0, plane='x'):
     """Mirrored copies of the pieces `names` (each made the twin of its own), about one line right of every piece,
     so they lie as the originals do and on no other piece (user 2026-10-23, the symmetric pattern). A piece that has its twin already is
     skipped. What a copy buttons onto: the copy (or the twin) of what its original buttons onto, else nothing.
@@ -980,11 +1053,13 @@ def mirror_group(spec, names, gap=50.0):
         return {}, skipped
     # right of every piece, not only of these: a line just right of the group laid the copies over the pieces not
     # picked between them (a shirt's back, 2026-10-23)
-    x_axis = max(corners_all(p)[:, 0].max() for p in spec['pieces']) + 0.5 * gap
-    made = {n: mirror_copy(spec, n, gap, x_axis=x_axis) for n in todo}
+    k = 1 if plane == 'y' else 0                    # front / back: above every piece, turned upside down
+    x_axis = max(corners_all(p)[:, k].max() for p in spec['pieces']) + 0.5 * gap
+    made = {n: mirror_copy(spec, n, gap, x_axis=x_axis, plane=plane) for n in todo}
     for n, c in made.items():
         t = piece(spec, n).get('closes_onto')
-        to = made.get(t) or (twin_of(spec, t) if t else None)
+        # a twin only in the copy's plane (a left / right twin is not the other side of a front / back copy)
+        to = made.get(t) or (twin_of(spec, t) if t and S.pair_plane(spec, t) == plane else None)
         if to:
             piece(spec, c)['closes_onto'] = to
     fo = spec.get('folds', [])
@@ -997,15 +1072,39 @@ def mirror_group(spec, names, gap=50.0):
     return made, skipped
 
 
+def set_pair_plane(spec, name, plane):
+    """The mirror plane of the pair `name` is in made `plane` ('x' left / right, 'y' front / back; user 2026-11-11):
+    both pieces hold it, and the mirrored one of the two is turned 180 degrees about its middle in the layout, so it
+    is the other mirror image of its source (a y mirror is an x mirror turned half round) -- its outline, internal
+    lines and anchor turn with it (transform_piece); seams and folds keep (edge ids and fractions). Returns (the
+    piece turned, its rigid map (R, t)), or (None, None) (no twin, or the plane already so)."""
+    tw = twin_of(spec, name)
+    if not tw:
+        return None, None
+    a, b = piece(spec, name), piece(spec, tw)
+    if ('y' if a.get('mirror_plane') == 'y' else 'x') == plane:
+        return None, None
+    for pc in (a, b):
+        if plane == 'y':
+            pc['mirror_plane'] = 'y'
+        else:
+            pc.pop('mirror_plane', None)
+        pc.pop(S.MIRROR_AT, None)              # the plane's place is of the old plane (the caller sets a new one)
+    turned = tw if b.get('mirrored') or not a.get('mirrored') else name
+    return turned, transform_piece(spec, turned, 180.0)
+
+
 def piece_center(pc):
     A = corners_all(pc)
     return 0.5 * (A.min(0) + A.max(0))
 
 
-def transform_piece(spec, name, deg=0.0, shift=(0.0, 0.0), center=None):
+def transform_piece(spec, name, deg=0.0, shift=(0.0, 0.0), center=None, spin=False):
     """Move a whole piece in the layout: rotate by deg about center (its bbox center by default), then shift (mm).
     Its outline, handles, internal lines and placement anchor move together; the shape does not change, nor does any
-    seam or fold (they refer to edge ids and fractions). Returns the rigid map (R, t), new = R @ old + t."""
+    seam or fold (they refer to edge ids and fractions). spin: a turn the user gave it in the layout, kept in its
+    placement ('spin', core/spec.spun) so that where it is placed in 3D does not turn (user 2026-11-11). Returns the
+    rigid map (R, t), new = R @ old + t."""
     pc = piece(spec, name)
     c = piece_center(pc) if center is None else np.asarray(center, float)
     a = np.radians(deg)
@@ -1023,6 +1122,8 @@ def transform_piece(spec, name, deg=0.0, shift=(0.0, 0.0), center=None):
     pl = spec.get('placement', {}).get(name)
     if pl and 'anchor' in pl:
         pl['anchor'] = f([pl['anchor']])[0]
+        if spin and abs(deg) > 1e-9:
+            pl['spin'] = round((float(pl.get('spin', 0.0)) + deg + 180.0) % 360.0 - 180.0, 6)
     if pc.get('mirror_axis') or pc.get('mirror_edit'):   # the center line turns with it (user 2026-10-27)
         ax = pc.get('mirror_axis') or [*outline_centroid(pc), 0.0]
         q = R @ np.asarray(ax[:2], float) + t
@@ -1034,10 +1135,10 @@ def move_piece(spec, name, deg=0.0, shift=(0.0, 0.0), twins=True):
     """transform_piece for the editor: a rotated piece's twin turns the other way about its own center, so the two stay
     mirror images (pattern_build meshes a twin as its pair's mirror only then); a shift moves the piece alone (a twin
     is matched about its own center wherever it lies). Returns {piece: (R, t)} for the pieces moved."""
-    out = {name: transform_piece(spec, name, deg=deg, shift=shift)}
+    out = {name: transform_piece(spec, name, deg=deg, shift=shift, spin=True)}
     tw = twin_of(spec, name) if twins and abs(deg) > 1e-9 else None
     if tw:
-        out[tw] = transform_piece(spec, tw, deg=-deg)
+        out[tw] = transform_piece(spec, tw, deg=-deg, spin=True)
     return out
 
 
@@ -1064,7 +1165,7 @@ def scale_piece(spec, name, sx, sy=None, center=None, twins=True):
                 e['ctrl'] = f(e['ctrl'])
                 refresh_curve(e)
             if S.polyline_len(e['pts']) < MIN_EDGE:
-                raise ValueError(rpt("edge {0} would be shorter than {1:g} mm", e['id'], MIN_EDGE))
+                raise ValueError(rpt("edge {0} would be shorter than {1}", e['id'], len_text(MIN_EDGE)))
         for it in pc.get('internals', []):
             xform_internal(it, f)
         pl = spec.get('placement', {}).get(nm)
@@ -1101,7 +1202,7 @@ def group_map(deg=0.0, k=(1.0, 1.0), shift=(0.0, 0.0), center=(0.0, 0.0)):
 
 
 def transform_group(spec, pieces=(), lines=(), deg=0.0, k=(1.0, 1.0), shift=(0.0, 0.0), center=None):
-    """Transform Pattern's G / R / S on what is picked (user 2026-10-28, DECISIONS cloth-sim-transform-edit-split):
+    """Whole Pieces' G / R / S on what is picked (user 2026-10-28, DECISIONS cloth-sim-transform-edit-split):
     whole pieces and internal lines [(piece, line id)] scaled by k and turned by deg about center (the middle of their
     bounding box), then shifted, all as one. A line on a picked piece goes with the piece. A piece's twin not picked
     turns the other way and scales about its own center (move_piece, scale_piece: the two stay mirror images); a
@@ -1122,10 +1223,10 @@ def transform_group(spec, pieces=(), lines=(), deg=0.0, k=(1.0, 1.0), shift=(0.0
         follow = tw is not None and tw not in pieces
         if scaled:
             changed += scale_piece(spec, n, float(k[0]), float(k[1]), center=c, twins=follow)
-        rigid[n] = transform_piece(spec, n, deg=deg, shift=shift, center=c)
+        rigid[n] = transform_piece(spec, n, deg=deg, shift=shift, center=c, spin=True)
         changed.append(n)
         if follow and abs(deg) > 1e-9:
-            rigid[tw] = transform_piece(spec, tw, deg=-deg)
+            rigid[tw] = transform_piece(spec, tw, deg=-deg, spin=True)
             changed.append(tw)
     # the mirrors of every line found before any moves (they are found by where they lie)
     picked = set(lines)
@@ -1416,10 +1517,11 @@ def match_side_length(spec, seam_id, key, ease=0.0, end='to', iters=8):
     u /= max(np.linalg.norm(u), 1e-12)
 
     def length_at(x):
-        trial = {**spec, 'pieces': [copy.deepcopy(p) if p['name'] in (name, twin_of(spec, name)) else p
-                                    for p in spec['pieces']]}
+        memo = {}
+        trial = edit_copy(spec, (name, twin_of(spec, name)), memo=memo)
+        trial_side = memo.get(id(sd), sd)
         move_corners(trial, name, {corner: tuple(u * x)})
-        return S.side_length(trial, sd), trial
+        return S.side_length(trial, trial_side), trial
     x0, x1 = 0.0, target - L0
     f0 = L0 - target
     f1 = length_at(x1)[0] - target
@@ -1630,19 +1732,41 @@ def offset_line(pc, eids, dist):
     ks = [edge_index(pc, e) for e in eids]
     P = np.vstack([np.asarray(pc['edges'][k]['pts'], float)[:-1] for k in ks]
                   + [np.asarray(pc['edges'][ks[-1]]['pts'], float)[-1:]])
+    return _offset(pc, P, dist, 1.0 if signed_area(S.Outline(pc).B) > 0 else -1.0, True)
+
+
+def offset_internal(pc, line_id, dist, side=1.0, extend=True):
+    """The points of a line parallel to internal line line_id, `dist` mm to its left (side 1) or right (side -1) as
+    it runs from its start; extend: its ends run on (or cut back) to the outline, else as long as the line (user
+    2026-11-11: a parallel line from an internal line too). Raises ValueError where it does not fit."""
+    if dist <= 0:
+        raise ValueError(rpt("the distance must be above 0"))
+    it = internal(pc, line_id)
+    if it.get('closed'):
+        raise ValueError(rpt("a closed shape has no parallel line"))
+    return _offset(pc, np.asarray(it['pts'], float), dist, float(side), extend, rpt("that line"))
+
+
+def _offset(pc, P, dist, sgn, extend, what=None):
+    """P (a polyline, mm) offset dist mm to the side sgn * its left; extend: the ends run on or cut back to the
+    outline, the stretch round the middle kept."""
+    what = what or rpt("that edge")
     keep = np.r_[True, np.linalg.norm(np.diff(P, axis=0), axis=1) > 1e-6]
     P = P[keep]
     if len(P) < 2:
         raise ValueError(rpt("the edge is too short"))
     T = np.diff(P, axis=0)
     T /= np.linalg.norm(T, axis=1)[:, None]
-    sgn = 1.0 if signed_area(S.Outline(pc).B) > 0 else -1.0
-    Nseg = sgn * np.stack([-T[:, 1], T[:, 0]], 1)       # into the piece
+    Nseg = sgn * np.stack([-T[:, 1], T[:, 0]], 1)       # into the piece (an edge), to the side asked (a line)
     N = np.vstack([Nseg[:1], Nseg[:-1] + Nseg[1:], Nseg[-1:]])
     N /= np.maximum(np.linalg.norm(N, axis=1), 1e-12)[:, None]
     cosv = np.vstack([np.ones((1,)), (N[1:-1] * Nseg[1:]).sum(1)[:, None] if len(P) > 2 else np.zeros((0, 1)),
                       np.ones((1,))]).ravel()
     Q = P + dist * N / np.maximum(cosv, 0.5)[:, None]    # mitred, at most twice as far at a sharp bend
+    if not extend:
+        if len(Q) > 2 and _dist_to_polyline(Q[len(Q) // 2:len(Q) // 2 + 1], P)[0] < 0.5 * dist:
+            raise ValueError(rpt("{0} bends too tightly for a line {1} away", what, len_text(dist)))
+        return Q
     # run the ends on along their direction, then keep the stretch between the outline crossings round its middle
     B = S.Outline(pc).B
     Ps, Qs = B, np.roll(B, -1, 0)
@@ -1660,7 +1784,7 @@ def offset_line(pc, eids, dist):
     lo = max([h for h in hits if h < mid], default=None)
     hi = min([h for h in hits if h > mid], default=None)
     if lo is None or hi is None or hi - lo < 2 * MIN_EDGE:
-        raise ValueError(rpt("no line fits {0:g} mm inside that edge", dist))
+        raise ValueError(rpt("no line fits {0} from {1}", len_text(dist), what))
     ss = np.r_[lo, cum[(cum > lo + 1e-6) & (cum < hi - 1e-6)], hi]
     out = np.stack([np.interp(ss, cum, E[:, 0]), np.interp(ss, cum, E[:, 1])], 1)
     kept = [0]                                       # points on a straight run left out (a straight edge: 2 points)
@@ -1672,7 +1796,7 @@ def offset_line(pc, eids, dist):
     out = out[kept + [len(out) - 1]]
     # it must lie dist mm from the edge (a tight curve folds the offset over itself)
     if _dist_to_polyline(out[len(out) // 2:len(out) // 2 + 1], P)[0] < 0.5 * dist:
-        raise ValueError(rpt("the edge bends too tightly for a line {0:g} mm inside", dist))
+        raise ValueError(rpt("{0} bends too tightly for a line {1} away", what, len_text(dist)))
     return out
 
 
@@ -1688,12 +1812,12 @@ def internal_mesh_notes(spec, name, h, lids=None):
             continue
         L = S.polyline_len(it['pts'])
         if L < 2 * h:
-            out.append(f"{it['id']} is {L:.1f} mm long: the {h:g} mm mesh needs {2 * h:g} mm, it will not show in 3D")
+            out.append(f"{it['id']} is {len_text(L)} long: the {h:g} mm mesh needs {len_text(2 * h)}, it will not show in 3D")
             continue
         if it.get('closed'):
             ext = np.ptp(np.asarray(it['pts'], float), axis=0).min()
             if ext < h:                                # a shape narrower than one mesh cell collapses
-                out.append(f"{it['id']} is {ext:.1f} mm across: smaller than the {h:g} mm mesh, it will not show "
+                out.append(f"{it['id']} is {len_text(ext)} across: smaller than the {h:g} mm mesh, it will not show "
                            f"in 3D (a finer Piece Mesh shows it)")
                 continue
         P = S.resample(it['pts'], max(3, int(L / 2.0)))
@@ -1705,8 +1829,15 @@ def internal_mesh_notes(spec, name, h, lids=None):
             s = np.r_[0, np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]
             near &= (s > h) & (s < s[-1] - h)
         if near.any():
-            out.append(f"{it['id']} runs within {0.5 * h:g} mm of the outline: that part will not show in 3D")
+            out.append(f"{it['id']} runs within {len_text(0.5 * h)} of the outline: that part will not show in 3D")
     return out
+
+
+def _remove_seam_dependents(spec, gone):
+    """Retire settings whose seam identity has been removed, independent of the editing tool."""
+    spec['folds'] = [f for f in spec.get('folds', []) if f.get('seam') not in gone]
+    if 'attach' in spec:
+        spec['attach'] = [entry for entry in spec['attach'] if entry.get('seam') not in gone]
 
 
 def delete_internal(spec, name, lid, mirror=True):
@@ -1719,7 +1850,18 @@ def delete_internal(spec, name, lid, mirror=True):
     gone = [sm['id'] for sm in spec.get('seams', []) if any(sm[k]['piece'] == name and sm[k].get('line') in lids
                                                             for k in ('a', 'b'))]
     spec['seams'] = [sm for sm in spec.get('seams', []) if sm['id'] not in gone]
+    _remove_seam_dependents(spec, gone)
     spec['folds'] = [f for f in spec.get('folds', []) if not (f.get('piece') == name and f.get('line') in lids)]
+    if 'elastic' in spec:
+        spec['elastic'] = [entry for entry in spec['elastic']
+                           if not (entry.get('piece') == name
+                                   and (entry.get('line') in lids or (entry.get('side') or {}).get('line') in lids))]
+        if not spec['elastic']:
+            spec.pop('elastic')
+    if 'attach' in spec:
+        spec['attach'] = [entry for entry in spec['attach']
+                          if not ((entry.get('side') or {}).get('piece') == name
+                                  and (entry.get('side') or {}).get('line') in lids)]
     return gone
 
 
@@ -1991,6 +2133,48 @@ def remove_notch(spec, name, nid, twins=True):
     return list(dict.fromkeys(out))
 
 
+def notch_snap_arcs(spec, name, skip=None):
+    """(the outline, [(outline arc s, kind)]) where a notch on piece `name` snaps (user 2026-11-11, Fable review: not
+    the corners, a notch is rarely on one): each edge's middle ('mid') and, on a side of a seam, where the other
+    side's notches fall in proportion to the two sides' lengths ('partner', as Match Notches lays them). skip: a notch
+    id of this piece left out (the one being moved)."""
+    from . import walk as W
+    pc = piece(spec, name)
+    ol = S.Outline(pc)
+    out = [(s0 + 0.5 * L, 'mid') for s0, L, _ in ol.edges.values()]
+    for sm in spec.get('seams', []):
+        for k in 'ab':
+            sd, so = sm[k], sm['b' if k == 'a' else 'a']
+            if sd.get('piece') != name or 'line' in sd or 'line' in so:
+                continue
+            Lk, Lo = S.side_length(spec, sd), S.side_length(spec, so)
+            if Lo <= 0:
+                continue
+            s0 = ol.s_of(*sd['from'])
+            for v, n in W.side_notches(spec, so):
+                if so['piece'] == name and n['id'] == skip:
+                    continue
+                u = v * Lk / Lo
+                out.append((float(np.mod(s0 + (u if sd['dir'] > 0 else -u), ol.L)), 'partner'))
+    return ol, out
+
+
+def snap_notch(spec, name, eid, t, tol, skip=None):
+    """(edge id, t, kind) of the notch place (eid, t) on piece `name` moved onto the nearest snap place within tol mm
+    of outline arc (notch_snap_arcs), or (eid, t, None)."""
+    ol, arcs = notch_snap_arcs(spec, name, skip)
+    s = ol.s_of(eid, t)
+    best = None
+    for a, kind in arcs:
+        d = abs(np.mod(s - a + 0.5 * ol.L, ol.L) - 0.5 * ol.L)
+        if d <= tol and (best is None or d < best[0]):
+            best = (d, a, kind)
+    if best is None:
+        return eid, t, None
+    e, tt = ol.edge_t(best[1])
+    return e, tt, best[2]
+
+
 def notch_at_arc(spec, side, u):
     """(edge id, t) of the point at arc u (mm) from a side's 'from' end along the side."""
     ol = S.Outline(piece(spec, side['piece']))
@@ -2054,14 +2238,41 @@ def match_notches(spec, seam_id, key):
 
 
 def delete_piece(spec, name):
-    """Remove a piece and everything that refers to it (seams, placement, folds, closures)."""
+    """Remove a piece and its owned relationships; never reconnect them to a reused name."""
     spec['pieces'] = [p for p in spec['pieces'] if p['name'] != name]
     gone = {sm['id'] for sm in spec.get('seams', []) if name in (sm['a']['piece'], sm['b']['piece'])}
     spec['seams'] = [sm for sm in spec.get('seams', []) if sm['id'] not in gone]
+    _remove_seam_dependents(spec, gone)
     spec.get('placement', {}).pop(name, None)
-    spec['folds'] = [f for f in spec.get('folds', []) if f.get('piece') != name and f.get('seam') not in gone]
+    spec['folds'] = [f for f in spec.get('folds', [])
+                     if f.get('piece') != name and f.get('turn') != name and f.get('seam') not in gone]
     if 'closures' in spec:
         spec['closures'] = [c for c in spec['closures'] if name not in c]
+    if 'pairs' in spec:
+        spec['pairs'] = [pair for pair in spec['pairs'] if name not in pair]
+    for pc in spec['pieces']:
+        if pc.get('closes_onto') == name:
+            pc.pop('closes_onto')
+    if 'elastic' in spec:
+        spec['elastic'] = [entry for entry in spec['elastic'] if entry.get('piece') != name]
+    measure = spec.get('measure')
+    if isinstance(measure, dict) and 'pattern' in measure:
+        measure['pattern'] = [entry for entry in measure['pattern']
+                              if not any(isinstance(entry.get(k), dict) and entry[k].get('piece') == name
+                                         for k in ('a', 'b'))]
+    if 'attach' in spec:
+        spec['attach'] = [entry for entry in spec['attach']
+                          if entry.get('seam') not in gone and (entry.get('side') or {}).get('piece') != name]
+    if 'tacks' in spec:
+        spec['tacks'] = [entry for entry in spec['tacks'] if name not in (entry.get('a'), entry.get('b'))]
+    if 'zippers' in spec:
+        spec['zippers'] = [entry for entry in spec['zippers']
+                           if not any(entry[key].get('piece') == name for key in ('a', 'b'))]
+    if 'buttons' in spec:
+        spec['buttons'] = [entry for entry in spec['buttons'] if entry.get('piece') != name]
+        for entry in spec['buttons']:
+            if (entry.get('hole') or {}).get('piece') == name:
+                entry['hole'], entry['fastened'] = None, False
     return sorted(gone)
 
 
@@ -2100,7 +2311,7 @@ def problems(spec, names):
             out.append(f"{nm}: the outline crosses itself")
         for e in pc['edges']:
             if S.polyline_len(e['pts']) < MIN_EDGE:
-                out.append(f"{nm}: edge {e['id']} is shorter than {MIN_EDGE} mm")
+                out.append(f"{nm}: edge {e['id']} is shorter than {len_text(MIN_EDGE)}")
     out += [x for x in S.check(spec) if any(x.split(':')[0] == sm['id'] for sm in spec['seams']
                                              if sm['a']['piece'] in names or sm['b']['piece'] in names)]
     return out

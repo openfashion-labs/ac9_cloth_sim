@@ -11,6 +11,7 @@ Retopo measures is then 1), Basis = the drape, 'UVMap_Flattened' = the flat patt
 import json
 import os
 from .i18n import rpt
+from . import units as U
 
 import bpy
 import numpy as np
@@ -116,7 +117,7 @@ THICK_ATTR = 'ac9_thickness_mm'                  # per face: its fabric's thickn
 
 
 def build_guide(context, garment):
-    job_dir = garment.get('ac9_job')
+    job_dir = D.job_of(garment)
     if not job_dir or not os.path.exists(os.path.join(job_dir, 'job.json')):
         raise ValueError("The garment has no finished simulation job")
     job = json.load(open(os.path.join(job_dir, 'job.json'), encoding='utf-8'))
@@ -194,7 +195,7 @@ class AC9_OT_SimExportRetopo(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         ob = _garment(context)
-        return ob is not None and bool(ob.get('ac9_job'))
+        return ob is not None and D.job_of(ob) is not None
 
     def execute(self, context):
         try:
@@ -202,7 +203,7 @@ class AC9_OT_SimExportRetopo(bpy.types.Operator):
         except ValueError as exc:
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
-        self.report({'INFO'}, rpt("{0}: {1} verts; seams closed (were up to {2:.1f} mm apart)", ob.name, info['verts'], info['stitch_gap_before_mm'])
+        self.report({'INFO'}, rpt("{0}: {1} verts; seams closed (were up to {2} apart)", ob.name, info['verts'], U.fmt(context, info['stitch_gap_before_mm']))
                     + (rpt("; set as the Cloth Retopo Guide") if info['linked_to_retopo'] else ""))
         return {'FINISHED'}
 

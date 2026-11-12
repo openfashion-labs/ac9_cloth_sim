@@ -90,7 +90,7 @@ class Untangler:
         self.mem_every = int(cfg.get('mem_every', 5))     # the memory pass is CPU work: every few checks
         self.body_kd = None
         if body is not None:
-            from scipy.spatial import cKDTree
+            from spatial import cKDTree
             self.body = np.asarray(body, np.float64)
             self.body_kd = cKDTree(self.body)   # checks in a row each vertex has been in a deep crossing
         # (counted per vertex, not per triangle pair: a crossing slides over neighbouring triangles from frame to
@@ -371,7 +371,7 @@ class Untangler:
     def remember(self, X, P):
         """first-contact sides: vertices within mem_r of another layer (another piece, or its own piece far on
         the pattern), not in a crossing now, and with no side for that layer yet"""
-        from scipy.spatial import cKDTree
+        from spatial import cKDTree
         if self.no_mem is None:
             self.no_mem = np.zeros(self.n, bool)
             if self._stitched is not None and len(self._stitched):

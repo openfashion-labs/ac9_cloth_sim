@@ -81,7 +81,8 @@ class PendingStop:
             return False
         if code is not None:
             if not self.finished:
-                mark('child_exited', child_pid=self.proc.pid, code=code)
+                mark('session_job_stopped' if getattr(self.proc,'is_session_job',False) else 'child_exited',
+                     child_pid=self.proc.pid, code=code)
                 self.finished = True
             return True
         now = time.monotonic()

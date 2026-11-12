@@ -90,8 +90,9 @@ FABRIC_ALPHA = 0.40
 def _fabric_fills(context, spec):
     """{piece: rgba} the fabric tint of each piece, {} when Fabric Colors is off."""
     props = context.scene.ac9_cloth_sim
+    strengthened = {p['name']: (0.72, 0.28, 0.95, 0.48) for p in spec['pieces'] if p.get('strengthen')}
     if not props.show_fabric_colors:
-        return {}
+        return strengthened
     from .core import fabric as FA
     cols = fabric_colors(spec)
     out = {}
@@ -100,6 +101,7 @@ def _fabric_fills(context, spec):
         c = cols.get(f['id']) if f else None
         if c is not None:
             out[pc['name']] = (c[0], c[1], c[2], FABRIC_ALPHA)
+    out.update(strengthened)
     return out
 
 
@@ -269,12 +271,33 @@ def _loops(E):
 def _garment_topo(ob, job):
     """Per piece name: its triangles (t x 3 vertex ids) and its rim loops, from the face attribute ac9_piece."""
     me = ob.data
-    key = (job, ob.name, len(me.vertices), len(me.polygons))
+    names_json = ob.get('ac9_piece_names', '[]')
+    owner = (job, int(ob.session_uid), int(me.session_uid), len(me.vertices), len(me.polygons), len(me.loops),
+             names_json, overlay._mesh_epochs.get(ob.as_pointer(), 0), overlay._mesh_epochs.get(me.as_pointer(), 0))
+    watched = overlay._geometry_changed in bpy.app.handlers.depsgraph_update_post
+    if watched and _topo.get('owner') == owner and _topo['key'] is not None:
+        return _topo['pieces']
+    names = json.loads(names_json)
+    pa = me.attributes.get('ac9_piece')
+    loops = np.empty(len(me.loops), np.int32)
+    sizes = np.empty(len(me.polygons), np.int32)
+    me.loops.foreach_get('vertex_index', loops)
+    me.polygons.foreach_get('loop_total', sizes)
+    fpc = np.empty(len(me.polygons), np.int64) if pa is not None else np.zeros(0, np.int64)
+    if pa is not None:
+        pa.data.foreach_get('value', fpc)
+    # Connectivity, ownership, and n-gon triangulation may change without changing any counts.
+    coordinates = None
+    if (sizes > 3).any():
+        co = np.empty(len(me.vertices) * 3, np.float32)
+        me.vertices.foreach_get('co', co)
+        coordinates = co.tobytes()
+    key = (job, int(ob.session_uid), int(me.session_uid), len(me.vertices), tuple(names),
+           loops.tobytes(), sizes.tobytes(), fpc.tobytes(), coordinates)
     if _topo['key'] == key:
+        _topo['owner'] = owner
         return _topo['pieces']
     pieces = {}
-    names = json.loads(ob.get('ac9_piece_names', '[]'))
-    pa = me.attributes.get('ac9_piece')
     if names and pa is not None:
         me.calc_loop_triangles()
         tri = np.empty(len(me.loop_triangles) * 3, np.int64)
@@ -282,8 +305,6 @@ def _garment_topo(ob, job):
         tri = tri.reshape(-1, 3)
         poly = np.empty(len(me.loop_triangles), np.int64)
         me.loop_triangles.foreach_get('polygon_index', poly)
-        fpc = np.empty(len(me.polygons), np.int64)
-        pa.data.foreach_get('value', fpc)
         tp = fpc[poly]
         for i, n in enumerate(names):
             T = tri[tp == i]
@@ -292,7 +313,7 @@ def _garment_topo(ob, job):
             E = np.sort(np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), axis=1)
             u, c = np.unique(E, axis=0, return_counts=True)
             pieces[n] = {'tri': T, 'loops': _loops(u[c == 1])}
-    _topo.update(key=key, pieces=pieces)
+    _topo.update(key=key, owner=owner, pieces=pieces, generation=_topo.get('generation', 0) + 1)
     return pieces
 
 
@@ -303,11 +324,14 @@ def _garment_co(context, ob, job):
     from . import dress as DR
     co = DR.garment_co(context, ob)
     n = len(co)
-    sample = co[:: max(1, n // 16)].round(6).tobytes()
-    key = (job, n, context.scene.frame_current, np.array(ob.matrix_world).tobytes(), sample)
-    if _gco['key'] != key:
+    owner = (job, int(ob.session_uid), int(ob.data.session_uid), n, context.scene.frame_current,
+             np.array(ob.matrix_world).tobytes())
+    # garment_co already reads all positions. Compare those exact values, not a rounded vertex sample.
+    if _gco.get('owner') != owner or _gco['key'] is None or not np.array_equal(_gco.get('raw'), co):
         Mw = np.array(ob.matrix_world)
-        _gco.update(key=key, co=co.astype(np.float64) @ Mw[:3, :3].T + Mw[:3, 3])
+        generation = _gco.get('generation', 0) + 1
+        _gco.update(owner=owner, raw=co.copy(), generation=generation, key=(owner, generation),
+                    co=co.astype(np.float64) @ Mw[:3, :3].T + Mw[:3, 3])
     return _gco['co'], _gco['key']
 
 
@@ -359,7 +383,7 @@ def _data3d(context, spec, outlines, rv3d):
     sh, sig = PLV.shown(context, spec, outlines, include_off=True) if sap else ({}, None)
     sh = {n: v for n, v in sh.items() if n in sap and n in visible}
     off_g = {n for n, v in display.items() if v['source'] == 'proxy' and n in visible}
-    gkey = ('garment', ckey, tuple(sorted(st.items())), sel, store._cache['key'] if fab else None, sig,
+    gkey = ('garment', ckey, _topo.get('generation', 0), tuple(sorted(st.items())), sel, store._cache['key'] if fab else None, sig,
             store._cache['key'] if sh else None, visible)
     if _g3['key'] != gkey:
         # the garment's tints and rims as they lie, made again only when the shape, states or selection change;

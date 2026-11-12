@@ -1,6 +1,8 @@
 """A seam added between pieces of left / right pairs gets its mirror image between their twins, and only then."""
 import sys
 import unittest
+
+import numpy as np
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from ac9_cloth_sim.core import draft as D
@@ -81,6 +83,70 @@ class TwinSeamMirror(unittest.TestCase):
         spec = garment()
         spec['symmetry'] = 'off'
         self.assertEqual(add(spec, 'U1', side('front', 'front_e1'), side('back', 'back_e3')), ([], []))
+
+
+def hexa(name, x0=0.0):
+    """A gusset symmetric front to back only (about y = 389), its straight side at x0 + 200."""
+    q = [[x0 + 200, 250], [x0 + 200, 528], [x0 + 18, 491], [x0, 389], [x0 + 18, 287]]
+    return {'name': name, 'edges': [{'id': f'{name}_e{i}', 'pts': [q[i], q[(i + 1) % 5]]} for i in range(5)]}
+
+
+class FrontBackCopy(unittest.TestCase):
+    """A front / back Mirror Copy of a panel sewn to a left / right pair of gussets (a bag): the copy's seams go to
+    the same gussets' other halves, not to their twins (they sewed the copy's right to the left gusset, on the
+    places the panel's own seams had)."""
+
+    def bag(self):
+        spec = {'version': 1, 'name': 't', 'pieces': [hexa('gusset'), rect('panel', 300, 300, 280)], 'seams': []}
+        D.mirror_group(spec, ['gusset'])                                 # gusset_R: its left / right twin
+        spec['seams'] = [{'id': 'U1', 'a': side('panel', 'panel_e3'), 'b': side('gusset', 'gusset_e4', 0.0, 1.0, -1)},
+                         {'id': 'U2', 'a': side('panel', 'panel_e1'), 'b': side('gusset_R', 'gusset_e4', 0.0, 1.0, -1)}]
+        return spec
+
+    def test_seams_go_to_the_same_gussets_other_half(self):
+        spec = self.bag()
+        made, _ = D.mirror_group(spec, ['panel'], plane='y')
+        ids, notes = ST.mirror_seams_group(spec, made)
+        self.assertEqual(len(ids), 2, notes)
+        new = [sm for sm in spec['seams'] if sm['id'] in ids]
+        ol = {pc['name']: S.Outline(pc) for pc in spec['pieces']}
+        for sm, gus in zip(new, ('gusset', 'gusset_R')):
+            g = sm['b'] if sm['b']['piece'].startswith('gusset') else sm['a']
+            self.assertEqual(g['piece'], gus)
+            ys = [float(np.asarray(ol[gus].at(ol[gus].s_of(*g[e]))).reshape(2)[1]) for e in ('from', 'to')]
+            self.assertGreaterEqual(min(ys), 389.0 - 1e-6)                # the other (upper) half
+
+    @staticmethod
+    def lay_flat(spec, names):
+        for n in names:
+            spec.setdefault('placement', {})[n] = {'guide': S.FLAT, 'flat': {'o': [0, -500, 0], 'R': [[1, 0, 0], [0, 0, 1],
+                                                                                                   [0, -1, 0]]},
+                                                   'anchor': [0, 0]}
+
+    def test_placed_on_the_body_again_mirrors_about_the_body(self):
+        spec = self.bag()
+        made, _ = D.mirror_group(spec, ['panel'], plane='y')
+        spec.setdefault('guides', {})['torso'] = {'o': [0.0, 42.0, 1000.0]}
+        pair = ('panel', made['panel'])
+        self.lay_flat(spec, pair)
+        S.set_mirror_at(spec, pair, -513.2)
+        self.assertAlmostEqual(S.mirror_center(spec, 'y', 'panel'), -513.2)
+        spec['placement'][made['panel']] = {'guide': 'torso', 'anchor': [0, 0]}     # one placed on the torso again
+        for n in pair:
+            self.assertEqual(S.mirror_center(spec, 'y', n), 42.0)        # the torso's center, not the old place
+
+    def test_stored_plane_position_wins(self):
+        spec = self.bag()
+        made, _ = D.mirror_group(spec, ['panel'], plane='y')
+        self.assertEqual(S.mirror_center(spec, 'y', 'panel'), 0.0)       # no body, nothing stored: 0
+        S.set_mirror_at(spec, ('panel', made['panel']), -513.2)
+        self.assertEqual(S.mirror_center(spec, 'y', 'panel'), 0.0)       # not laid flat: not read
+        self.lay_flat(spec, ('panel', made['panel']))
+        self.assertAlmostEqual(S.mirror_center(spec, 'y', 'panel'), -513.2)
+        self.assertEqual(S.mirror_center(spec, 'x', 'panel'), 0.0)       # another plane: not it
+        self.assertEqual(S.mirror_center(spec, 'y', 'gusset'), 0.0)      # another pair: not it
+        D.set_pair_plane(spec, 'panel', 'x')
+        self.assertIsNone(S.stored_mirror_at(spec, 'panel'))             # a new plane drops the old position
 
 
 if __name__ == '__main__':

@@ -83,7 +83,7 @@ In "Edit" > "Preferences" > "Input", turn on these two options.
 | Delete | **X** or **Delete** |
 | Search for an operation by name and run it | **F3** |
 
-**Pattern pieces do not move with Blender's G / R / S.** The pieces are locked. To move a whole piece, use the **Transform Pattern** tool, and to fix corners or edges, use the **Edit Pattern** tool.
+**Pattern pieces do not move with Blender's G / R / S.** The pieces are locked. To move a whole piece, use the **Whole Pieces** tool, and to fix corners or edges, use the **Edit Pieces** tool.
 
 Right-click has two meanings. In the middle of an operation it cancels, and when you aren't doing anything it shows a menu of what can be used on the item under the cursor (while you hold an AC9 tool).
 

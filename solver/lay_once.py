@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Lay on Edge (place_lay.py, user 2026-10-22): one band laid on its partners' edge as they are placed, outside
-Blender (the solver's Python: scipy), with the check Simulate's lay uses (solver/lay.py apply, bridge on: the
+Blender (the solver's Python), with the check Simulate's lay uses (solver/lay.py apply, bridge on: the
 partners may lie apart where they are not sewn yet).
 
   python lay_once.py <in.npz> <out.npz>

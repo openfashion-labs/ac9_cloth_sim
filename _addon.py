@@ -5,34 +5,71 @@ import os
 
 # F3 (Reload Scripts) re-runs this file: reload the submodules in dependency order first
 if "_spec" in locals():
+    if '_dress' in locals():
+        _dress.standby_end()
+    if '_prepared_live' in locals():
+        importlib.reload(_process_tree)
+        importlib.reload(_prepared_live)
+        importlib.reload(_prepared_candidate)
+        if '_live_session' in locals():importlib.reload(_live_session)
+    if "_place_targets" in locals():
+        _place_targets.unregister()
+        importlib.reload(_target_scope)
+        importlib.reload(_place_targets)
     if '_fast_contract' in locals():
         importlib.reload(_fast_contract)
         importlib.reload(_fast_live)
+    if '_native_three_contract' in locals():
+        importlib.reload(_native_three_contract)
+        importlib.reload(_native_three)
+    if '_native_runtime_io' in locals():
+        importlib.reload(_native_runtime_io)
+        importlib.reload(_native_three_io)
     if '_preload_status' in locals():
         importlib.reload(_preload_status)
+    if '_preload_config' in locals():
+        importlib.reload(_preload_config)
     if "_fold_reference" in locals():
         importlib.reload(_fold_reference)
     if "_live_resume" in locals():
         importlib.reload(_live_resume)
     if "_outside" in locals():
         importlib.reload(_outside)
+    if "_look_reference" in locals():
+        importlib.reload(_look_reference)
+    if '_prepare_build' in locals():
+        importlib.reload(_prepare_build)
+    if "_result_reference" in locals():
+        importlib.reload(_result_reference)
     if "_display_state" in locals():
         importlib.reload(_display_state)
     if "_view_visibility" in locals():
         importlib.reload(_view_visibility)
     if "_view_setup" in locals():
         importlib.reload(_view_setup)
-    for _m in (*([_i18n_ja, _i18n] if '_i18n' in locals() else []), *([_core_i18n] if '_core_i18n' in locals() else []), _spec, *([_piece_table] if '_piece_table' in locals() else []), _bom_parse, _bom_to_spec, _body_axes, _pattern_build, _roles, *([_fabric, _look] if '_look' in locals() else []), _recipe, _presets, *([_phase_from] if '_phase_from' in locals() else []), _simlog,  # noqa: F821
+    for _m in (*([_i18n_ja, _i18n] if '_i18n' in locals() else []), *([_core_i18n] if '_core_i18n' in locals() else []), _spec, *([_shape_source] if '_shape_source' in locals() else []), *([_piece_table] if '_piece_table' in locals() else []), _bom_parse, _bom_to_spec, _body_axes, _pattern_build, _roles, *([_fabric, _look] if '_look' in locals() else []), _recipe, _presets, *([_prepare_plan] if '_prepare_plan' in locals() else []), *([_phase_from] if '_phase_from' in locals() else []), _simlog,  # noqa: F821
                _store, *([_look_apply] if '_look_apply' in locals() else []), _pattern_view, _placed_view, *([_selection] if '_selection' in locals() else []), _overlay, _piece_look, *([_diagnose] if '_diagnose' in locals() else []), _click_log, _toolbar, *([_pre_click] if '_pre_click' in locals() else []), _seam_tool, _seam_edit, _seam_edit_tool, _draft, _snap, _transfer, _dxf_out, _walk, _notch_import, _dart, _spread, *([_cut] if '_cut' in locals() else []), _blend, _draft_tool, _shape_tool, _walk_ui, _dart_ui, _spread_ui, _blend_ui, _placement, _guide_edit, _piece_move, _garment_mark, _work_screen, _attach, _buttons, _zippers, _button_shape, _button_view, _zipper_view, _button_ui, *([_lifecycle_trace, _stop_control] if '_stop_control' in locals() else []), _dress, *([_place_fold] if '_place_fold' in locals() else []), *([_place_seam] if '_place_seam' in locals() else []), *([_place_lay] if '_place_lay' in locals() else []), *([_place_settle] if '_place_settle' in locals() else []), _export_retopo,  # noqa: F821
                _mesh_to_spec, _mesh_import, _measure, _measure_tool, *([_measure_edit] if '_measure_edit' in locals() else []), _properties, _operators, _ui, _tool_tab):                                                     # noqa: F821
         importlib.reload(_m)
 
+from .core import shape_source as _shape_source
+from .core import prepare_plan as _prepare_plan
+from . import prepare_build as _prepare_build
 from .core import spec as _spec                     # noqa: E402
 from .core import piece_table as _piece_table       # noqa: E402
 from .core import phase_from as _phase_from         # noqa: E402
 from .solver import fast_live_contract as _fast_contract
 from .core import fast_live as _fast_live
+from .solver import native_three_contract as _native_three_contract
+from .core import native_three as _native_three
+from .solver import native_runtime_io as _native_runtime_io
+from .core import native_three_io as _native_three_io
 from .solver import preload_status as _preload_status # noqa: E402
+from .solver import preload_config as _preload_config
+from .solver import prepared_live as _prepared_live
+from .solver import process_tree as _process_tree
+from .core import prepared_candidate as _prepared_candidate
+from .core import live_session as _live_session
 from .core import fold_reference as _fold_reference # noqa: E402
 from .core import bom_parse as _bom_parse           # noqa: E402
 from .core import bom_to_spec as _bom_to_spec       # noqa: E402
@@ -48,11 +85,13 @@ from .core import attach as _attach                 # noqa: E402
 from . import i18n_ja as _i18n_ja                   # noqa: E402
 from . import i18n as _i18n                         # noqa: E402
 from .core import _i18n as _core_i18n                # noqa: E402
+from . import look_reference as _look_reference     # noqa: E402
 from . import store as _store                       # noqa: E402
 from . import look_apply as _look_apply             # noqa: E402
 from . import pattern_view as _pattern_view         # noqa: E402
 from . import placed_view as _placed_view           # noqa: E402
 from . import selection as _selection               # noqa: E402
+from . import result_reference as _result_reference # noqa: E402
 from . import display_state as _display_state       # noqa: E402
 from . import view_visibility as _view_visibility   # noqa: E402
 from . import view_setup as _view_setup             # noqa: E402
@@ -98,6 +137,8 @@ from .solver import lifecycle_trace as _lifecycle_trace
 from .solver import stop_control as _stop_control
 from . import dress as _dress                       # noqa: E402
 from . import place_fold as _place_fold             # noqa: E402
+from .core import place_targets as _target_scope
+from . import place_targets as _place_targets
 from . import place_seam as _place_seam             # noqa: E402
 from . import place_lay as _place_lay               # noqa: E402
 from . import place_settle as _place_settle         # noqa: E402
@@ -112,8 +153,8 @@ from . import operators as _operators               # noqa: E402
 from . import ui as _ui                             # noqa: E402
 from . import tool_tab as _tool_tab                 # noqa: E402
 
-_CHAIN = (_core_i18n, _spec, _piece_table, _bom_parse, _bom_to_spec, _body_axes, _pattern_build, _roles, _fabric, _look, _recipe, _presets, _phase_from, _simlog, _attach, _store, _look_apply, _pattern_view, _placed_view, _selection, _view_visibility, _view_setup, _overlay, _piece_look, _toolbar, _pre_click,
-          _seam_tool, _seam_edit, _seam_edit_tool, _draft, _snap, _transfer, _dxf_out, _walk, _notch_import, _dart, _spread, _cut, _blend, _draft_tool, _shape_tool, _walk_ui, _dart_ui, _spread_ui, _blend_ui, _placement, _guide_edit, _piece_move, _garment_mark, _work_screen, _buttons, _zippers, _button_shape, _button_view, _zipper_view, _button_ui, *([_lifecycle_trace, _stop_control] if '_stop_control' in locals() else []), _dress, _place_fold, _place_seam, _place_lay, _place_settle, _export_retopo, _mesh_to_spec,
+_CHAIN = (_core_i18n, _spec, _shape_source, _piece_table, _bom_parse, _bom_to_spec, _body_axes, _pattern_build, _roles, _fabric, _look, _recipe, _presets, _prepare_plan, _phase_from, _simlog, _attach, _result_reference, _look_reference, _store, _look_apply, _pattern_view, _placed_view, _selection, _view_visibility, _view_setup, _overlay, _piece_look, _toolbar, _pre_click,
+          _seam_tool, _seam_edit, _seam_edit_tool, _draft, _snap, _transfer, _dxf_out, _walk, _notch_import, _dart, _spread, _cut, _blend, _draft_tool, _shape_tool, _walk_ui, _dart_ui, _spread_ui, _blend_ui, _placement, _guide_edit, _piece_move, _garment_mark, _work_screen, _buttons, _zippers, _button_shape, _button_view, _zipper_view, _button_ui, *([_lifecycle_trace, _stop_control] if '_stop_control' in locals() else []), _prepare_build, _dress, _place_fold, _target_scope, _place_targets, _place_seam, _place_lay, _place_settle, _export_retopo, _mesh_to_spec,
           _mesh_import, _measure,
           _measure_tool, _measure_edit, _properties,
           _operators,
@@ -146,6 +187,7 @@ def _reload_changed_submodules():
 def register():
     _reload_changed_submodules()
     _i18n.register()
+    _look_reference.register()
     _properties.register()
     _operators.register()
     _seam_tool.register()
@@ -183,6 +225,7 @@ def register():
 
 
 def unregister():
+    _place_targets.unregister()
     _selection.unregister()
     _display_state.unregister()
     _garment_mark.unregister()
@@ -217,4 +260,6 @@ def unregister():
     _seam_tool.unregister()
     _operators.unregister()
     _properties.unregister()
+    _operators.release_enum_strings()
     _i18n.unregister()
+    _look_reference.unregister()

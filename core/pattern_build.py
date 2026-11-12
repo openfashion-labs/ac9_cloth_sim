@@ -899,14 +899,17 @@ def build(spec, h=6.0):
         name = p['name']
         A, oa, ob = built[prim], OL[prim], OL[name]
         ca, cb = 0.5 * (oa.B.min(0) + oa.B.max(0)), 0.5 * (ob.B.min(0) + ob.B.max(0))
+        k_ = 1 if oa.plane == 'y' else 0           # a front / back pair mirrors across y
 
         def M(q):
-            q = np.asarray(q, float)
-            return np.stack([cb[0] - (q[:, 0] - ca[0]), q[:, 1] - ca[1] + cb[1]], 1)
+            q = np.array(q, float) - ca
+            q[..., k_] *= -1.0
+            return q + cb
 
         def Minv(q):
-            q = np.asarray(q, float)
-            return np.stack([ca[0] - (q[:, 0] - cb[0]), q[:, 1] - cb[1] + ca[1]], 1)
+            q = np.array(q, float) - cb
+            q[..., k_] *= -1.0
+            return q + ca
         fit = dist_to_ring(M(oa.B), ob.B).max()
         if fit > 0.1:
             rep.append(f"  {name} not mirror-meshed: outline fit {fit:.2f} mm")

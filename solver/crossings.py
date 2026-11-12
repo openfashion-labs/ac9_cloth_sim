@@ -2,7 +2,7 @@
 From the 10/18 recovery bench (experiments/recover_2026-10-18, gia_untangle._crossing_edges).
   crossing_edges(X, E, Tb) -> (ei, ti): indices into E of the edges passing through a triangle of Tb, and that triangle"""
 import numpy as np
-from scipy.spatial import cKDTree
+from spatial import cKDTree
 
 
 def crossing_edges(X, E, Tb):

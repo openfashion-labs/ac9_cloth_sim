@@ -28,6 +28,7 @@ flat pattern, B the right; the spec's fold keeps it ("side": "A" / "B", only the
 pulls both sides to the angle). The Tool tab is the only way in (user 2026-10-24, no Fold button): its Fold Angle,
 Direction and Moves fold the placed shape at once, the first time too; A and B are shown on the pattern and on the
 placed shape, and a line it cannot fold shows why with Local Sim to see it."""
+from . import prepare_build as PB
 import json
 
 import bpy
@@ -173,7 +174,7 @@ def folded(ob):
 
 
 def target(context, spec):
-    """(piece, line id, deg) of the internal line picked in Edit Pattern, or None."""
+    """(piece, line id, deg) of the internal line picked in Edit Pieces, or None."""
     from . import draft_tool as DT
     s = DT.selected_internal(context, spec)
     if s is None:
@@ -234,7 +235,7 @@ def _same_rest(entry, spec):
     return True
 
 
-def _info(context, spec, piece, line):
+def _info(context, spec, piece, line, *, preparation=None):
     """sides() for an internal line, seam_sides() for SEAM_KEY + seam id; kept while the pattern and the placed
     object as made stay the same (meshing the garment is most of a refold: 530 of 600 ms on a shirt), its shape and
     origin read again from the object."""
@@ -251,9 +252,9 @@ def _info(context, spec, piece, line):
         sm = _seam_of(spec, line)
         if sm is None:
             return None, tx("{0}: the seam is gone", line)
-        info, why = seam_sides(context, spec, sm, piece)
+        info, why = seam_sides(context, spec, sm, piece, preparation=preparation)
     else:
-        info, why = sides(context, spec, piece, line)
+        info, why = sides(context, spec, piece, line, preparation=preparation)
     if info is not None and info['ob'] is ob:
         _cache.clear()                                  # one line at a time: the one being set
         rest = _spec_rest(spec)
@@ -261,7 +262,7 @@ def _info(context, spec, piece, line):
     return info, why
 
 
-def seam_sides(context, spec, sm, piece):
+def seam_sides(context, spec, sm, piece, *, preparation=None):
     """What Fold needs to turn the whole of `piece` over its own edge of seam sm (user 2026-10-23, DECISIONS
     cloth-sim-seam-fold-2026-10-23; Fable docs/reviews/REVIEW_fable_seam_fold_3d_2026-10-23.md): the same dict as
     sides(), its 'sides' [every vertex, none]. The partner may be anywhere and the piece may have other seams: they
@@ -290,8 +291,9 @@ def seam_sides(context, spec, sm, piece):
     if ob.get(PLV.LAID_PROP):
         return None, tx("{0} was laid on its edge (Band on Edge): Back to Guide first", piece)
     try:
-        res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, placed_only=True)
+        res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, placed_only=True, preparation=preparation)
     except ValueError as exc:
+        PB.cancel(preparation)
         return None, str(exc)
     pat, tris = res['pat'], res['tris']
     names = [str(n) for n in pat['names']]
@@ -361,7 +363,7 @@ def _object(spec, piece):
     return ob if ob is not None and ob.get(PLV.PROP) == piece else None
 
 
-def sides(context, spec, piece, line, prepared=None):
+def sides(context, spec, piece, line, prepared=None, *, preparation=None):
     """Everything Fold needs, or (None, reason): {'ob', 'i', 'pat', 'tris', 'roll', 'sides': [fall0, fall1],
     'Xid' (n, 3) mm the object's shape as made, 'org' mm, 'guide', 'axis'}."""
     from . import dress as D
@@ -383,8 +385,9 @@ def sides(context, spec, piece, line, prepared=None):
         return None, tx("{0} was laid on its edge (Band on Edge): Back to Guide first", piece)
     try:
         res = prepared if prepared is not None else D.prepare(context, context.scene.ac9_cloth_sim.mesh_size,
-                                                             shapes_only=True, placed_only=True)
+                                                             shapes_only=True, placed_only=True, preparation=preparation)
     except ValueError as exc:
+        PB.cancel(preparation)
         return None, str(exc)
     pat, tris = res['pat'], res['tris']
     names = [str(n) for n in pat['names']]
@@ -655,7 +658,7 @@ def sync_twin(context, piece, line):
     return tls[0][:2]
 
 
-def set_turn_side(context, piece, line, deg, side):
+def set_turn_side(context, piece, line, deg, side, *, preparation=None):
     """Change the turning side atomically, including mirrored lines and their placed meshes.
 
     A neutral fold must not silently discard later folds or vertex edits. When the exact
@@ -685,13 +688,17 @@ def set_turn_side(context, piece, line, deg, side):
         was_legacy = legacy_collar(spec, piece, line)
         backup = PLV.PreparedResetBackup(context, spec)
         try:
-            write_angle(context, piece, line, deg, side)
-            from . import placement as PL
-            if was_legacy and PL.show_start(context, store.get(context)[0], [piece]) is not None:
-                for why in PL.refold_all(context, [piece]):
-                    raise ValueError(why)
-            else:
-                refold_pair(context, piece, line, deg, strict=True)
+            with PB.operation(context, owner=preparation, consumer_backup=backup) as preparation:
+                write_angle(context, piece, line, deg, side)
+                PB.replan_source(preparation)
+                from . import placement as PL
+                if was_legacy and PL.show_start(context, store.get(context)[0], [piece], preparation=preparation) is not None:
+                    for why in PL.refold_all(context, [piece], preparation=preparation):
+                        raise ValueError(why)
+                else:
+                    refold_pair(context, piece, line, deg, strict=True, preparation=preparation)
+            if preparation.canceled:
+                raise preparation.failure or ValueError('Fold preparation was canceled')
         except Exception:
             backup.rollback()
             _cache.clear()
@@ -699,6 +706,7 @@ def set_turn_side(context, piece, line, deg, side):
         finally:
             backup.close()
     except Exception as exc:
+        PB.cancel(preparation)
         _note(piece, line, (False, str(exc)))
         overlay.invalidate()
         return False, str(exc)
@@ -706,25 +714,32 @@ def set_turn_side(context, piece, line, deg, side):
     return True, ''
 
 
-def refold_pair(context, piece, line, deg, strict=False):
+@PB.prepared_consumer
+def refold_pair(context, piece, line, deg, strict=False, *, preparation=None):
     """refold() for the line and its twin's: on each piece that holds its own placed shape (a linked pair's object
     folds the twin's half with it; a follower alone is refused, so it is folded through its leader's line)."""
     from .core import draft as DR
     spec = store.get(context)[0]
     if spec is not None and abs(deg) >= 1e-6 and spec_side(spec, piece, line) != 'NONE':
         # the pair's objects made first when the piece has none, so the one that leads is known
-        spec = _with_placed(context, spec, piece) or store.get(context)[0]
+        spec = _with_placed(context, spec, piece, preparation=preparation) or store.get(context)[0]
     todo = [(piece, line)] + ([(p, l) for p, l, _ in DR.mirror_lines(spec, piece, line)] if spec else [])
     own = [(p, l) for p, l in todo if _object(spec, p) is not None]
     res = None
+    accepted = False
     for p, l in own or todo[:1]:
-        r = refold(context, p, l, deg)
-        if strict and r is not None and not r[0]:
-            raise ValueError(r[1])
+        with preparation.attempt() as child:
+            r = refold(context, p, l, deg, preparation=preparation)
+            if strict and r is not None and not r[0]:
+                raise ValueError(r[1])
+            if r is not None and r[0]:
+                child.accept()
+                accepted = True
         res = r if (p, l) == (piece, line) or res is None else res
     for p, l in todo:
         if (p, l) not in own and own:
             _why.pop((p, str(l)), None)            # folded through its pair's object
+    if not accepted and res is not None and not res[0]:PB.refuse(preparation, res[1])
     return res
 
 
@@ -744,7 +759,8 @@ def _note(piece, line, res):
     return res
 
 
-def _with_placed(context, spec, piece=None):
+@PB.prepared_consumer
+def _with_placed(context, spec, piece=None, *, preparation=None):
     """The spec once the placed shapes are there to fold: shown first when none is (what the old Fold button did),
     None after a Simulate with them gone (the angle works while simulating). A piece placed after the others had
     their objects (a pocket put on its cylinder once the rest had been simulated) gets its own made then, it alone:
@@ -763,10 +779,11 @@ def _with_placed(context, spec, piece=None):
             # placed after the garment was simulated: its shape made and sewn on from it by the next Phase Sim
             # (placement.give_shape, user 2026-10-25 b-2), not only shown
             from . import placement as PL
-            return PL.give_shape(context, spec, [piece])[0]
+            return PL.give_shape(context, spec, [piece], preparation=preparation)[0]
         try:
-            res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, placed_only=True)
+            res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, placed_only=True, preparation=preparation)
         except ValueError:
+            PB.cancel(preparation)
             return spec
         PLV.build(context, store.get(context)[0], res['pat'], res['tris'], res['X'], res['pairs'], only=[piece])
         PLV.invalidate_shown()
@@ -775,11 +792,13 @@ def _with_placed(context, spec, piece=None):
         return spec
     if D.has_result(bpy.data.objects.get(D.garment_name(spec))):
         return None
-    bpy.ops.ac9_cloth_sim.show_placed(placed_only=True)
+    from . import placement as PL
+    PL.show_placed(context, placed_only=True, preparation=preparation)
     return store.get(context)[0]
 
 
-def refold(context, piece, line, deg, prepared=None):
+@PB.prepared_consumer
+def refold(context, piece, line, deg, prepared=None, *, preparation=None):
     """The Tool tab's Fold (deg) changed: the placed shape folded over the line at once at the new angle, on the side
     in the spec, the first time too (user 2026-10-24: the panel is the only way in, no Fold button); 0 lays it back
     flat. (ok, message), or None when there is no placed shape to fold (the angle works while simulating). A line
@@ -789,24 +808,24 @@ def refold(context, piece, line, deg, prepared=None):
         return _note(piece, line, None)
     if not str(line).startswith(SEAM_KEY) and spec_side(spec, piece, line) == 'NONE':
         deg = 0.0          # undo only the placed turn; the signed fold angle in the spec stays active in the solver
-    spec = _with_placed(context, spec, piece) if abs(deg) >= 1e-6 else spec
+    spec = _with_placed(context, spec, piece, preparation=preparation) if abs(deg) >= 1e-6 else spec
     if spec is None:
         return _note(piece, line, None)
     ob = _object(spec, piece)
     if abs(deg) >= 1e-6:
         info = None
         if prepared is not None and not str(line).startswith(SEAM_KEY):
-            info, why = sides(context, spec, piece, line, prepared=prepared)
+            info, why = sides(context, spec, piece, line, prepared=prepared, preparation=preparation)
             if info is None:
-                return _note(piece, line, (False, why))
-        return _note(piece, line, fold(context, spec, piece, line, deg, None, info=info))
+                return _note(piece, line, PB.refuse(preparation, why))
+        return _note(piece, line, fold(context, spec, piece, line, deg, None, info=info, preparation=preparation))
     done = folded(ob) if ob is not None else []
     k = next((j for j, d in enumerate(done) if d.get('line') == line), None)
     if k is None:
         return _note(piece, line, None)
-    info, _why_ = _info(context, spec, piece, line)
+    info, _why_ = _info(context, spec, piece, line, preparation=preparation)
     if not _unfold(ob, done, k, info):
-        return _note(piece, line, (False, tx("{0} is folded already and its shape before it is gone: Back to Guide "
+        return _note(piece, line, PB.refuse(preparation, tx("{0} is folded already and its shape before it is gone: Back to Guide "
                                               "first", line)))
     PLV.invalidate_shown()
     return _note(piece, line, (True, tx("{0}: {1} laid flat again", piece, line)))
@@ -818,7 +837,8 @@ def seam_turn(spec, sm):
     return f.get('turn') if f.get('turn') in (sm['a']['piece'], sm['b']['piece']) else S.turn_default(spec, sm)
 
 
-def refold_seam(context, sid, deg, turn=None):
+@PB.prepared_consumer
+def refold_seam(context, sid, deg, turn=None, *, preparation=None):
     """refold() for a seam's Fold (deg) (user 2026-10-23, the first time too 2026-10-24): its turning piece turns as a
     whole over its edge of the seam (seam_turn, or `turn` when the Seams list's Turns changed it: the other piece
     is laid back flat), 0 lays it back flat. The turning piece is written with the angle."""
@@ -832,38 +852,49 @@ def refold_seam(context, sid, deg, turn=None):
     for piece in (sm['a']['piece'], sm['b']['piece']):
         ob = _object(spec, piece)
         k = next((d.get('line') for d in (folded(ob) if ob is not None else []) if d.get('line') in keys), None)
-        if k is not None and (piece == turn or abs(deg) < 1e-6):
-            return refold(context, piece, k, deg)
         if k is not None:
-            refold(context, piece, k, 0.0)                 # Turns changed: the other piece laid back flat
+            requested = piece == turn or abs(deg) < 1e-6
+            with preparation.attempt() as child:
+                result = refold(context, piece, k, deg if requested else 0.0, preparation=preparation)
+                if result is not None and result[0]:child.accept()
+            if requested:
+                if result is not None and not result[0]:PB.refuse(preparation, result[1])
+                return result
     if abs(deg) < 1e-6:
         return None
     picked = turn
-    res = refold(context, turn, SEAM_KEY + sid, deg)
+    with preparation.attempt() as child:
+        res = refold(context, turn, SEAM_KEY + sid, deg, preparation=preparation)
+        if res is not None and res[0]:child.accept()
     if res is not None and not res[0] and not given:
-        # the other piece, when this one cannot turn (not placed, a pair's follower), as the Fold button did
+        # An expected refusal of the preferred half is recovered before trying the alternative.
         o = sm['b']['piece'] if turn == sm['a']['piece'] else sm['a']['piece']
-        res2 = refold(context, o, SEAM_KEY + sid, deg)
+        with preparation.attempt() as child:
+            res2 = refold(context, o, SEAM_KEY + sid, deg, preparation=preparation)
+            if res2 is not None and res2[0]:child.accept()
         if res2 is not None and res2[0]:
             _why.pop((turn, SEAM_KEY + sid), None)
             picked, res = o, res2
+    if res is not None and not res[0]:PB.refuse(preparation, res[1])
     if res is not None and res[0]:
         write_angle(context, picked, SEAM_KEY + sid, deg)  # the turning piece with it
+        PB.replan_source(preparation)
     return res
 
 
-def fold(context, spec, piece, line, deg, side, info=None):
+@PB.prepared_consumer
+def fold(context, spec, piece, line, deg, side, info=None, *, preparation=None):
     """Fold the piece's placed object over `line` by deg (+ mountain seen from the pattern's face = turned behind it), side 0 or 1
     turning (None: side_index). Returns (ok, message)."""
     from . import dress as D
     if not str(line).startswith(SEAM_KEY) and spec_side(spec, piece, line) == 'NONE':
         return True, ''     # no direct caller may turn a whole side for an unspecified fold
     if abs(deg) < 1e-6:
-        return False, tx("{0}: set its fold angle first (Fold (deg))", line)
+        return PB.refuse(preparation, tx("{0}: set its fold angle first (Fold (deg))", line))
     if info is None:
-        info, why = _info(context, spec, piece, line)
+        info, why = _info(context, spec, piece, line, preparation=preparation)
         if info is None:
-            return False, why
+            return PB.refuse(preparation, why)
     if side is None:
         side = 0 if info.get('seam') is not None else side_index(spec, piece, line, info)
     ob = info['ob']
@@ -874,7 +905,7 @@ def fold(context, spec, piece, line, deg, side, info=None):
         # folded already: back to its shape before that fold (0 degrees), then folded again at the angle now - a
         # replacement, not added on (user 2026-10-22: 45 degrees to look, then 180)
         if not _unfold(ob, done, k, info):
-            return False, tx("{0} is folded already and its shape before it is gone: Back to Guide first", line)
+            return PB.refuse(preparation, tx("{0} is folded already and its shape before it is gone: Back to Guide first", line))
         if len(done) > k + 1:
             redone = tx(" (folded after it, undone: {0})", ", ".join(str(d.get('line')) for d in done[k + 1:]))
         done = done[:k]
@@ -884,8 +915,8 @@ def fold(context, spec, piece, line, deg, side, info=None):
     # an old fold with no side: placing the piece turned it already (dress.py collar_prefold); a line with Turns set
     # is folded here at any angle (user 2026-11-02, DECISIONS cloth-sim-no-auto-judgment-default-rules-2026-11-02)
     if legacy_collar(spec, piece, line, deg) and not done and info.get('seam') is None:
-        return False, tx("{0} is turned when the collar is placed (no Turns set): pick Turns A or B to fold it here",
-                         line)
+        return PB.refuse(preparation, tx("{0} is turned when the collar is placed (no Turns set): pick Turns A or B to fold it here",
+                         line))
     co, nf = _shape(info, side, deg)
     # folded at this angle the turned side may need more length than the pattern has (a collar turned out round the
     # neck: its far edge goes round a wider circle): folded anyway, the stretch said and the object red
@@ -907,6 +938,7 @@ def fold(context, spec, piece, line, deg, side, info=None):
         msg += tx(", side {0} moves", ab)
         if spec_side(store.get(context)[0], piece, line) != ab:     # a fold from before the spec kept its side
             write_angle(context, piece, line, deg, ab)
+            PB.replan_source(preparation)
     if ob.get(PLV.TWIN_PROP):
         msg += tx(" (its pair {0} too)", ob[PLV.TWIN_PROP])
     if stretch > STRETCH_MAX:

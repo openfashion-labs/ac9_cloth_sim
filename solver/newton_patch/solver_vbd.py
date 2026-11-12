@@ -2562,6 +2562,8 @@ class SolverVBD(SolverBase, CouplingInterface):
 
         """
         ac9_bound = getattr(self, 'ac9_bound_constraints', None)
+        sparse_contacts = getattr(self, 'ac9_self_contact_queue', None)
+        planar_launch = sparse_contacts.launch_planar if sparse_contacts is not None and sparse_contacts.enable_planar else wp.launch
         if ac9_bound is not None:
             if particle_q_out is None:
                 raise ValueError('AC9 bound truncation needs the current accepted particle positions')
@@ -2575,7 +2577,7 @@ class SolverVBD(SolverBase, CouplingInterface):
             maximum = wp.inf
             if self.particle_enable_self_contact:
                 maximum = self._self_contact_query_radius * self.particle_conservative_bound_relaxation * 0.5
-                wp.launch(apply_planar_truncation_parallel_by_collision,
+                planar_launch(apply_planar_truncation_parallel_by_collision,
                     dim=self.particle_self_contact_evaluation_kernel_launch_size,
                     inputs=[ac9_bound.accepted, ac9_bound.increment, self.model.tri_indices, self.model.edge_indices,
                         self.trimesh_collision_info, self._self_contact_edge_edge_parallel_epsilon,
@@ -2583,9 +2585,13 @@ class SolverVBD(SolverBase, CouplingInterface):
                         self.ac9_layer_crossings['reference_pairs'] if hasattr(self, 'ac9_layer_crossings') else self._ac9_layer_arrays()[3]],
                     outputs=[self.truncation_ts], device=self.device)
             ac9_bound.limit_travel(self.pos_prev_collision_detection, self.truncation_ts, maximum)
-            wp.launch(apply_truncation_ts, dim=self.model.particle_count,
-                inputs=[ac9_bound.accepted, ac9_bound.increment, self.truncation_ts, wp.inf],
-                outputs=[ac9_bound.increment, particle_q_out], device=self.device)
+            if getattr(ac9_bound, 'native_fused', False):
+                ac9_bound.apply_increment(particle_q_out, self.pos_prev_collision_detection,
+                                         self.particle_displacements, self.truncation_ts)
+            else:
+                wp.launch(apply_truncation_ts, dim=self.model.particle_count,
+                    inputs=[ac9_bound.accepted, ac9_bound.increment, self.truncation_ts, wp.inf],
+                    outputs=[ac9_bound.increment, particle_q_out], device=self.device)
             ac9_bound.finish_increment(particle_q_out, self.pos_prev_collision_detection, self.particle_displacements)
             return
         if not self.particle_enable_self_contact:
@@ -2609,7 +2615,7 @@ class SolverVBD(SolverBase, CouplingInterface):
         else:
             ##  parallel by collision and atomic operation
             self.truncation_ts.fill_(1.0)
-            wp.launch(
+            planar_launch(
                 kernel=apply_planar_truncation_parallel_by_collision,
                 inputs=[
                     self.pos_prev_collision_detection,  # pos_prev_collision_detection: wp.array[wp.vec3],
@@ -3219,8 +3225,13 @@ class SolverVBD(SolverBase, CouplingInterface):
 
         # Iterate over color groups
         for color in range(len(self.model.particle_color_groups)):
-            if ac9_bound is not None:
-                ac9_bound.place(state_in.particle_q)
+            native_contacts = getattr(self, 'ac9_native_contacts', None)
+            sparse_contacts = getattr(self, 'ac9_self_contact_queue', None)
+            contact_launch = native_contacts.enqueue if native_contacts is not None else (wp.launch if sparse_contacts is None else sparse_contacts.launch)
+            # The iteration entry places followers before contact detection. Each
+            # color then ends in bound truncation, whose finish_increment places
+            # them again from the accepted supports. No position writer occurs
+            # between that synchronization and the next color's force evaluation.
             if hasattr(self, 'ac9_layer_crossings'):
                 crossing = self.ac9_layer_crossings
                 wp.launch(self.ac9_layer_crossing_module.accumulate, dim=crossing['active'].shape[0],
@@ -3229,7 +3240,7 @@ class SolverVBD(SolverBase, CouplingInterface):
                         self.particle_self_contact_margin, self.model.soft_contact_ke * getattr(self, 'ac9_layer_crossing_ke_scale', 1.0),
                         self.particle_forces, self.particle_hessians], device=self.device)
             if contacts is not None:
-                wp.launch(
+                contact_launch(
                     kernel=accumulate_particle_body_contact_force_and_hessian,
                     dim=contacts.soft_contact_max,
                     inputs=[
@@ -3271,7 +3282,7 @@ class SolverVBD(SolverBase, CouplingInterface):
                 )
 
             if model.spring_count:
-                wp.launch(
+                contact_launch(
                     kernel=accumulate_spring_force_and_hessian,
                     inputs=[
                         dt,
@@ -3291,7 +3302,7 @@ class SolverVBD(SolverBase, CouplingInterface):
                 )
 
             if self.particle_enable_self_contact:
-                wp.launch(
+                contact_launch(
                     kernel=accumulate_self_contact_force_and_hessian,
                     dim=self.particle_self_contact_evaluation_kernel_launch_size,
                     inputs=[
@@ -3319,14 +3330,24 @@ class SolverVBD(SolverBase, CouplingInterface):
                     device=self.device,
                     max_blocks=self.model.device.sm_count,
                 )
+            if native_contacts is not None:
+                native_contacts.flush()
             if ac9_bound is not None:
                 ac9_bound.transfer(state_in.particle_q, model.particle_colors, color,
                                    self.particle_forces, self.particle_hessians)
             if self.use_particle_tile_solve:
+                packed_elasticity = getattr(self, 'ac9_elasticity_packed', None)
+                count_in_color = self.model.particle_color_groups[color].size
+                packed_width = 16
+                widths = getattr(self, 'ac9_native_elastic_widths', None)
+                if widths is not None and widths[color] == 8:
+                    packed_width = 8
+                    packed_elasticity = self.ac9_elasticity_narrow
+                packed_points = 32 // packed_width
                 wp.launch(
-                    kernel=solve_elasticity_tile,
-                    dim=self.model.particle_color_groups[color].size * TILE_SIZE_TRI_MESH_ELASTICITY_SOLVE,
-                    block_dim=TILE_SIZE_TRI_MESH_ELASTICITY_SOLVE,
+                    kernel=solve_elasticity_tile if packed_elasticity is None else packed_elasticity,
+                    dim=count_in_color * TILE_SIZE_TRI_MESH_ELASTICITY_SOLVE if packed_elasticity is None else ((count_in_color + packed_points - 1) // packed_points) * 32,
+                    block_dim=TILE_SIZE_TRI_MESH_ELASTICITY_SOLVE if packed_elasticity is None else 32,
                     inputs=[
                         dt,
                         self.model.particle_color_groups[color],
@@ -4054,6 +4075,10 @@ class SolverVBD(SolverBase, CouplingInterface):
                     ],
                     device=self.device,
                 )
+
+        sparse_contacts = getattr(self, 'ac9_self_contact_queue', None)
+        if sparse_contacts is not None:
+            sparse_contacts.rebuild()
 
     def _ac9_layer_arrays(self):
         if not hasattr(self, "ac9_layer"):

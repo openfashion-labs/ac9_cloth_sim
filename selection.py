@@ -16,22 +16,26 @@ from . import pattern_view as PV
 from . import placed_view as PLV
 from .core import piece_table as PT
 
-HANDLE_NAMES = "ac9_move_pieces"     # piece_move.NAMES_PROP: a handle picked on the dressed garment
+HANDLE_NAMES = PT.HANDLE_NAMES     # piece_move.NAMES_PROP: a handle picked on the dressed garment
 
 
 def _fact(ob, active):
+    if HANDLE_NAMES in ob:
+        return PT.ObjFact('handle', PT.handle_names(ob), True, ob == active)
     if PLV.PROP in ob:
         return PT.ObjFact('placed', tuple(n for n in (ob.get(PV.PIECE_PROP), ob.get(PLV.PROP), ob.get(PLV.TWIN_PROP))
                                           if n), True, ob == active)
     if PV.PIECE_PROP in ob:
-        return PT.ObjFact('handle' if HANDLE_NAMES in ob else 'pattern', (ob[PV.PIECE_PROP],), True, ob == active)
+        return PT.ObjFact('pattern', (ob[PV.PIECE_PROP],), True, ob == active)
     return None
 
 
 def objects(context):
     """The selected objects of the whole view layer (not only those a viewport shows), in the view layer's order."""
     vl = context.view_layer
-    return list(vl.objects.selected) if vl is not None else []
+    # Blender can expose an empty slot until the depsgraph catches up with a
+    # removed selected object. Keep that lifetime detail out of every caller.
+    return [ob for ob in vl.objects.selected if ob is not None] if vl is not None else []
 
 
 def facts(context):
@@ -40,7 +44,7 @@ def facts(context):
     if vl is None:
         return []
     active = vl.objects.active
-    return [f for f in (_fact(ob, active) for ob in vl.objects.selected) if f is not None]
+    return [f for f in (_fact(ob, active) for ob in objects(context)) if f is not None]
 
 
 def pieces(context):
@@ -127,7 +131,7 @@ def watch(scene, depsgraph):
     if vl is None:
         return
     act = vl.objects.active
-    sig = (act.name if act is not None else None, tuple(o.name for o in vl.objects.selected))
+    sig = _signature(ctx)
     if sig == _seen['sig']:
         return
     _seen['sig'] = sig
@@ -175,7 +179,7 @@ def select_placed(context, spec, names, side=None, keep=(), activate=True):
     vl = context.view_layer
     if picked and activate:
         vl.objects.active = picked[0]
-    _seen['sig'] = (vl.objects.active.name if vl.objects.active else None, tuple(o.name for o in vl.objects.selected))
+    _seen['sig'] = _signature(context)
     return picked
 
 
@@ -184,7 +188,7 @@ def to_leader(context):
     follower is deselected (one gizmo, not one between the two). Alone: it is made the side moved (a data change, so
     deferred out of the depsgraph handler). Returns the follower handled, or None."""
     vl = context.view_layer
-    fols = [o for o in vl.objects.selected if o.get(LEAD_PROP)]
+    fols = [o for o in objects(context) if o.get(LEAD_PROP)]
     if not fols:
         return None
     later = []
@@ -196,27 +200,58 @@ def to_leader(context):
             if vl.objects.active is fol:
                 vl.objects.active = lead
         else:
-            later.append(fol.name)
-    _seen['sig'] = (vl.objects.active.name if vl.objects.active else None, tuple(o.name for o in vl.objects.selected))
+            later.append((fol.name, fol.session_uid))
+    _seen['sig'] = _signature(context)
     if later:
         _pending[:] = later
+        _pending_owner[:] = _owner(context)
         if not bpy.app.timers.is_registered(_lead_clicked):
             bpy.app.timers.register(_lead_clicked, first_interval=0.0)
     return fols[0]
 
 
 _pending = []
+_pending_owner = []
+
+
+def _signature(context):
+    vl = context.view_layer
+    act = vl.objects.active
+    return (context.scene.as_pointer(), vl.as_pointer(), act.as_pointer() if act is not None else 0,
+            tuple(o.as_pointer() for o in objects(context)))
+
+
+def _owner(context):
+    from . import store
+    text = store.text(context)
+    return [context.scene.as_pointer(), context.view_layer.as_pointer(), text.as_pointer() if text else 0]
+
+
+@persistent
+def _cancel_pending(*_args):
+    _pending.clear()
+    _pending_owner.clear()
+    _seen.update(sig=None, op=None)
+    if bpy.app.timers.is_registered(_lead_clicked):
+        bpy.app.timers.unregister(_lead_clicked)
 
 
 def _lead_clicked():
     from . import store
     ctx = bpy.context
     names, _pending[:] = list(_pending), []
+    owner, _pending_owner[:] = list(_pending_owner), []
+    if owner != _owner(ctx):
+        return None
     spec = store.get(ctx)[0]
     if spec is None:
         return None
     obs = PLV.objects(spec)
-    fols = [n for n in names if n in obs and obs[n].get(LEAD_PROP) and obs[n].select_get()]
+    # Pending entries identify the original Blender object; objects(spec) is
+    # keyed by piece ID. A same-name replacement is a different operation.
+    current = {ob.name: (n, ob) for n, ob in obs.items() if ob.get(LEAD_PROP)}
+    fols = [current[n][0] for n, uid in names if n in current and current[n][1].session_uid == uid
+            and current[n][1].select_get()]
     if fols:
         keep = [o for o in objects(ctx) if not o.get(LEAD_PROP)]
         select_placed(ctx, spec, fols, side=fols[0], keep=keep)
@@ -224,10 +259,20 @@ def _lead_clicked():
 
 
 def register():
+    _cancel_pending()
     if watch not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(watch)
+    for name in ('load_pre', 'undo_post', 'redo_post'):
+        handlers = getattr(bpy.app.handlers, name)
+        if _cancel_pending not in handlers:
+            handlers.append(_cancel_pending)
 
 
 def unregister():
+    _cancel_pending()
     if watch in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(watch)
+    for name in ('load_pre', 'undo_post', 'redo_post'):
+        handlers = getattr(bpy.app.handlers, name)
+        if _cancel_pending in handlers:
+            handlers.remove(_cancel_pending)

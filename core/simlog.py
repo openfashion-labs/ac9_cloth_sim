@@ -11,6 +11,15 @@ import time
 NAME = 'log.jsonl'
 
 
+def stage_frame_counts(run_log, saved_steps):
+    """Completed steps in this run and its absolute end frame, independent of rolling output."""
+    times = run_log.get('frame_s')
+    completed = len(times) if isinstance(times, list) else max(0, int(saved_steps))
+    resume = run_log.get('checkpoint_resume') or {}
+    start = int(resume.get('frame', 0)) if resume.get('status') == 'restored' else 0
+    return completed, start + completed
+
+
 def write(job_dir, kind, text, **data):
     """Append an entry; returns the line as the user reads it ("HH:MM:SS text")."""
     t = time.strftime('%H:%M:%S')

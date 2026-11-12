@@ -268,6 +268,7 @@ def live_params(spec, names, gravity, active_pieces=None):
     result = {'gravity': bool(gravity), 'fold': fold_deg(spec, names),
             'seams_off': sorted(str(sm['id']) for sm in spec.get('seams', []) if not sm.get('enabled', True)),
             'frozen': sorted(held),
+            'strengthen_pieces': S.strengthen_pieces(spec, names),
             'elastic': {e['piece']: e['ratio'] for e in EL.solver_entries(spec, names, []) if 'line' not in e}}
     from .fold_reference import terminal_field
     result['fold_terminal']=terminal_field(spec,active_pieces if active_pieces is not None else names)

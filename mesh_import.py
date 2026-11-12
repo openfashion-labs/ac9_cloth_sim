@@ -137,6 +137,8 @@ class AC9_OT_SimFromMesh(bpy.types.Operator):
                + tx(". Phase Sim to settle it"))
         DR.log(context, d, 'from_mesh', msg, inside=len(inside), seconds=secs)
         props.dress_status = msg
+        from . import units
+        units.set_mm_if_default(context)        # as New Garment and the other imports
         self.report({'WARNING'} if inside else {'INFO'}, msg)
         return {'FINISHED'}
 

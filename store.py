@@ -6,6 +6,7 @@ seam list, the overlay) is rebuilt from it, so editing the JSON by hand or from 
 tool is as good as editing it through the panel.
 """
 import time
+from dataclasses import dataclass
 from .i18n import tx
 
 import bpy
@@ -57,6 +58,8 @@ def get(context):
         _cache['key'] = k
         try:
             sp = S.loads(t.as_string())
+            from . import look_reference as LR
+            LR.bind_owner(t, sp)
             _cache['spec'] = sp
             _cache['outlines'] = {pc['name']: S.Outline(pc) for pc in sp['pieces']}
             _cache['error'] = None
@@ -70,6 +73,50 @@ def error():
 
 
 GEN = [0]          # bumped on every invalidate: the Pieces panel's per-garment summaries are kept until it changes
+_epoch = globals().get('_epoch', -1) + 1
+
+
+class EditChanged(ValueError):
+    """The document an edit started from is no longer current."""
+
+
+@dataclass(frozen=True)
+class EditOwner:
+    scene: int
+    text: int
+    epoch: int
+    body: str
+
+    def matches(self, context, content=False):
+        try:
+            t = text(context)
+            return (context.scene.session_uid == self.scene and t is not None
+                    and t.session_uid == self.text and self.epoch == _epoch
+                    and (not content or t.as_string() == self.body))
+        except (ReferenceError, AttributeError):
+            return False
+
+    def require(self, context, content=True):
+        if not self.matches(context, content):
+            raise EditChanged("The pattern changed during this edit; start the edit again")
+
+
+def edit_owner(context):
+    t = text(context)
+    if t is None:
+        raise EditChanged("No pattern to edit")
+    return EditOwner(context.scene.session_uid, t.session_uid, _epoch, t.as_string())
+
+
+def begin_edit(context):
+    """Read an independent snapshot and its exact saved owner once, outside draw/poll."""
+    owner = edit_owner(context)
+    sp = S.loads(owner.body)
+    return sp, {pc['name']: S.Outline(pc) for pc in sp['pieces']}, owner
+
+
+def _discard_cache():
+    _cache.update(key=None, spec=None, outlines=None, error=None, quick=None, checked=-1.0)
 
 
 def invalidate():
@@ -80,6 +127,9 @@ def invalidate():
 
 @persistent
 def _on_undo_or_load(*_args):
+    global _epoch
+    _epoch += 1
+    _discard_cache()
     invalidate()
 
 
@@ -91,41 +141,83 @@ def register_handlers():
         lst = getattr(bpy.app.handlers, h)
         for f in [f for f in lst if getattr(f, '__name__', '') == '_on_undo_or_load']:
             lst.remove(f)
-        lst.append(_on_undo_or_load)
+        # Observers rebuilding their session must see the new generation.
+        lst.insert(0, _on_undo_or_load)
 
 
 def unregister_handlers():
+    global _epoch
+    _epoch += 1
     for h in _HANDLERS:
         lst = getattr(bpy.app.handlers, h)
         for f in [f for f in lst if getattr(f, '__name__', '') == '_on_undo_or_load']:
             lst.remove(f)
 
 
-def put(context, spec, keep=False, seams=True):
+def write(context, spec, keep=False, owner=None):
     """Write the spec to its Text. keep: the caller hands the spec over (it does not change it after), so get()
     returns it instead of parsing the text again (a pants' spec is 3.6 M characters: 40 ms to parse and 35 ms of
     outlines; the Tool tab's Fold Angle writes on every slider step, experiments/prepare_cache_2026-10-24 t4); its
-    outlines are kept when its pieces are the very list of the spec before. seams=False: the seams are unchanged
-    (only the folds written), the Seams list is not made again."""
-    t = text(context, create=True)
+    outlines are kept when its pieces are the very list of the spec before. UI refresh is separate."""
     old_spec, old_out = _cache['spec'], _cache['outlines']
-    t.clear()
-    t.write(S.dumps(spec))
+    try:
+        body = S.dumps(spec)
+        outlines = (old_out if old_spec is not None and old_out is not None
+                    and old_spec.get('pieces') is spec.get('pieces')
+                    else {pc['name']: S.Outline(pc) for pc in spec['pieces']}) if keep else None
+        if owner is not None:
+            owner.require(context)
+    except Exception:
+        _discard_cache()
+        raise
+    t = text(context, create=True)
+    previous = t.as_string()
+    try:
+        t.from_string(body)
+    except Exception:
+        try:
+            t.from_string(previous)
+        finally:
+            _discard_cache()
+        raise
     invalidate()
     if keep:
         _cache['quick'], _cache['checked'] = (t.name, t.as_pointer()), time.monotonic()
         _cache['key'] = _key(t)
         _cache['spec'] = spec
-        _cache['outlines'] = (old_out if old_spec is not None and old_out is not None
-                              and old_spec.get('pieces') is spec.get('pieces')
-                              else {pc['name']: S.Outline(pc) for pc in spec['pieces']})
+        _cache['outlines'] = outlines
         _cache['error'] = None
+    from . import look_reference as LR
+    LR.bind_owner(t, spec)
+    return EditOwner(context.scene.session_uid, t.session_uid, _epoch, body)
+
+
+def refresh(context, spec, seams=True):
+    """Rebuild disposable UI after persistence; failures do not undo saved edits."""
     if seams:
         sync_seam_list(context, spec)
     from . import toolbar
     toolbar.auto_on(context)            # a first garment in the file: the pattern tools on (user 2026-10-22)
     from . import display_state
     display_state.apply(context, spec, allow_split=True)
+
+
+def put(context, spec, keep=False, seams=True, owner=None):
+    """Compatibility entry point: write first, then refresh; refresh errors still propagate."""
+    write(context, spec, keep=keep, owner=owner)
+    refresh(context, spec, seams=seams)
+
+
+def commit(context, spec, keep=False, seams=True, owner=None):
+    """An operation boundary: persistence errors raise; derived-update errors become a report."""
+    saved_owner = write(context, spec, keep=keep, owner=owner)
+    try:
+        refresh(context, spec, seams=seams)
+    except Exception as exc:
+        note = tx("Pattern saved; display not updated: {0}", exc)
+        context.scene.ac9_cloth_sim.dress_status = note
+        return saved_owner, note
+    return saved_owner, ''
 
 
 def sync_seam_list(context, spec=None):

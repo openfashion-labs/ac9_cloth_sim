@@ -3,8 +3,41 @@
 from types import SimpleNamespace
 import time
 import numpy as np
-from scipy.linalg import qr,solve_triangular
-from scipy.optimize import linprog
+
+
+def qr(a, mode="economic"):
+    return np.linalg.qr(a, mode="reduced")
+
+
+def solve_triangular(a, b, lower=False):
+    return np.linalg.solve(a, b)
+
+
+def feasible_point(a, rhs, center):
+    """Find a feasible start with the existing active-set QP, plus one slack.
+
+    Only Phase I uses the small center regularization. The actual contact QP
+    and all of its acceptance thresholds remain unchanged. A positive final
+    slack never relaxes the original constraints: they are checked explicitly.
+    """
+    n=len(center)
+    constraints=np.vstack([np.column_stack([a,np.ones(len(a))]),np.r_[np.zeros(n),1.]])
+    limits=np.r_[rhs,0.]
+    slack=max(0.,float(np.max(rhs-a@center)))+1.e-4
+    initial=np.r_[center,slack]
+    trust=max(10.,float(np.max(np.abs(center)))*2.,slack*2.)
+    for regularization in (1.e-6,1.e-8,1.e-10):
+        matrix=np.diag(np.r_[np.full(n,regularization),1.])
+        linear=np.r_[center*regularization,-1.]
+        result=solve_dense_qp(matrix,linear,constraints,limits,trust,
+                              feasible_start=initial,max_iterations=3000)
+        point=result.x[:n]
+        violation=float(np.max(rhs-a@point))
+        # A feasible point is sufficient, even if the auxiliary objective has
+        # not converged. Never use its slack as proof of infeasibility.
+        if np.isfinite(point).all() and violation<=1.e-9:
+            return SimpleNamespace(success=True,x=point,message='verified feasible start')
+    return SimpleNamespace(success=False,x=point,message='feasible start not found')
 
 
 def solve_dense_qp(matrix,linear,a,rhs,trust_mm,*,max_iterations=1000,feasible_start=None,working_start=None):
@@ -13,15 +46,9 @@ def solve_dense_qp(matrix,linear,a,rhs,trust_mm,*,max_iterations=1000,feasible_s
     if np.max(rhs-a@center)<=1.e-10:
         phase=SimpleNamespace(success=True,x=center.copy(),message='previous point feasible')
     else:
-        # Closest feasible initialization, rather than an arbitrary box corner.
-        weight=np.sqrt(np.maximum(np.diag(matrix),1.e-12));weight/=np.max(weight)
-        phase=linprog(np.r_[np.zeros(n),weight],
-            A_ub=np.block([[-a,np.zeros_like(a)],[np.eye(n),-np.eye(n)],[-np.eye(n),-np.eye(n)]]),
-            b_ub=np.r_[-rhs,center,-center],bounds=[(None,None)]*n+[(0.,None)]*n,
-            method='highs',options={'primal_feasibility_tolerance':1.e-10,'dual_feasibility_tolerance':1.e-10})
-        if phase.success:phase.x=phase.x[:n]
+        phase=feasible_point(a,rhs,center)
     if not phase.success:
-        return SimpleNamespace(x=np.zeros(n),success=False,message='active-set phase I infeasible',fun=0.,diagnostics={'phase_message':phase.message,'total_seconds':time.perf_counter()-started})
+        return SimpleNamespace(x=np.zeros(n),success=False,message='active-set feasible start not found',fun=0.,diagnostics={'phase_message':phase.message,'total_seconds':time.perf_counter()-started})
     lower=np.linalg.cholesky(matrix);raw=solve_triangular(lower,a.T,lower=True).T
     scale=np.linalg.norm(raw,axis=1);usable=scale>1.e-16
     if np.any((~usable)&(rhs>1.e-9)):

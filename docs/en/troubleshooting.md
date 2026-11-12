@@ -12,7 +12,7 @@ sidebar_position: 7
 | I can't find the run buttons (such as **Phase Sim**) | They are in the **Tool** tab of the Properties editor at the lower right, not in the sidebar. Check that Properties isn't on another tab such as Render. |
 | Keyboard shortcuts don't work | Is a Japanese or other input method (IME) on? Is the cursor over the area you want to operate in? |
 | The AC9 tools vanished from the tool column | Did you enter Edit Mode (return to Object Mode with **Tab**)? Is **Pattern Tools** in **Setup** turned off? |
-| Pattern pieces don't move with **G** / **R** / **S** | The pieces are locked. Move them with the **Transform Pattern** tool. |
+| Pattern pieces don't move with **G** / **R** / **S** | The pieces are locked. Move them with the **Whole Pieces** tool. |
 | A button is gray and can't be pressed | Put the cursor on the button and the reason it can't be pressed appears. |
 | The pattern view in the middle doesn't rotate | The pattern view only looks from directly above and doesn't rotate. Rotate in the 3D Viewport on the left. |
 | I can't rotate the view (no middle button) | Turn on "Emulate 3 Button Mouse" under "Edit" > "Preferences" > "Input", and you can rotate with **Alt** + left drag. |
@@ -53,7 +53,7 @@ sidebar_position: 7
 | The garment collapses from the start (falls to the waist) | Stop with **Esc** and check which phase it is | Check the direction of the seams (**Flip the direction of**) and the placement. |
 | The result differs from run to run | It varies even with the same settings. | Don't decide from a single run; run it several times and look. |
 | The shape of the result isn't saved | The `Shape:` line of **Result** in **AC9 Garment** | Save the .blend (Ctrl+S). |
-| Pulling the inside of a piece with **Edit Pattern** doesn't move the piece | Moving a whole piece is a different tool. | Switch to **Transform Pattern** (**Transform** in the **Pattern** panel). |
+| Pulling the inside of a piece with **Edit Pieces** doesn't move the piece | Moving a whole piece is a different tool. | Switch to **Whole Pieces**. |
 | I fixed the pattern but the dressed garment or placed shape didn't change. **Update 3D** is red | **3D Follows Edits** in **AC9 Run** is off. | Press **Update 3D**, or press **3D Follows Edits** again. |
 | I can't make a shape into a hole (**Convert to Hole** refuses) | Is the shape closed? Does it touch the outline? Does it overlap another hole? Does it have a fold or elastic? | Move the shape away from the outline, and remove any fold or elastic. |
 | The wording on screen differs from this guide | The add-on has been loaded in an old state. | Restart Blender. |

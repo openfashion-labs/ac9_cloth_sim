@@ -13,6 +13,7 @@ external tool (MCP) all read and write the same thing.
          "fabric_id": str,                  # optional (2026-10-14, core/fabric.py): the piece's fabric, an id of
                                             # "fabrics"; absent = the default_fabric_id (2026-10-20: it follows a
                                             # changed default)
+         "strengthen": bool, "strengthen_factor": float, # optional; off / 5 by default, multiplier 1..100
          "bond_id": str,                    # optional (2026-10-25): its interlining, an id of "interlinings",
                                             # added to the fabric's weight and bending. A twin takes both alike.
                                             # Before 2026-10-25 "bond": {"preset", "name", "weight_gsm",
@@ -100,7 +101,7 @@ external tool (MCP) all read and write the same thing.
       "attach": [{"id": str, "seam": seam id | "side": SIDE,   # optional (2026-10-18, core/attach.py): a line held
                   "tape": name,                             # to a tape on the body while simulated (Attach to
                   "until": "end" | "sewn",                  # Measure): a measure tape's name or a measurement's key
-                  "enabled": bool}],                        # (wrist_L ...); "side" is not re-pointed by draft edits yet
+                  "enabled": bool}],                        # (wrist_L ...); outline SIDE ends follow draft edits
       "garment": {"kind": "shirt" | "jacket" | "top" | "pants" | "skirt" | "other", "by": str, "conf": float},
                                             # the kind proposed for all the enabled pieces together (core/roles.py),
                                             # not "garments" (the groups a BOM is split into) nor pieces[].garment
@@ -126,6 +127,22 @@ Coordinates are the 2D pattern layout in mm. A SIDE is a stretch of one piece:
 
     outline:  {"piece": name, "from": [edge id, t], "to": [edge id, t], "dir": +1 | -1}
     internal: {"piece": name, "line": internal id, "from": t, "to": t}
+
+Cut restates interval, line, zipper and point owners and split-seam dependents on the corresponding half.
+Elastic bands are partitioned only when their finite-width field can be preserved; an unrepresentable band or
+reference refuses the complete cut, including its twin, without changing the spec. Shared baseline bands retain
+their full line on both halves. Whole-piece elastic direction and inheritance are a separate unresolved product
+decision; these guarantees do not claim that whole-piece settings are already preserved by Cut.
+
+Result reference queries do not write legacy ac9_job properties. Stored result references need job.json and
+scene.idx.npz; cache-derived index-only references remain readable, while drawing may retain a stored directory.
+These file capabilities are distinct from solver resume validation. Explicit run/load boundaries repair recovered
+references idempotently. Relative cache paths resolve against their owning library, without modifying linked data.
+
+Material queries preserve saved Text and Material properties. Observed legacy look references keep a temporary,
+verified Material identity across rename/history. Explicit save repair rechecks the saved owner and the current
+UID/name resolution before updating its reference. It never replaces a Material's nonempty UID or copies a
+default/twin-inherited look onto a piece. Conflicting saved UID claims are retained rather than arbitrated.
 
 t is the fraction of that edge's length (0 = its start, 1 = its end, edges run counter-clockwise);
 the side runs from "from" to "to", counter-clockwise (+1) or clockwise (-1) round the outline,
@@ -194,6 +211,7 @@ class Outline:
             s0 += L
         self.B = np.vstack(pts)
         self.L = s0
+        self.plane = plane_of(piece)       # the plane its pair mirrors in (a pair's pieces both hold it)
         Bc = np.vstack([self.B, self.B[:1]])
         self.cum = np.r_[0, np.cumsum(np.linalg.norm(np.diff(Bc, axis=0), axis=1))]
         self._Bc = Bc
@@ -304,6 +322,27 @@ def piece_state(pc):
     if pc.get('frozen'):
         return 'freeze' if pc.get('contact', True) else 'off_pattern'
     return 'active'
+
+
+STRENGTHEN_DEFAULT = 5.0
+STRENGTHEN_MAX = 100.0
+
+
+def piece_strengthen_factor(pc):
+    """The stored multiplier, including while Strengthen is off."""
+    import math
+    try:
+        v = float(pc.get('strengthen_factor', STRENGTHEN_DEFAULT))
+        return min(STRENGTHEN_MAX, max(1.0, v)) if math.isfinite(v) else STRENGTHEN_DEFAULT
+    except (TypeError, ValueError):
+        return STRENGTHEN_DEFAULT
+
+
+def strengthen_pieces(spec, names):
+    """Explicit piece attributes only; off pieces absent from this stage are ignored."""
+    names = set(names)
+    return {p['name']: piece_strengthen_factor(p) for p in spec.get('pieces', [])
+            if p['name'] in names and p.get('strengthen', False)}
 
 
 def piece_layer(pc):
@@ -483,6 +522,93 @@ def placement_pairs(spec):
     return out
 
 
+PLANES = ('x', 'y')    # a pair's mirror plane: 'x' left / right (x -> -x, the default), 'y' front / back (user 2026-11-11)
+
+
+def plane_of(pc):
+    """The plane a piece's pair mirrors in: 'y' when its 'mirror_plane' says front / back, else 'x' (left / right;
+    a piece without the key, as every one before 2026-11-11). A pair's two pieces hold the same value."""
+    return 'y' if (pc or {}).get('mirror_plane') == 'y' else 'x'
+
+
+def pair_plane(spec, name):
+    """plane_of the piece `name` (x when there is no such piece)."""
+    return plane_of(next((pc for pc in spec.get('pieces', []) if pc['name'] == name), None))
+
+
+def axis_of(plane):
+    """The coordinate a plane turns over: 0 (x) for 'x', 1 (y) for 'y' -- in the layout and in the world alike."""
+    return 1 if plane == 'y' else 0
+
+
+MIRROR_AT = 'mirror_at'     # on both pieces of a pair: world mm of its mirror plane along the plane's axis
+
+
+def mirror_center(spec, plane='x', name=None):
+    """World mm of the mirror plane along its axis: where the pair of `name` has its plane (MIRROR_AT, set when a
+    front / back pair laid flat is linked or copied, user 2026-11-12: a bag's back panel mirrors about the bag, not
+    the body), else x of the torso guide's axis for left / right, its y for front / back (else 0)."""
+    if name is not None:
+        pc = next((p for p in spec.get('pieces', []) if p['name'] == name), None)
+        if pc is not None and plane_of(pc) == plane and pc.get(MIRROR_AT) is not None and _pair_flat(spec, name):
+            return float(pc[MIRROR_AT])
+    t = spec.get('guides', {}).get('torso')
+    return float(t['o'][axis_of(plane)]) if t else 0.0
+
+
+def _pair_flat(spec, name):
+    """The piece `name` laid flat, and its pair partner too where it has a placement of its own: a stored plane
+    position holds only then (a pair placed on a guide again mirrors about the body, not where it was laid flat)."""
+    pl = spec.get('placement', {})
+    if not is_flat(pl.get(name)):
+        return False
+    pairs = list(twins(spec, any_state=True)) + [tuple(p) for p in spec.get('pairs', [])]
+    for a, b in pairs:
+        o = b if a == name else a if b == name else None
+        if o is not None and o in pl and not is_flat(pl[o]):
+            return False
+    return True
+
+
+def stored_mirror_at(spec, name):
+    """The pair's own plane position (mm) when it has one, else None."""
+    pc = next((p for p in spec.get('pieces', []) if p['name'] == name), None)
+    return None if pc is None or pc.get(MIRROR_AT) is None else float(pc[MIRROR_AT])
+
+
+def set_mirror_at(spec, names, value):
+    """Write (None: remove) the plane position on the pieces `names` (a pair's two)."""
+    for pc in spec.get('pieces', []):
+        if pc['name'] in names:
+            if value is None:
+                pc.pop(MIRROR_AT, None)
+            else:
+                pc[MIRROR_AT] = round(float(value), 3)
+
+
+def flat_center(p, ol):
+    """World mm of the middle of a piece laid flat (its outline's box center carried by the flat frame)."""
+    f = p['flat']
+    o, R = np.asarray(f['o'], float), np.asarray(f['R'], float)
+    d = 0.5 * (ol.B.min(0) + ol.B.max(0)) - np.asarray(p['anchor'], float)
+    return o + d[0] * R[0] + d[1] * R[1]
+
+
+def mirror_points(X, plane='x', c=0.0):
+    """World points X (n x 3, any unit) mirrored in the plane through c (same unit) across axis_of(plane)."""
+    X = np.array(X, float, copy=True)
+    k = axis_of(plane)
+    X[..., k] = 2.0 * c - X[..., k]
+    return X
+
+
+def mirror_diag(plane='x'):
+    """The diagonal of the mirror (3 values): (-1, 1, 1) for 'x', (1, -1, 1) for 'y'."""
+    d = [1.0, 1.0, 1.0]
+    d[axis_of(plane)] = -1.0
+    return d
+
+
 def mirror_twins(spec, sources=None):
     """A twin goes where its pair's mirror image is (x -> -x): the same height up the mirrored guide, angle 180 - theta
     (every guide's frame is mirrored that way: torso, neck and legs on x = 0 with R0 = -x, the arms' frames mirror
@@ -512,14 +638,15 @@ def mirror_twins(spec, sources=None):
         if a not in pl:
             continue
         # a twin's hand move is the mirror image of its pair's (one object, a Mirror modifier); a Pair's other piece
-        # keeps its own (user 2026-10-14 b-5: it follows only by Mirror to Pair)
+        # keeps its own (user 2026-10-14 b-5: it follows only by Mirror Placement)
         pl[b] = mirrored_placement(pl[a], outline(a), outline(b),
-                                   pose='mirror' if frozenset((a, b)) in linked else pl.get(b, {}).get('pose'))
+                                   pose='mirror' if frozenset((a, b)) in linked else pl.get(b, {}).get('pose'),
+                                   cx=mirror_center(spec, outline(a).plane, a))
         rep.append(f"  twin {b} <- mirror of {a}")
     return pl, rep
 
 
-SIDE_KEYS = ('guide', 'theta', 'h', 'outside')     # where a piece is placed (swap_sides exchanges these)
+SIDE_KEYS = ('guide', 'theta', 'h', 'outside', 'flat')     # where a piece is placed (swap_sides exchanges these)
 
 
 def swap_sides(spec, a, b):
@@ -536,8 +663,9 @@ def swap_sides(spec, a, b):
         p.update({k: pl[y][k] for k in SIDE_KEYS if k in pl[y]})
         c = 0.5 * (ol[x].B.min(0) + ol[x].B.max(0))
         d = np.asarray(pl[x]['anchor'], float) - c
-        p['anchor'] = (c + [-d[0], d[1]]).tolist()
-        q = mirror_pose(pl[x].get('pose'))
+        d[axis_of(ol[x].plane)] *= -1.0
+        p['anchor'] = (c + d).tolist()
+        q = mirror_pose(pl[x].get('pose'), ol[x].plane)
         if q:
             p['pose'] = q
         return p
@@ -546,26 +674,85 @@ def swap_sides(spec, a, b):
     return pl
 
 
-def mirror_pose(pose):
-    """The mirror image (x -> -x) of a hand move: loc x negated; the rotation S R S (S = the x mirror) is the Euler
-    XYZ angles (x, -y, -z)."""
+def mirror_pose(pose, plane='x'):
+    """The mirror image of a hand move: x -> -x (plane 'x'): loc x negated, the rotation S R S (S the mirror) the Euler
+    XYZ angles (x, -y, -z); y -> -y (plane 'y', front / back): loc y negated, angles (-x, y, -z) (a turn about an axis
+    in the mirror plane goes the other way, about the axis across it the same)."""
     if not pose:
         return None
     lx, ly, lz = pose['loc']
     rx, ry, rz = pose['rot']
+    if plane == 'y':
+        return {'loc': [lx, -ly, lz], 'rot': [-rx, ry, -rz]}
     return {'loc': [-lx, ly, lz], 'rot': [rx, -ry, -rz]}
 
 
-def mirrored_placement(pa, ol_a, ol_b, pose='mirror'):
-    """Piece b's placement as the mirror image of piece a's (pa): the mirrored guide, angle 180 - theta, the anchor
-    mirrored in the piece. pose: 'mirror' = a's hand move mirrored, else b's own (None: none)."""
+FLAT = 'flat'      # placement 'guide' of a piece laid flat (user 2026-11-10): on a surface, the ground, in the air
+
+
+def is_flat(p):
+    """A placement laid flat: {'guide': FLAT, 'flat': {'o': [x, y, z] mm, 'R': [ex, ey, n]}, 'anchor': [x, y]} --
+    the anchor at o, the pattern's +x along ex and +y along ey, its face along n. 'guide' keeps a value (FLAT, never a
+    guide's name: Detect Guides makes none so called), so the code reading it finds no guide and no special case."""
+    return bool(p) and p.get('guide') == FLAT and 'flat' in p
+
+
+def center_x(spec):
+    """The x of the mirror plane of a pair: the torso guide's axis, else 0."""
+    t = spec.get('guides', {}).get('torso')
+    return float(t['o'][0]) if t else 0.0
+
+
+def mirror_flat(flat, cx=0.0, plane='x'):
+    """A flat frame's mirror image in the plane x = cx ('x') or y = cx ('y'). The mirrored piece's pattern is mirrored
+    across the same layout axis, so that axis of the frame turns over: for 'x' ex' = -S ex, ey' = S ey, for 'y' ex' =
+    S ex, ey' = -S ey, and n' = S n (S the mirror): ex' x ey' = n' and the face stays the same side out."""
+    o = list(map(float, flat['o']))
+    ex, ey, n = (np.asarray(r, float) for r in flat['R'])
+    S = np.array(mirror_diag(plane))
+    o[axis_of(plane)] = 2.0 * cx - o[axis_of(plane)]
+    R = (-S * ex, S * ey, S * n) if plane != 'y' else (S * ex, -S * ey, S * n)
+    return {'o': [round(v, 3) for v in o], 'R': [[round(float(v), 6) + 0.0 for v in r] for r in R]}
+
+
+def spun(pl, P):
+    """Layout points P (mm) of a placed piece as its placement lays them: turned back about the anchor by the turn the
+    piece got in the layout after it was placed (pl['spin'] degrees, core/draft.transform_piece), so turning a piece
+    on the pattern does not turn it on the body (user 2026-11-11; Fable review: the layout is a work table). A
+    placement without 'spin' (files before it): as before."""
+    P = np.asarray(P, float)
+    deg = float((pl or {}).get('spin', 0.0) or 0.0)
+    if abs(deg) < 1e-9 or 'anchor' not in (pl or {}):
+        return P
+    a = np.radians(-deg)
+    R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+    c = np.asarray(pl['anchor'], float)
+    return (P.reshape(-1, 2) - c) @ R.T + c
+
+
+def mirrored_placement(pa, ol_a, ol_b, pose='mirror', cx=0.0):
+    """Piece b's placement as the mirror image of piece a's (pa), in the pair's plane (ol_a.plane; cx: where the plane
+    is along its axis, mirror_center): left / right the mirrored guide, angle 180 - theta, the anchor mirrored in the
+    piece; a flat one's frame mirrored in the plane. pose: 'mirror' = a's hand move mirrored, else b's
+    own (None: none)."""
+    plane = ol_a.plane
     ca = 0.5 * (ol_a.B.min(0) + ol_a.B.max(0))
     cb = 0.5 * (ol_b.B.min(0) + ol_b.B.max(0))
     d = np.asarray(pa['anchor'], float) - ca
-    out = dict(pa, guide=MIRROR_GUIDE.get(pa['guide'], pa['guide']), theta=180.0 - float(pa['theta']),
-               anchor=(cb + [-d[0], d[1]]).tolist())
+    d[axis_of(plane)] *= -1.0
+    if is_flat(pa):
+        out = dict(pa, flat=mirror_flat(pa['flat'], cx, plane), anchor=(cb + d).tolist())
+    elif plane == 'y':
+        # front / back round a guide: the same guide, the angle turned over (the torso's, neck's and legs' frames
+        # have R0 = -x, so the y mirror is theta -> -theta; an arm's frame is near enough, not exact: assumed)
+        out = dict(pa, theta=-float(pa['theta']), anchor=(cb + d).tolist())
+    else:
+        out = dict(pa, guide=MIRROR_GUIDE.get(pa['guide'], pa['guide']), theta=180.0 - float(pa['theta']),
+                   anchor=(cb + d).tolist())
     out.pop('pose', None)
-    p = mirror_pose(pa.get('pose')) if pose == 'mirror' else pose
+    if out.get('spin'):                       # the mirror image turned the other way
+        out['spin'] = -float(out['spin'])
+    p = mirror_pose(pa.get('pose'), plane) if pose == 'mirror' else pose
     if p:
         out['pose'] = p
     return out

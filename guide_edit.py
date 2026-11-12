@@ -12,6 +12,7 @@ What is moved is written to the spec a moment after the move stops (WRITE_S), so
 Done removes the cylinders; the placed objects, made on the old guides, are made again on the new ones (their hand
 moves kept), as after Detect Guides.
 """
+from . import prepare_build as PB
 import json
 from .i18n import rpt
 
@@ -30,7 +31,7 @@ MM = 0.001
 SEG = 32
 WRITE_S = 0.4                  # s after the last move before the spec is written
 PAIRS = {'arm_L': 'arm_R', 'arm_R': 'arm_L', 'leg_L': 'leg_R', 'leg_R': 'leg_L'}
-_state = {'mat': {}, 'dirty': False, 'busy': False}
+_state = {'mat': {}, 'dirty': False, 'busy': False, 'owner': None}
 
 
 def objects():
@@ -124,12 +125,15 @@ def live():
 
 def start(context, spec):
     """Make the guide objects (Edit Guides)."""
+    _state['owner'] = store.edit_owner(context)
     coll = bpy.data.collections.get(GUIDE_COLL)
     if coll is None:
         coll = bpy.data.collections.new(GUIDE_COLL)
         context.scene.collection.children.link(coll)
         from . import view_setup
         view_setup.refresh(context)
+    coll['ac9_guide_scene'] = context.scene
+    coll['ac9_guide_text'] = store.text(context)
     made = []
     for name, g in spec.get('guides', {}).items():
         ob = bpy.data.objects.new("Guide_" + name, _mesh("Guide_" + name, g))
@@ -146,6 +150,13 @@ def start(context, spec):
 
 
 def _write(context):
+    owner = _state['owner']
+    if owner is None:
+        _guide_history()
+        owner = _state['owner']
+    if owner is None:
+        raise store.EditChanged("Start Edit Guides again before saving")
+    owner.require(context)
     spec, _ = store.get(context)
     obs = objects()
     if spec is None or not obs:
@@ -155,7 +166,9 @@ def _write(context):
         sp.setdefault('guides', {})[name] = _read(ob, json.loads(ob['ac9_g0']))
     if json.dumps(sp.get('guides'), sort_keys=True) == json.dumps(spec.get('guides'), sort_keys=True):
         return False
-    store.put(context, sp)
+    _state['owner'], note = store.commit(context, sp, owner=owner)
+    if note:
+        context.scene.ac9_cloth_sim.dress_status = note
     overlay.invalidate()
     return True
 
@@ -176,16 +189,15 @@ def finish(context):
     obs = PLV.objects(spec)
     # which placed pieces were hidden (after a Dress, user b-3): made again, they stay hidden
     hidden = sorted(n for n, o in obs.items() if o.hide_get())
-    if obs:
-        PLV.leave_edit(context)
-        PLV.remove(list(obs), spec)
+    _state['owner'] = None
     return sorted(obs), hidden
 
 
 @bpy.app.handlers.persistent         # kept when a file is opened (a plain handler is dropped then, 2026-10-14)
 def _mirror_moved(scene):
     """The depsgraph handler: a moved guide of a pair moves its partner as its mirror image."""
-    if _state['busy']:
+    owner = _state['owner']
+    if _state['busy'] or owner is None or scene.session_uid != owner.scene:
         return
     obs = objects()
     if not obs:
@@ -232,8 +244,28 @@ def _flush():
             for a in w.screen.areas:
                 if a.type == 'VIEW_3D':
                     a.tag_redraw()
-    except Exception:
-        pass
+    except store.EditChanged as exc:
+        bpy.context.scene.ac9_cloth_sim.dress_status = str(exc)
+    return None
+
+
+@bpy.app.handlers.persistent
+def _guide_history(*_args):
+    """Drop old delayed work; restore a saved edit session only for its recorded document."""
+    if bpy.app.timers.is_registered(_flush):
+        bpy.app.timers.unregister(_flush)
+    _state.update(dirty=False, busy=False, owner=None, mat={})
+    coll = bpy.data.collections.get(GUIDE_COLL)
+    if (coll is not None and coll.get('ac9_guide_scene') == bpy.context.scene
+            and coll.get('ac9_guide_text') == store.text(bpy.context)
+            and store.text(bpy.context) is not None):
+        _state['owner'] = store.edit_owner(bpy.context)
+        _state['mat'] = {n: tuple(map(tuple, ob.matrix_world)) for n, ob in objects().items()}
+
+
+def _restore_session():
+    if _state['owner'] is None:
+        _guide_history()
     return None
 
 
@@ -253,25 +285,31 @@ class AC9_OT_SimEditGuides(bpy.types.Operator):
     def execute(self, context):
         spec, _ = store.get(context)
         if editing():
-            had, hidden = finish(context)
+            try:
+                had, hidden = finish(context)
+            except store.EditChanged as exc:
+                self.report({'WARNING'}, str(exc))
+                return {'CANCELLED'}
             from . import dress as D
             sp = store.get(context)[0]
-            if had and D.has_result(bpy.data.objects.get(D.garment_name(sp))):
+            rebuilt = False
+            if had:
                 # dressed with pieces put back by a Reset: those alone again, not every piece's over the garment
                 # (Fable docs/reviews/REVIEW_fable_move_by_hand_unified_2026-10-22.md §1-e)
                 try:
-                    res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, placed_only=True)
-                    PLV.build(context, sp, res['pat'], res['tris'], res['X'], res['pairs'], only=set(had))
-                    D.sync_hidden(bpy.data.objects.get(D.garment_name(sp)), sp)
+                    with PB.operation(context) as preparation:
+                        res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, placed_only=True, preparation=preparation)
+                        g = bpy.data.objects.get(D.garment_name(sp))
+                        from . import placement
+                        placement.replace_prepared(context, sp, res, reset=had,
+                                                   only=set(had) if D.has_result(g) else None)
+                        for n, ob in PLV.objects(sp).items():
+                            if n in hidden:
+                                ob.hide_set(True)
+                        rebuilt = True
                 except ValueError as exc:
                     self.report({'WARNING'}, str(exc))
-            elif had and bpy.ops.ac9_cloth_sim.show_placed.poll():
-                bpy.ops.ac9_cloth_sim.show_placed(placed_only=True)
-                obs = PLV.objects(store.get(context)[0])
-                for n in hidden:
-                    if n in obs:
-                        obs[n].hide_set(True)
-            self.report({'INFO'}, rpt("Guides written") + (rpt("; placed shapes made again on them") if had else ""))
+            self.report({'INFO'}, rpt("Guides written") + (rpt("; placed shapes made again on them") if rebuilt else ""))
             return {'FINISHED'}
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -290,13 +328,27 @@ def register():
         bpy.utils.register_class(c)
     if _mirror_moved not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_mirror_moved)
+    for name in ('undo_post', 'redo_post', 'load_post'):
+        handlers = getattr(bpy.app.handlers, name)
+        if _guide_history not in handlers:
+            handlers.append(_guide_history)
+    if not bpy.app.timers.is_registered(_restore_session):
+        bpy.app.timers.register(_restore_session, first_interval=0.0)
 
 
 def unregister():
+    if bpy.app.timers.is_registered(_restore_session):
+        bpy.app.timers.unregister(_restore_session)
+    for name in ('undo_post', 'redo_post', 'load_post'):
+        handlers = getattr(bpy.app.handlers, name)
+        for handler in list(handlers):
+            if getattr(handler, '__name__', '') == '_guide_history' and getattr(handler, '__module__', '') == __name__:
+                handlers.remove(handler)
     for h in list(bpy.app.handlers.depsgraph_update_post):
         if getattr(h, '__name__', '') == '_mirror_moved' and getattr(h, '__module__', '') == __name__:
             bpy.app.handlers.depsgraph_update_post.remove(h)
     if bpy.app.timers.is_registered(_flush):
         bpy.app.timers.unregister(_flush)
+    _state.update(dirty=False, busy=False, owner=None, mat={})
     for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)

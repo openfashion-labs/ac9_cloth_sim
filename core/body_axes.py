@@ -267,6 +267,89 @@ def wrap(g, P_layout, anchor_layout, theta_deg, h, r=None, tilt=0.0):
             + (h + up)[:, None] * Rm[2])
 
 
+def _unit(v):
+    v = np.asarray(v, float)
+    n = np.linalg.norm(v)
+    return v / n if n > 0 else v
+
+
+def flat_frame(point_mm, normal, lift=2.0):
+    """The frame of a piece laid flat at point_mm (mm) on a face with this normal (user 2026-11-10): its face along
+    the normal, its +y the world up (Z) laid on the face -- Y when the face is level -- and its +x = ey x n, so that
+    ex x ey = n as round a guide (wrap: +x counter-clockwise, +y along the axis, the face out). Lifted lift mm off
+    the face. {'o': [x, y, z] mm, 'R': [ex, ey, n]}; on the ground (n = +Z): ex = +X, ey = +Y."""
+    n = _unit(normal)
+    up = np.array([0.0, 0.0, 1.0])
+    if np.linalg.norm(np.cross(up, n)) < 1e-3:
+        up = np.array([0.0, 1.0, 0.0])
+    ey = _unit(up - up.dot(n) * n)
+    ex = np.cross(ey, n)
+    o = np.asarray(point_mm, float) + float(lift) * n
+    return {'o': [round(float(v), 3) for v in o],
+            'R': [[round(float(v), 6) + 0.0 for v in r] for r in (ex, ey, n)]}
+
+
+def flat_turn(flat):
+    """A flat frame's turn (deg, -180..180) about its face's normal from the frame flat_frame makes on that face:
+    0 = the pattern's +y up the face (on the ground: +Y), 90 = turned counter-clockwise seen from the face's side."""
+    R = np.asarray(flat['R'], float)
+    n = _unit(R[2])
+    d = np.asarray(flat_frame([0.0, 0.0, 0.0], n, 0.0)['R'][1], float)
+    return float(np.degrees(np.arctan2(np.cross(d, R[1]).dot(n), d.dot(R[1]))))
+
+
+def turn_flat(flat, deg):
+    """The flat frame turned to `deg` (flat_turn) about its normal at o: where it lies and its face kept."""
+    R = np.asarray(flat['R'], float)
+    n = _unit(R[2])
+    d = np.asarray(flat_frame([0.0, 0.0, 0.0], n, 0.0)['R'][1], float)
+    a = np.radians(float(deg))
+    ey = np.cos(a) * d + np.sin(a) * np.cross(n, d)
+    ex = np.cross(ey, n)
+    return {'o': [round(float(v), 3) for v in flat['o']],
+            'R': [[round(float(v), 6) + 0.0 for v in r] for r in (ex, ey, n)]}
+
+
+def lay_flat(flat, P_layout, anchor_layout):
+    """A piece laid flat in its frame (flat_frame): the anchor (layout mm) at o, the layout's +x along ex and +y
+    along ey. World mm. Rigid: every edge keeps its length."""
+    Q = np.asarray(P_layout, float) - np.asarray(anchor_layout, float)
+    R = np.asarray(flat['R'], float)
+    return np.asarray(flat['o'], float)[None] + Q[:, :1] * R[0] + Q[:, 1:2] * R[1]
+
+
+def frame_at(V, T, X, anchor):
+    """The flat frame under a piece's anchor in its present shape (Back to Flat, user 2026-11-10): from the layout
+    points V (n x 2 mm), triangles T and the shape X (n x 3 mm), the triangle holding the anchor (else the one whose
+    center is nearest it) maps the layout to the world, F = [x1 - x0, x2 - x0] [p1 - p0, p2 - p0]^-1 (3 x 2); the
+    frame is that triangle's plane at the anchor: o = x0 + F (anchor - p0), ex along F's first column, n = its two
+    columns' cross, ey = n x ex. No lift. {'o', 'R'}."""
+    V, X, T = np.asarray(V, float), np.asarray(X, float), np.asarray(T, np.int64)
+    a = np.asarray(anchor, float)
+    P0, P1, P2 = V[T[:, 0]], V[T[:, 1]], V[T[:, 2]]
+    e1, e2, q = P1 - P0, P2 - P0, a[None] - P0
+    det = e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0]
+    ok = np.abs(det) > 1e-12
+    u = np.where(ok, (q[:, 0] * e2[:, 1] - q[:, 1] * e2[:, 0]) / np.where(ok, det, 1.0), -1.0)
+    v = np.where(ok, (e1[:, 0] * q[:, 1] - e1[:, 1] * q[:, 0]) / np.where(ok, det, 1.0), -1.0)
+    inside = ok & (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1 + 1e-9)
+    if inside.any():
+        k = int(np.nonzero(inside)[0][0])
+    else:
+        c = (P0 + P1 + P2) / 3.0
+        k = int(np.argmin(np.where(ok, np.linalg.norm(c - a[None], axis=1), np.inf)))
+    i0, i1, i2 = T[k]
+    A = np.stack([V[i1] - V[i0], V[i2] - V[i0]], axis=1)          # 2 x 2
+    B = np.stack([X[i1] - X[i0], X[i2] - X[i0]], axis=1)          # 3 x 2
+    F = B @ np.linalg.inv(A)
+    o = X[i0] + F @ (a - V[i0])
+    ex = _unit(F[:, 0])
+    n = _unit(np.cross(F[:, 0], F[:, 1]))
+    ey = np.cross(n, ex)
+    return {'o': [round(float(v_), 3) for v_ in o],
+            'R': [[round(float(v_), 6) + 0.0 for v_ in r] for r in (ex, ey, n)]}
+
+
 MAX_TURN = 0.95     # a piece never goes more than this far round (it would overlap itself; dress.py's too)
 WRAP_GAP = 10.0     # mm left between the pieces round one arm guide when they are laid side by side
 def wrap_radii(guides, pieces, panels=()):

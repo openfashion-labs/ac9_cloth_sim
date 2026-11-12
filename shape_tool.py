@@ -25,59 +25,12 @@ from .core import iline as IL
 from .core import snap as SN
 
 YELLOW = (1.0, 0.85, 0.2, 1.0)
-SNAP_PX = 12                  # snap within this many pixels (the corner pick of Edit Pattern)
+SNAP_PX = 12                  # snap within this many pixels (the corner pick of Edit Pieces)
 CLICK_PX = 5                  # a press released within this is a click: the second corner is clicked
 MIN_MM = 5.0                  # the smallest side of a shape
 
-# ---------------------------------------------------------------- units (the scene's length unit; the pattern is mm)
-
-_UNITS = {'MILLIMETERS': (1.0, "mm"), 'CENTIMETERS': (10.0, "cm"), 'METERS': (1000.0, "m"),
-          'MICROMETERS': (0.001, "µm"), 'KILOMETERS': (1e6, "km")}
-
-
-def unit(context):
-    """(mm per unit, symbol) of the scene's Length unit; Adaptive and the rest show mm."""
-    try:
-        us = context.scene.unit_settings
-        if us.system == 'METRIC':
-            return _UNITS.get(us.length_unit, _UNITS['MILLIMETERS'])
-    except Exception:
-        pass
-    return _UNITS['MILLIMETERS']
-
-
-_DIGITS = {1.0: 1, 10.0: 2, 1000.0: 4}          # mm 1, cm 2 (no 0.1 mm lost), m 4; the rest 3 (DECISIONS
-                                                # cloth-sim-dimension-display-2026-10-23 b-4)
-
-
-def num(context, mm, signed=False):
-    """mm in the scene's Length unit, the number only (the boxes on the pattern)."""
-    f = unit(context)[0]
-    return f"{mm / f:{'+' if signed else ''}.{_DIGITS.get(f, 3)}f}"
-
-
-def fmt(context, mm, signed=False):
-    """mm in the scene's Length unit with its symbol: "123.4 mm", "12.34 cm"."""
-    return f"{num(context, mm, signed)} {unit(context)[1]}"
-
-
-def typed_mm(context, txt):
-    """A typed number in the scene's unit as mm, else None."""
-    try:
-        return float(txt) * unit(context)[0]
-    except ValueError:
-        return None
-
-
-def set_mm_if_default(context):
-    """A new pattern: the scene's Length unit to Millimeters when it is still Blender's default (Meters). Only how
-    lengths are shown: sizes and the Unit Scale stay (user 2026-10-20; 5.2: a cube stays 2 m, scale 1.0)."""
-    try:
-        us = context.scene.unit_settings
-        if us.system == 'METRIC' and us.length_unit == 'METERS' and abs(us.scale_length - 1.0) < 1e-9:
-            us.length_unit = 'MILLIMETERS'
-    except Exception:
-        pass
+# the scene's length unit (units.py; the pattern is mm): kept here for the many `from .shape_tool import fmt`
+from .units import unit, num, fmt, typed_mm, set_mm_if_default  # noqa: F401
 
 
 # ---------------------------------------------------------------- snapping in a tool
@@ -117,14 +70,14 @@ class Snapper:
             self._at = None
 
     def point(self, context, q, mm_per_px, ctrl=False, piece=None):
-        """(q snapped, kind, piece). Ctrl turns the snapping the other way while held: no snapping and whole mm
+        """(q snapped, kind, piece). Ctrl turns the snapping the other way while held: no snapping
         when the header's magnet is on, the snapping when it is off (DECISIONS cloth-sim-draw-basics-2026-10-20).
         No point to snap to: the middle, an even spacing or the distance another line has, within 8 px, on the
-        piece (piece, else the one under q), as Edit Pattern's drag. kind 'gap' then."""
+        piece (piece, else the one under q), as Edit Pieces' drag. kind 'gap' then."""
         self._refresh(context)
         on, grid_on = snap_settings(context)
         if ctrl and on:
-            p, kind, pc = np.round(q), None, None
+            p, kind, pc = np.asarray(q, float), None, None
             on = False
         else:
             on = on or ctrl
@@ -229,7 +182,7 @@ def clear_mark():
 
 
 def _draw_gaps_px(ctx, M, lines):
-    """The point's gaps as dashed lines (6 px dashes) with their mm on dark boxes, as Edit Pattern's drag."""
+    """The point's gaps as dashed lines (6 px dashes) with their mm on dark boxes, as Edit Pieces' drag."""
     from .draft_tool import to_world, draw_gap_labels, GAP_COLOR, GAP_HOT
     plain, hot = [], []
     for a, b, mm, h in lines:
@@ -450,7 +403,7 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
             txt += "   [" + "  ".join(f"{f[i]} {self.typed[i] or '-'}{'<' if i == self.field else ''}"
                                       for i in (0, 1)) + "]"
         txt += ("   drag, or click two corners   type W, Tab, H, Enter   Shift: square   Alt: from the center"
-                "   Ctrl: no snap   Esc: cancel")
+                "   Ctrl: no snap   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
     def _draw(self, context):

@@ -1,11 +1,12 @@
 schema_version = "1.0.0"
 
 id = "ac9_cloth_sim"
-version = "0.1.0"
+version = "0.1.1"
 name = "AC9 Cloth Sim"
 tagline = "Sew garment patterns and drape them on avatars in Blender"
 maintainer = "AC9 <cg-tech@omnisinc.co>"
 type = "add-on"
+website = "https://openfashion-labs.github.io/ac9_cloth_sim/"
 
 blender_version_min = "5.2.0"
 
@@ -19,13 +20,11 @@ platforms = ["windows-x64"]
 wheels = [
   "./wheels/newton-1.6.0-py3-none-any.whl",
   "./wheels/warp_lang-1.17.0-py3-none-win_amd64.whl",
-  "./wheels/scipy-1.18.1-cp313-cp313-win_amd64.whl",
 ]
 copyright = [
   "2026 OpenFashion (AC9)",
   "2025 The Newton Developers (newton, Apache-2.0; solver/newton_patch holds changed copies)",
   "2022-2026 NVIDIA Corporation (warp-lang, Apache-2.0, with NVIDIA components under their own licenses)",
-  "2001-2002 Enthought, Inc., 2003-2026 SciPy Developers (scipy, BSD-3-Clause)",
 ]
 
 [build]

@@ -6,7 +6,7 @@ The caller must collect every affected contact and validate new intersections.
 """
 from dataclasses import dataclass
 import numpy as np
-from scipy.optimize import linprog, minimize, nnls
+from dense_opt import nnls
 
 
 def closest_triangle(p, triangle):
@@ -128,27 +128,13 @@ def solve_shadow(x, movable, force, hessian, contacts, primary, *,
     for iteration in range(max_relinearizations):
         y, gaps, a = geometry(d)
         rhs = desired-gaps+a@d
-        # Millimeter scaling keeps HiGHS feasibility tolerance below the micro-step.
         if qp_backend is None:
-            feasible = linprog(np.zeros(width), A_ub=-a, b_ub=-rhs,
-                           bounds=(-trust_mm, trust_mm), method='highs',
-                           options={'primal_feasibility_tolerance':1.e-9,
-                                    'dual_feasibility_tolerance':1.e-9})
-            if not feasible.success:
-                return {'accepted':False, 'reason':'linear_infeasible', 'message':feasible.message,
-                    'history':history, 'positions':x.copy(), 'movable':movable}
-            optimum = minimize(lambda z: .5*z@matrix@z-linear@z, feasible.x,
-            jac=lambda z: matrix@z-linear, bounds=[(-trust_mm, trust_mm)]*width,
-            constraints={'type':'ineq', 'fun':lambda z:a@z-rhs, 'jac':lambda z:a},
-            method='SLSQP', options={'ftol':1.e-12, 'maxiter':200})
-            if not optimum.success:
-                return {'accepted':False,'reason':'reference_qp_failed','message':str(optimum.message),
-                        'history':history,'positions':x.copy(),'movable':movable}
-        else:
-            optimum=qp_backend(matrix,linear,a,rhs,trust_mm)
-            if not optimum.success:
-                return {'accepted':False,'reason':'qp_unconverged','message':optimum.message,
-                        'diagnostics':optimum.diagnostics,'history':history,'positions':x.copy(),'movable':movable}
+            from layer_patch_active import solve_dense_qp
+            qp_backend = solve_dense_qp
+        optimum=qp_backend(matrix,linear,a,rhs,trust_mm)
+        if not optimum.success:
+            return {'accepted':False,'reason':'qp_unconverged','message':optimum.message,
+                    'diagnostics':optimum.diagnostics,'history':history,'positions':x.copy(),'movable':movable}
         proposal = optimum.x
         y, after, jac_after = geometry(proposal)
         violation = float(np.max(desired-after))

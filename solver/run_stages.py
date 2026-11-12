@@ -15,6 +15,8 @@ import runpy
 import sys
 import time
 import traceback
+from process_tree import join_owned_job
+join_owned_job()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 from lifecycle_trace import mark as _trace, directory as _trace_dir
@@ -35,6 +37,8 @@ def _end(code):
 
 
 if sys.argv[1:2] == ['--standby']:
+    with open(sys.argv[2], encoding='utf8') as _preload_cfg_stream:
+        _preload_native_three = bool(json.load(_preload_cfg_stream).get('native_three'))
     # Started ahead of the next Simulate (dress.py, sim_latency 2026-10-20): Python, numpy, warp and the patched newton
     # are imported now, with the compile-time switches of <config.json> (the membrane; the NEWTON_VBD_* environment
     # this process was started with), and the GPU context made, while nobody waits. Then one line on stdin:
@@ -99,6 +103,11 @@ if sys.argv[1:2] == ['--standby']:
         _pipe.collide(_s0, _contacts)
         _solver.step(_s0, _s1, _m.control(), _contacts, 1.0 / 600.0)
         _wp.synchronize()
+        if _preload_native_three:
+            from native_three_prewarm import warm as _warm_native_three
+            _trace('prewarm_native_three_begin')
+            _warm_native_three(_m, _solver, _pipe)
+            _trace('prewarm_native_three_end')
         del _b, _m, _solver, _pipe, _s0, _s1, _contacts
     except Exception as _exc:
         _preload_progress(_preload_done, _preload_phase, 'failed', str(_exc))

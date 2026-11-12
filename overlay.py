@@ -110,7 +110,7 @@ def wrap_radii(spec, outlines, pls=None):
     pieces = {}
     for n, p in pl.items():
         if n in on and n in outlines:
-            w, hgt = np.ptp(outlines[n].B, axis=0)
+            w, hgt = np.ptp(S.spun(p, outlines[n].B), axis=0)        # as placed (core/spec.spun)
             pieces[n] = (p['guide'], float(w), float(hgt))
     from .core import roles as RO
     return BA.wrap_radii(spec.get('guides', {}), pieces, RO.with_role(spec, RO.ARM_PANEL_ROLES))
@@ -119,21 +119,33 @@ def wrap_radii(spec, outlines, pls=None):
 WRAP_STEP_MM = 10.0
 
 
+def laid_mm(spec, pl, Q, r=None):
+    """Layout points Q (mm) of a placed piece in the world (mm): laid flat (core/spec.is_flat, user 2026-11-10), or
+    wrapped round its guide at radius r; None when its guide is gone."""
+    if not pl:
+        return None
+    Q = S.spun(pl, Q)                            # a turn on the pattern after placing does not turn it on the body
+    if S.is_flat(pl):
+        return BA.lay_flat(pl['flat'], np.asarray(Q, float), pl['anchor'])
+    g = spec.get('guides', {}).get(pl['guide'])
+    if g is None:
+        return None
+    return BA.wrap(g, np.asarray(Q, float), pl['anchor'], pl['theta'], pl['h'], r, tilt=pl.get('tilt', 0.0))
+
+
 def wrapped_outline(spec, outlines, name, pl=None, radii=None):
     """World (m) outline of a placed piece laid round its guide (a plain cylinder wrap, for display), at the radius
     Dress starts it at so it does not lie over itself or the other pieces round an arm or leg."""
     pl = pl or spec.get('placement', {}).get(name)
-    if not pl or pl['guide'] not in spec.get('guides', {}):
+    if not pl or (pl['guide'] not in spec.get('guides', {}) and not S.is_flat(pl)):
         return None
-    g = spec['guides'][pl['guide']]
     B = outlines[name].B
     r = (radii if radii is not None else wrap_radii(spec, outlines, {name: pl})).get(name)
     Q = [B[0]]
     for a, b in zip(B, np.vstack([B[1:], B[:1]])):   # long sides cut: a drawn rectangle has 4 points only, its
         n = max(1, int(np.ceil(np.linalg.norm(b - a) / WRAP_STEP_MM)))   # sides went straight through the body
         Q += [a + (b - a) * (k / n) for k in range(1, n + 1)]
-    P = BA.wrap(g, np.asarray(Q, float), pl['anchor'], pl['theta'], pl['h'], r, tilt=pl.get('tilt', 0.0))
-    return P * PV.MM
+    return laid_mm(spec, pl, Q, r) * PV.MM
 
 
 FILL_MM = 20.0      # the fill's inner points this far apart, so its triangles bend round the guide
@@ -153,9 +165,8 @@ def wrapped_fill(spec, outlines, name, radii=None):
     the outline alone gave no depth, a piece in front of the body and one behind it looked the same)."""
     from mathutils.geometry import delaunay_2d_cdt
     pl = spec.get('placement', {}).get(name)
-    if not pl or pl['guide'] not in spec.get('guides', {}):
+    if not pl or (pl['guide'] not in spec.get('guides', {}) and not S.is_flat(pl)):
         return None
-    g = spec['guides'][pl['guide']]
     O = outlines[name]
     # the outline every WRAP_STEP_MM (its own points are dense: cut as they are, a front panel was 80,000 triangles)
     # and a grid inside it (an ear-clipped outline alone is long slivers, flat through the body round a guide)
@@ -183,8 +194,7 @@ def wrapped_fill(spec, outlines, name, radii=None):
         from .core import pattern_build as PB
         T = PB.drop_hole_tris(V, T, hs)
     r = (radii if radii is not None else wrap_radii(spec, outlines, {name: pl})).get(name)
-    P = BA.wrap(g, V[T.ravel()], pl['anchor'], pl['theta'], pl['h'], r, tilt=pl.get('tilt', 0.0))
-    return P * PV.MM
+    return laid_mm(spec, pl, V[T.ravel()], r) * PV.MM
 
 
 def guide_lines(g, n=48):
@@ -226,10 +236,10 @@ def _placed_flat(spec, outlines, enabled):
         n = max(2, int(max(S.polyline_len(fa), S.polyline_len(fb)) / 2.0) + 1)
         fa, fb = S.resample(fa, n), S.resample(fb, n)
         pa, pb = pl.get(a), pl.get(b)
-        wa = (BA.wrap(gd[pa['guide']], fa, pa['anchor'], pa['theta'], pa['h'], rad.get(a), tilt=pa.get('tilt', 0.0)) * PV.MM
-              if pa and pa['guide'] in gd else None)
-        wb = (BA.wrap(gd[pb['guide']], fb, pb['anchor'], pb['theta'], pb['h'], rad.get(b), tilt=pb.get('tilt', 0.0)) * PV.MM
-              if pb and pb['guide'] in gd else None)
+        wa = laid_mm(spec, pa, fa, rad.get(a))
+        wa = wa * PV.MM if wa is not None else None
+        wb = laid_mm(spec, pb, fb, rad.get(b))
+        wb = wb * PV.MM if wb is not None else None
         c = OFF if not sm.get('enabled', True) else (FLAG if sm.get('check') else SE.color(sm))
         rows.append((sm['id'], a, b, fa, fb, c, wa, wb))
     _pflat.update(key=key, rows=rows)
@@ -804,10 +814,8 @@ def notches3d(context, spec, outlines, act, garment):
             P = PLV.to_world(sh[name], Q)
         else:
             pl = spec.get('placement', {}).get(name)
-            gd = spec.get('guides', {})
-            if pl and pl['guide'] in gd:
-                P = BA.wrap(gd[pl['guide']], Q, pl['anchor'], pl['theta'], pl['h'], wrap_radii(spec, outlines).get(name),
-                            tilt=pl.get('tilt', 0.0)) * PV.MM
+            P = laid_mm(spec, pl, Q, wrap_radii(spec, outlines).get(name))
+            P = P * PV.MM if P is not None else None
         if P is not None:
             out.append(np.asarray(P, float).reshape(-1, 3))
     P = np.vstack(out) if out else np.zeros((0, 3))
@@ -852,7 +860,7 @@ def _garment_tris(ob, lo, hi):
 
 
 def iline3d(context, spec, outlines, garment):
-    """World (m) points (a polyline, (n, 3)) of the internal line picked in Edit Pattern, in 3D (user 2026-10-21): on
+    """World (m) points (a polyline, (n, 3)) of the internal line picked in Edit Pieces, in 3D (user 2026-10-21): on
     the garment's result inside its piece's triangles (barycentric on the flat coordinates, so the line follows the
     cloth between vertices), on a placed piece's object, else on the cylinder wrap -- as the 3D notches.
     Empty when no line is picked or its piece is not in 3D."""
@@ -895,10 +903,8 @@ def iline3d(context, spec, outlines, garment):
         P = PLV.to_world(sh[name], Q)
     else:
         pl = spec.get('placement', {}).get(name)
-        gd = spec.get('guides', {})
-        if pl and pl['guide'] in gd:
-            P = BA.wrap(gd[pl['guide']], Q, pl['anchor'], pl['theta'], pl['h'],
-                        wrap_radii(spec, outlines).get(name), tilt=pl.get('tilt', 0.0)) * PV.MM
+        P = laid_mm(spec, pl, Q, wrap_radii(spec, outlines).get(name))
+        P = P * PV.MM if P is not None else None
     P = np.zeros((0, 3)) if P is None else np.asarray(P, float).reshape(-1, 3)
     _iline3.update(key=key, P=P)
     return P
@@ -994,7 +1000,7 @@ def _build(context, spec, outlines):
     on_g = DS.result_names(gob)
     more = frozenset(store.seam_more)
     key = (store._cache['key'], M.tobytes(), act['id'] if act else None, props.seam_index, props.show_guides, shown,
-           on_g, more, visibility)
+           on_g, more, visibility, context.scene.unit_settings.length_unit)   # the labels are in the unit
     if _geo['key'] == key:
         return _placed3d(context, spec, outlines) if world_visible else _geo
     enabled = {pc['name'] for pc in spec['pieces'] if pc.get('enabled', True)}
@@ -1043,8 +1049,10 @@ def _build(context, spec, outlines):
             la, lb = S.polyline_len(pa), S.polyline_len(pb)
             ca, cb = ma[len(ma) // 2], mb[len(mb) // 2]
             # A / B named on the pattern (user 2026-10-20: which side is A was not shown anywhere)
-            alab = [(ca, f"A  {la:.1f}"), (cb, f"B  {lb:.1f}"),
-                    (0.5 * (ma[0] + mb[0]), f"{la - lb:+.1f}  ({la:.1f} / {lb:.1f})")]
+            from . import units as U                    # the scene's length unit (user 2026-11-11)
+            n = lambda v, sg=False: U.num(context, v, signed=sg)
+            alab = [(ca, f"A  {n(la)}"), (cb, f"B  {n(lb)}"),
+                    (0.5 * (ma[0] + mb[0]), f"{n(la - lb, True)}  ({n(la)} / {n(lb)})")]
         except Exception:
             join, alab = [], []
     # the guides' named points are not drawn (user 2026-10-15: they were spread along the arms and legs by fixed
@@ -1206,7 +1214,8 @@ def _draw_gone_px(context):
     region, rv3d = context.region, context.region_data
     fid = 0
     blf.size(fid, 14)
-    lines = [tx("{0} piece object(s) deleted", len(gone)), tx("Restore: the AC9 Run panel or the sidebar")]
+    lines = [tx("{0} piece object(s) deleted", len(gone)), tx("Restore: the AC9 Run panel or the sidebar"),
+             tx("Delete pieces with X in an AC9 tool"), tx("(Transform Pattern, Edit Pattern, ...)"), tx("X in Select Box, Move, ... deletes"), tx("only the object")]      # how to delete one (user 2026-11-12)
     for i, txt in enumerate(lines):                  # a banner at the top middle (the left has the toolbar and the view's name)
         w, _ = blf.dimensions(fid, txt)
         x, y = (region.width - w) / 2, region.height - 100 - i * 20
