@@ -74,6 +74,7 @@ def transfer_bound(vertices: wp.array[int], triangles: wp.array[wp.vec3i], weigh
 
 class BoundConstraints:
     def __init__(self, model, vertices, triangles, weights, offsets):
+        self.native_fused = False
         vertices = np.asarray(vertices, np.int32)
         triangles = np.asarray(triangles, np.int32)
         if np.isin(triangles, vertices).any():
@@ -108,7 +109,9 @@ class BoundConstraints:
         # endpoint simultaneously. Splitting a color cannot break existing conflicts.
         supports = {int(v): list(map(int, t)) for v, t in zip(vertices, triangles)}
         neighbors = {}
-        for a, b in model.spring_indices.numpy().reshape(-1, 2):
+        springs = (model.spring_indices.numpy().reshape(-1, 2) if model.spring_indices is not None
+                   else np.empty((0, 2), np.int32))
+        for a, b in springs:
             if int(a) not in supports and int(b) not in supports:
                 continue
             ids = set(supports.get(int(a), [int(a)])) | set(supports.get(int(b), [int(b)]))
@@ -135,7 +138,7 @@ class BoundConstraints:
         model.particle_color_groups = groups
         self.summary = {'vertices': len(vertices), 'colors': len(groups),
                         'spring_stencils': sum(int(a) in supports or int(b) in supports
-                                               for a, b in model.spring_indices.numpy().reshape(-1, 2))}
+                                               for a, b in springs)}
 
     def place(self, positions):
         wp.launch(place_bound, dim=len(self.vertices),
@@ -150,15 +153,22 @@ class BoundConstraints:
                   self.offsets, reference, displacements], device=self.device)
 
     def prepare_increment(self, reference, positions, displacements):
-        wp.copy(self.accepted, positions)
-        wp.launch(make_increment, dim=len(positions), inputs=[reference, positions, displacements,
-                  self.increment], device=self.device)
+        if self.native_fused:
+            wp.launch(prepare_increment, dim=len(positions), inputs=[reference, positions, displacements,
+                      self.accepted, self.increment], device=self.device)
+        else:
+            wp.copy(self.accepted, positions)
+            wp.launch(make_increment, dim=len(positions), inputs=[reference, positions, displacements,
+                      self.increment], device=self.device)
         self.propose(self.accepted, self.increment)
 
     def limit_travel(self, reference, scales, maximum):
         wp.launch(limit_travel, dim=len(self.accepted), inputs=[reference, self.accepted, self.increment,
                   maximum, scales], device=self.device)
-        self.limit(scales, self.increment, wp.inf)
+        # The path test consumes group limits directly. Publishing them to
+        # per-particle scales here would be overwritten by the final scatter
+        # without an intervening reader; keep the diagnostic recording order.
+        self.limit(scales, self.increment, wp.inf, scatter=not self.native_fused)
         # A bound on the entire nonlinear path, not just the endpoint chord.
         wp.launch(limit_bound_path, dim=len(self.vertices), inputs=[self.vertices, self.triangles, self.weights,
             self.offsets, self.accepted, self.increment, reference, self.row_groups, self.limits, maximum,
@@ -168,14 +178,22 @@ class BoundConstraints:
 
     def finish_increment(self, positions, reference, displacements):
         self.synchronize(positions, reference, displacements)
-        wp.launch(sync_displacements, dim=len(positions), inputs=[positions, reference, displacements], device=self.device)
+        if not self.native_fused:
+            wp.launch(sync_displacements, dim=len(positions), inputs=[positions, reference, displacements], device=self.device)
 
-    def limit(self, scales, displacements, maximum):
+    def apply_increment(self, positions, reference, displacements, scales):
+        # Write the same accepted endpoint and query-relative displacement in
+        # one pass. synchronize() subsequently replaces follower rows only.
+        wp.launch(apply_increment, dim=len(positions), inputs=[self.accepted, self.increment,
+                  scales, positions, reference, displacements], device=self.device)
+
+    def limit(self, scales, displacements, maximum, *, scatter=True):
         self.limits.fill_(1.0)
         wp.launch(gather_limits, dim=len(self.members), inputs=[self.members, self.groups, scales,
                   displacements, maximum, self.limits], device=self.device)
-        wp.launch(scatter_limits, dim=len(self.members), inputs=[self.members, self.groups, self.limits,
-                  scales], device=self.device)
+        if scatter:
+            wp.launch(scatter_limits, dim=len(self.members), inputs=[self.members, self.groups, self.limits,
+                      scales], device=self.device)
         wp.launch(record_limits, dim=len(self.limits), inputs=[self.limits, self.minimum_scale,
                   self.scale_counts], device=self.device)
 
@@ -216,6 +234,25 @@ def record_limits(limits: wp.array[float], minimum: wp.array[float], counts: wp.
     wp.atomic_add(counts, 0, 1)
     if limits[i] < 0.99999:
         wp.atomic_add(counts, 1, 1)
+
+
+@wp.kernel
+def prepare_increment(reference: wp.array[wp.vec3], positions: wp.array[wp.vec3],
+                      displacements: wp.array[wp.vec3], accepted: wp.array[wp.vec3], increment: wp.array[wp.vec3]):
+    i = wp.tid()
+    accepted[i] = positions[i]
+    increment[i] = reference[i] + displacements[i] - positions[i]
+
+
+@wp.kernel
+def apply_increment(accepted: wp.array[wp.vec3], increment: wp.array[wp.vec3], scales: wp.array[float],
+                    positions: wp.array[wp.vec3], reference: wp.array[wp.vec3], displacements: wp.array[wp.vec3]):
+    i = wp.tid()
+    step = increment[i] * scales[i]
+    increment[i] = step
+    p = accepted[i] + step
+    positions[i] = p
+    displacements[i] = p - reference[i]
 
 
 @wp.kernel

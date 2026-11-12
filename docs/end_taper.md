@@ -1,7 +1,7 @@
 # End taper for a fold line
 
 Select an internal line that ends inside the pattern, set its Fold Angle, and
-set **Taper (mm)**. This is the distance from each internal endpoint over which
+set **Taper** (a length in the scene's unit). This is the distance from each internal endpoint over which
 the target angle fades smoothly to zero. Beyond that distance the full angle
 applies. An endpoint on the pattern boundary keeps its full angle. A line with
 two internal endpoints fades toward both ends.

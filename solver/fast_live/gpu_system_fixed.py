@@ -141,7 +141,11 @@ class FixedStitchedGpuSystem(StitchedGpuSystem):
         wp.launch(gather_blocks, dim=self.nb, inputs=[self.values, self.order, self.start], outputs=[A.values], device=dev)
         self._t('gather'); wp.launch(invert_diagonal, dim=self.n, inputs=[A.values, self.diagonal], outputs=[M.values], device=dev)
         self._t('gather_invert'); r = residual.copy(); r[~self.active] = 0; self.rhs.assign(r)
-        if self.previous is not None: self.x.assign(self.previous)
+        if self.previous is not None:
+            warm = self.previous.copy()
+            if not np.isfinite(warm).all(): raise RuntimeError('Fixed GPU warm start nonfinite')
+            warm[~self.active] = 0.
+            self.x.assign(warm)
         else: self.x.zero_()
         b_norm = float(np.linalg.norm(r)); tolerance = max(self.linear_tol * b_norm, 1e-12)
         if self.mode == 'f64':
@@ -166,6 +170,11 @@ class FixedStitchedGpuSystem(StitchedGpuSystem):
                 wp.launch(add_f32, dim=self.n, inputs=[self.x, self.d32], device=dev)
                 if self.mode == 'f32': break
         self._t('cg_loop')
+        if not self.active.all():
+            fixed_solution = self.x.numpy()
+            if not np.isfinite(fixed_solution).all(): raise RuntimeError('Fixed GPU correction nonfinite')
+            fixed_solution[~self.active] = 0.
+            self.x.assign(fixed_solution)
         if not hasattr(self, 'true_r'): self.true_r = wp.zeros_like(self.rhs)
         wp.copy(self.true_r, self.rhs); bsr_mv(A, self.x, self.true_r, alpha=-1.0, beta=1.0); true_residual = float(np.linalg.norm(self.true_r.numpy()))
         self._t('true_residual')

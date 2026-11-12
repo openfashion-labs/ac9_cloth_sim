@@ -9,8 +9,8 @@ from . import placement as PL, store
 from .core import presets
 
 
-def capture(context, h):
-    spec = store.get(context)[0]
+def capture(context, h, *, spec=None):
+    spec = store.get(context)[0] if spec is None else spec
     props = context.scene.ac9_cloth_sim
     settings = presets.resolve(getattr(props, 'preset', ''), props,
                                environ=None if __import__('bpy').app.background else {})

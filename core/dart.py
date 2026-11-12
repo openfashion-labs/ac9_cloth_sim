@@ -8,7 +8,7 @@ A V drawn and sewn by hand is the same dart (find_darts: legs of several edges, 
 Every edit keeps the other seam ends, notches and measure points where they were (draft.point_refs).
 """
 import copy
-from ._i18n import rpt
+from ._i18n import rpt, length as len_text
 
 import numpy as np
 
@@ -151,9 +151,9 @@ def _add_one(spec, name, eid, t, width, length, apex=None):
     L = S.polyline_len(e['pts'])
     u1, u2 = t - 0.5 * width / L, t + 0.5 * width / L
     if apex is None and np.hypot(length, 0.5 * width) < LEG_MIN:
-        raise ValueError(rpt("the dart's legs would be shorter than {0:.0f} mm (two mesh cells)", LEG_MIN))
+        raise ValueError(rpt("the dart's legs would be shorter than {0} (two mesh cells)", len_text(LEG_MIN)))
     if u1 * L < D.MIN_EDGE or (1 - u2) * L < D.MIN_EDGE:
-        raise ValueError(rpt("the dart's mouth ({0:.0f} mm) does not fit inside edge {1} ({2:.0f} mm) clear of its corners: narrower, or split the edge", width, eid, L))
+        raise ValueError(rpt("the dart's mouth ({0}) does not fit inside edge {1} ({2}) clear of its corners: narrower, or split the edge", len_text(width), eid, len_text(L)))
     mid = _split_mouth(spec, pc, eid, u1, u2)
     k = D.edge_index(pc, mid)
     _split_seams_at(spec, name, pc['edges'][k - 1]['id'], mid, gone=width)   # a seam across the mouth: two seams
@@ -165,7 +165,7 @@ def _add_one(spec, name, eid, t, width, length, apex=None):
     if apex is not None:                                       # (shift_dart: the apex stays where it was)
         A = np.asarray(apex, float)
         if min(np.linalg.norm(A - m1), np.linalg.norm(A - m2)) < LEG_MIN:
-            raise ValueError(rpt("the dart's legs would be shorter than {0:.0f} mm (two mesh cells)", LEG_MIN))
+            raise ValueError(rpt("the dart's legs would be shorter than {0} (two mesh cells)", len_text(LEG_MIN)))
     leg1, leg2 = mid, D.new_edge_id(pc)
     prev_id, next_id = pc['edges'][k - 1]['id'], pc['edges'][(k + 1) % len(pc['edges'])]['id']
     moved = 0
@@ -315,11 +315,12 @@ def _remove_corner_at(spec, name, q):
     return True
 
 
-def _split_seams_at(spec, name, e_in, e_out, gone=0.0):
+def _split_seams_at(spec, name, e_in, e_out, gone=0.0, split_map=None):
     """Seams whose side on piece `name` runs through the corner between edges e_in (ending there) and e_out
     (starting there) become two seams there; the partner side is split at the same arc length from its start in
     proportion to the two lengths (where the two sides meet when sewn). A dart is about to open at that corner
-    (gone: the mouth of a dart added there, taken out of the side's length). Returns the new seam ids."""
+    (gone: the mouth of a dart added there, taken out of the side's length). Returns the new seam ids.
+    Optional split_map records (old id, new id) so the caller can restate dependent feature ownership."""
     ol = S.Outline(D.piece(spec, name))
     s_c = ol.s_of(e_out, 0.0)
     new = []
@@ -358,6 +359,8 @@ def _split_seams_at(spec, name, e_in, e_out, gone=0.0):
             sm2[k], sm2[o] = k2, o2
             sm[k], sm[o] = k1, o1
             spec['seams'].append(sm2)
+            if split_map is not None:
+                split_map.append((sm['id'], sid2))
             new.append(sid2)
             break
     return new
@@ -714,12 +717,7 @@ def fold_kink(spec, name, seam_id, onto=1):
 
 def _with_mouth(spec, name, dt, r):
     """A copy of spec (piece `name` and the seams copied) with the dart's mouth corners r mm from the apex."""
-    import copy
-    trial = dict(spec)
-    trial['pieces'] = [copy.deepcopy(p) if p['name'] == name else p for p in spec['pieces']]
-    trial['seams'] = copy.deepcopy(spec.get('seams', []))
-    if spec.get('measure'):
-        trial['measure'] = copy.deepcopy(spec['measure'])
+    trial = D.edit_copy(spec, {name})
     _set_mouth(trial, name, dt, r)
     return trial
 
@@ -814,5 +812,5 @@ def true_dart(spec, name, seam_id, twins=True):
     if twin_seam:
         _true_one(spec, tw, twin_seam, onto=2)          # mirrored: pressed the other way
         out[tw] = twin_seam
-    return out, (f"Dart {seam_id} trued: kink {k0:.1f} -> {k1:.1f} deg, mouth corners moved {a:.1f} / {b:.1f} mm, "
-                 f"legs {r:.1f} mm")
+    return out, (f"Dart {seam_id} trued: kink {k0:.1f} -> {k1:.1f} deg, mouth corners moved {len_text(a)} / {len_text(b)}, "
+                 f"legs {len_text(r)}")

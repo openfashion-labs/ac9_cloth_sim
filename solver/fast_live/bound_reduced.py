@@ -158,9 +158,16 @@ class ReducedBound:
         bsr_mv(self.Pt, self.full, self.rhs, alpha=1.0, beta=0.0)
         wp.launch(zero_masked, dim=self.n, inputs=[self.fmask], outputs=[self.rhs], device=dev)
         rhs = self.rhs; x = self.x; R = self.R
-        if self.last is not None: x.assign(self.last)
+        if self.last is not None:
+            warm = self.last.copy()
+            if not np.isfinite(warm).all(): raise RuntimeError('Reduced correction warm start nonfinite')
+            warm[out] = 0.
+            x.assign(warm)
         else: x.zero_()
         r_np = rhs.numpy()
+        # The merit's directional derivative is in the same independent coordinates.
+        # Keep the physical covector before any optional active-set penalty resolve.
+        self.origin_rhs_numpy = r_np.copy()
         if not hasattr(self, 'prepared'):
             # test switches: AC9_TEST_CG_MAXITER caps the iterations (an inexact step; the line search still checks it),
             # AC9_TEST_CG_CHECK sets how often the residual is checked (default 50)
@@ -169,6 +176,8 @@ class ReducedBound:
         it, err, _ = self.prepared(A=R, b=rhs, x=x, M=self.M)
         y = x.numpy()
         if not np.isfinite(y).all(): raise RuntimeError(f'Reduced correction nonfinite first={first} M={np.isfinite(self.M.values.numpy()).all()} R={np.isfinite(R.values.numpy()[:R.nnz]).all()} rhs={np.isfinite(r_np).all()} it={it}')
+        if np.any(y[out]):
+            y[out] = 0.; x.assign(y)
         y[self.fv] = 0.
         self.last = y.copy()
         tr = wp.zeros_like(rhs); wp.copy(tr, rhs); bsr_mv(R, x, tr, alpha=-1.0, beta=1.0)

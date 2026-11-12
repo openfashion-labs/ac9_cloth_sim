@@ -10,7 +10,7 @@ attribute GEN_ATTR and its layout point in FLAT_ATTR, so a changed pattern still
 
 How far the object was moved and turned as a whole (its matrix: the pose) is also written to the spec, as
 placement[piece]['pose'] (user 2026-10-14, DECISIONS cloth-sim-3d-piece-move-2026-10-14): numbers a person, the
-panel's fields or an AI read and write, and what the object is made again with (Place, Adjust, Mirror to Pair keep
+panel's fields or an AI read and write, and what the object is made again with (Place, Adjust, Mirror Placement keep
 it; only Back to Guide drops it). Written by sync_pose at the start of the AC9 operators, never by a handler (the
 spec's Text is then written inside an operator, so Ctrl+Z takes it back with the move). Edits in Edit Mode stay in
 the object only.
@@ -18,6 +18,7 @@ the object only.
 A mirrored pair (S.linked_twins) is one object: the piece on +x (as Dress chooses it) with a Mirror modifier
 about the center plane (CENTER_NAME, an Empty at the torso guide's axis x), so moving or editing it moves its pair too.
 """
+from . import prepare_build as PB
 import json
 import hashlib
 
@@ -128,6 +129,29 @@ def center_x(spec):
     return float(g['o'][0]) if g else 0.0
 
 
+def center_y(spec):
+    """World y (mm) of the plane a front / back pair mirrors about: the torso guide's axis, else 0."""
+    g = spec.get('guides', {}).get('torso')
+    return float(g['o'][1]) if g else 0.0
+
+
+PLANE_PROP = "ac9_mirror_plane"    # on a follower (link) and a Mirror-modified object: 'y' for a front / back pair
+
+
+def _plane_c(spec, plane, name=None):
+    """(diagonal of the mirror, world m of the plane along its axis) of a pair mirrored in `plane` (the pair of
+    `name`: its own plane position when it has one, S.mirror_center)."""
+    from .core import spec as S
+    return Matrix.Diagonal((*S.mirror_diag(plane), 1.0)), S.mirror_center(spec, plane, name) * MM
+
+
+def _mirror_T(plane, c):
+    """The translation that, after the mirror's diagonal, puts the plane back at c (m) along its axis."""
+    v = [0.0, 0.0, 0.0]
+    v[1 if plane == 'y' else 0] = 2.0 * c
+    return Matrix.Translation(v)
+
+
 def _collection(context):
     coll = bpy.data.collections.get(COLL_NAME)
     if coll is None:
@@ -172,15 +196,42 @@ def _center_object():
     return ob
 
 
-def center_empty(context, spec):
-    ob = _center_object()
+def _pair_key(spec, name):
+    """The pair of `name` named by its two pieces, sorted (the suffix of a pair's own empties), or None."""
+    from .core import draft as D
+    tw = D.twin_of(spec, name) if name else None
+    return "|".join(sorted((name, tw))) if tw else None
+
+
+def aux_empties():
+    """The empties placed_view makes: the center, a pair's own center, the mirrors (all names)."""
+    return [o.name for o in bpy.data.objects if o.type == 'EMPTY'
+            and (o.name in (CENTER_NAME, OLD_CENTER_NAME) or o.name.startswith(CENTER_NAME + ":")
+                 or o.name.startswith(MIRROR_NAME))]
+
+
+def center_empty(context, spec, name=None):
+    """The empty a pair's Mirror modifier mirrors about: the body's center (one for every pair), or, for a pair
+    with its own plane position (S.MIRROR_AT, the pair of `name`), an empty of its own at it."""
+    from .core import spec as S
+    at = S.stored_mirror_at(spec, name) if name else None
+    key = _pair_key(spec, name) if at is not None else None
+    if key is None:
+        ob = _center_object()
+        nm = CENTER_NAME
+    else:
+        nm = CENTER_NAME + ":" + key
+        ob = bpy.data.objects.get(nm)
     if ob is None:
-        ob = bpy.data.objects.new(CENTER_NAME, None)
+        ob = bpy.data.objects.new(nm, None)
         ob.empty_display_type = 'SINGLE_ARROW'
         ob.empty_display_size = 0.2
         ob.hide_select = True
         _collection(context).objects.link(ob)
-    ob.location = (center_x(spec) * MM, 0.0, 0.0)
+    loc = [center_x(spec) * MM, center_y(spec) * MM, 0.0]     # x mirrors about its x, front / back its y
+    if key is not None:
+        loc[S.axis_of(S.pair_plane(spec, name))] = at * MM
+    ob.location = loc
     ob.rotation_euler = (0.0, 0.0, 0.0)
     return ob
 
@@ -334,13 +385,33 @@ class PreparedResetBackup:
         from . import store, dress as D
         self.context, self.spec = context, spec
         self.text = store.text(context)
+        if self.text is None:
+            raise ValueError('No active pattern to back up')
         self.text_value = self.text.as_string()
+        self._restored = self._closed = False
+        self.preparation_owner = None
+        self.had_collection = bpy.data.collections.get(COLL_NAME) is not None
+        self.auxiliary = []
+        for name in aux_empties():
+            ob = bpy.data.objects.get(name)
+            if ob is not None and ob.type == 'EMPTY':
+                self.auxiliary.append((name, ob.copy(), tuple(c.name for c in ob.users_collection), ob.hide_get()))
         self.live, self.meshes = [], []
+        self.original_objects = {}
+        self.parents, self.targets = {}, {}
+        self.selected = {}
+        active = context.view_layer.objects.active
+        self.active = active.name if active is not None else None
         for ob in set(objects(spec).values()):
             sync_edit(ob)
             backup = ob.copy()
             backup.data = ob.data.copy()
             self.live.append((ob.name, backup, ob.hide_get()))
+            self.original_objects[ob.name] = int(ob.session_uid)
+            self.selected[ob.name] = ob.select_get(view_layer=context.view_layer)
+            self.parents[ob.name] = (ob.parent.name if ob.parent else None, ob.matrix_world.copy(), ob.matrix_parent_inverse.copy())
+            self.targets[ob.name] = [(c.name, c.target.name) for c in ob.constraints
+                                     if hasattr(c, 'target') and c.target is not None]
         for prop, meshes in ((KEEP_PROP, _kept(spec)), (BEFORE_SEAM_PROP, before_seam(spec))):
             for me in meshes.values():
                 backup = me.copy()
@@ -350,20 +421,44 @@ class PreparedResetBackup:
                 self.meshes.append((prop, value, backup))
         self.g = context.scene.objects.get(D.garment_name(spec))
         self.gmesh = self.g.data.copy() if self.g is not None else None
-        self.gprops = {k: self.g.get(k) for k in (D.RESET_PROP, 'ac9_job', D.JOB_MISSING_PROP)} if self.g else {}
+        self.gprops = {k: self.g.get(k) for k in D.ADDON_PROPS} if self.g else {}
         self.cache = [(m, m.show_viewport, m.show_render) for m in self.g.modifiers if m.type == 'MESH_CACHE'] if self.g else []
+
+    def can_restore(self):
+        return self.preparation_owner is None or self.preparation_owner.can_restore(self)
 
     def rollback(self):
         from . import store, dress as D
-        originals = {name for name, _, _ in self.live}
+        if self._restored:
+            return
+        if not self.can_restore():
+            # A foreign Text/Scene/history owns the new state; an old operation must not write its snapshot over it.
+            self._restored = True
+            return
+        for index, (name, backup, collections, hidden) in enumerate(self.auxiliary):
+            ob = bpy.data.objects.get(name)
+            if ob is None:
+                ob = backup
+                ob.name = name
+                for coll_name in collections:
+                    coll = bpy.data.collections.get(coll_name)
+                    if coll is not None:coll.objects.link(ob)
+                if not ob.users_collection:_collection(self.context).objects.link(ob)
+                self.auxiliary[index] = (name, None, collections, hidden)
+            else:
+                ob.matrix_world = backup.matrix_world
+            ob.hide_set(hidden)
+        originals = set(self.original_objects.values())
         for ob in set(objects(self.spec).values()):
-            if ob.name not in originals:
+            if int(ob.session_uid) not in originals:
                 me = ob.data
                 bpy.data.objects.remove(ob, do_unlink=True)
                 if me.users == 0:
                     bpy.data.meshes.remove(me)
         for i, (name, backup, hidden) in enumerate(self.live):
-            ob = bpy.data.objects.get(name)
+            uid = self.original_objects[name]
+            ob = next((o for o in bpy.data.objects if int(o.session_uid) == uid), None)
+            if ob is not None:ob.name = name
             if ob is None:
                 ob = backup
                 ob.name = name
@@ -371,21 +466,39 @@ class PreparedResetBackup:
                 self.live[i] = (name, None, hidden)
             else:
                 put_shape(ob, backup.data, shape_record(backup))
+                for key in ('color', 'hide_viewport', 'hide_render', 'show_in_front', 'display_type', 'active_material_index'):
+                    setattr(ob, key, getattr(backup, key))
                 for k in list(ob.keys()):
                     del ob[k]
                 for k, v in backup.items():
                     ob[k] = v.to_list() if hasattr(v, 'to_list') else v
                 if backup.get(TWIN_PROP) and not any(m.type == 'MIRROR' for m in ob.modifiers):
-                    _add_mirror(ob, center_empty(self.context, self.spec), backup[TWIN_PROP])
+                    _add_mirror(ob, center_empty(self.context, self.spec, backup[TWIN_PROP]), backup[TWIN_PROP], backup.get(PLANE_PROP, 'x'))
             ob.hide_set(hidden)
+        # Removing a leader clears RNA references even on object copies. Restore links by name only after all
+        # original objects exist again, then restore their original world transforms.
+        for name, (parent, world, inverse) in self.parents.items():
+            ob = bpy.data.objects.get(name)
+            if ob is not None:
+                ob.parent = bpy.data.objects.get(parent) if parent else None
+                ob.matrix_parent_inverse = inverse
+                for constraint, target in self.targets[name]:
+                    c = ob.constraints.get(constraint)
+                    if c is not None:
+                        c.target = bpy.data.objects.get(target)
+                ob.matrix_world = world
+                if ob.name in self.context.view_layer.objects:
+                    ob.select_set(self.selected[name], view_layer=self.context.view_layer)
+        if self.active and self.active in self.context.view_layer.objects:
+            self.context.view_layer.objects.active = self.context.view_layer.objects[self.active]
         forget(self.spec)
         forget_before_seam(self.spec, set(before_seam(self.spec)))
         for prop, value, me in self.meshes:
             me[prop] = value
             me.use_fake_user = True
         self.meshes.clear()  # restored meshes now belong to the garment
-        self.text.clear()
-        self.text.write(self.text_value)
+        if self.text.as_string() != self.text_value:
+            self.text.from_string(self.text_value)
         store.invalidate()
         if self.g is not None:
             old = self.g.data
@@ -401,8 +514,22 @@ class PreparedResetBackup:
                 m.show_viewport, m.show_render = viewport, render
             D.sync_hidden(self.g, self.spec)
         invalidate_shown()
+        original_aux = {name for name, _, _, _ in self.auxiliary}
+        for name in aux_empties():
+            ob = bpy.data.objects.get(name)
+            if name in original_aux or ob is None or ob.type != 'EMPTY':continue
+            used = any(other.parent == ob or any(m.type == 'MIRROR' and m.mirror_object == ob for m in other.modifiers)
+                       or any(getattr(c, 'target', None) == ob for c in other.constraints)
+                       for other in bpy.data.objects if other != ob)
+            if not used:bpy.data.objects.remove(ob, do_unlink=True)
+        coll = bpy.data.collections.get(COLL_NAME)
+        if not self.had_collection and coll is not None and not coll.objects and not coll.children:
+            bpy.data.collections.remove(coll)
+        self._restored = True
 
     def close(self):
+        if self._closed:
+            return
         for _, ob, _ in self.live:
             if ob is not None:
                 me = ob.data
@@ -413,6 +540,9 @@ class PreparedResetBackup:
             bpy.data.meshes.remove(me)
         if self.gmesh is not None:
             bpy.data.meshes.remove(self.gmesh)
+        for _, ob, _, _ in self.auxiliary:
+            if ob is not None:bpy.data.objects.remove(ob, do_unlink=True)
+        self._closed = True
 
 
 def _kept(spec):
@@ -523,12 +653,8 @@ def drop(spec):
     remove(list(obs), spec, forget_kept=False)
     coll = bpy.data.collections.get(COLL_NAME)
     if coll is not None and not objects():
-        cen = _center_object()
-        if cen is not None:
-            bpy.data.objects.remove(cen)
-        mir = bpy.data.objects.get(MIRROR_NAME)
-        if mir is not None:
-            bpy.data.objects.remove(mir)
+        for nm in aux_empties():
+            bpy.data.objects.remove(bpy.data.objects[nm])
         if not coll.objects and not coll.children:
             bpy.data.collections.remove(coll)
     return gone
@@ -598,10 +724,48 @@ def hand_shape(ob):
     return F.reshape(-1, 2), T.reshape(-1, 3), W
 
 
-def _add_mirror(ob, cen, twin):
+def shape_snapshot(ob, *, only_moved=False):
+    """Capture the physical source once at an operation boundary; never keep RNA in the returned record.
+
+    Existing flags are evidence, not a second persistent state. The world coordinates exclude display modifiers,
+    exactly as hand_shape does. Layout coordinates remain millimeters, independent of the object's origin.
+    """
+    from .core.shape_source import PlacedShape
+    moved = is_moved(ob)
+    if only_moved and not moved:
+        return None
+    shape = hand_shape(ob)
+    if shape is None:
+        return None
+    provenance = tuple(name for name, present in (
+        ('result', from_sim(ob)), ('fold', bool(ob.get(FOLD_PROP))), ('seam', bool(ob.get(SEAM_PROP))),
+        ('lay', bool(ob.get(LAID_PROP)))) if present)
+    if not provenance:
+        provenance = ('edited' if moved else 'guide',)
+    flat, triangles, world = shape
+    return PlacedShape(str(ob.get(PROP, '')), int(ob.session_uid), int(ob.data.session_uid), provenance,
+                       flat, triangles, world, ob.get(NV_PROP), ob.get(KEY_PROP), bool(ob.get(KK_PROP)))
+
+
+def set_mirror_plane(ob, plane):
+    """A Mirror-modified pair object's axis set to its pair's plane (x, or y for front / back)."""
+    for md in ob.modifiers:
+        if md.type == 'MIRROR':
+            md.use_axis = (plane != 'y', plane == 'y', False)
+    if plane == 'y':
+        ob[PLANE_PROP] = 'y'
+    else:
+        ob.pop(PLANE_PROP, None)
+
+
+def _add_mirror(ob, cen, twin, plane='x'):
     ob[TWIN_PROP] = twin
     md = ob.modifiers.new("AC9 Pair", 'MIRROR')
-    md.use_axis = (True, False, False)
+    md.use_axis = (plane != 'y', plane == 'y', False)
+    if plane == 'y':
+        ob[PLANE_PROP] = 'y'
+    else:
+        ob.pop(PLANE_PROP, None)
     md.mirror_object = cen
     md.use_mirror_merge = False
     md.use_clip = False
@@ -616,17 +780,18 @@ def _tag(ob, spec, piece, V):
     ob[NV_PROP] = len(ob.data.vertices)
 
 
-def activate_side(context, spec, name):
-    activate_sides(context, spec, [name])
+def activate_side(context, spec, name, *, preparation=None):
+    activate_sides(context, spec, [name], preparation=preparation)
     return objects(spec).get(name)
 
 
-def activate_sides(context, spec, names):
+@PB.prepared_consumer
+def activate_sides(context, spec, names, *, preparation=None):
     """Validate every requested pair before changing any pair's representation."""
     staged = []
     try:
         for name in dict.fromkeys(names):
-            change = _stage_control_side(context, spec, name)
+            change = _stage_control_side(context, spec, name, preparation=preparation)
             if change is not None:
                 staged.append(change)
         for commit, cleanup in staged:
@@ -641,7 +806,7 @@ def activate_sides(context, spec, names):
     context.view_layer.update()
 
 
-def _stage_control_side(context, spec, name):
+def _stage_control_side(context, spec, name, *, preparation=None):
     """Make a specifically chosen mirrored half the control side, without moving either piece.
 
     This changes representation, not placement or pair membership. Stage every
@@ -659,9 +824,10 @@ def _stage_control_side(context, spec, name):
     if set(outlines) != {source, name}:
         raise ValueError('AC9 cannot switch control: the paired pattern is missing')
     sync_edit(ob)
-    cx = center_x(spec) * MM
-    F = Matrix.Diagonal((-1.0, 1.0, 1.0, 1.0))
-    T = Matrix.Translation((2.0 * cx, 0.0, 0.0))
+    plane = outlines[source].plane
+    k = 1 if plane == 'y' else 0
+    F, cx = _plane_c(spec, plane, source)
+    T = _mirror_T(plane, cx)
     saved, kept = before_seam(spec), _kept(spec)
     if name in saved or name in kept:
         raise ValueError('AC9 cannot switch control while the other half has a separate saved shape')
@@ -670,7 +836,7 @@ def _stage_control_side(context, spec, name):
     # Use the canonical twin layout only when its vertex correspondence matches.
     from . import dress as D
     prepared = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size,
-                         shapes_only=True, placed_only=True)
+                         shapes_only=True, placed_only=True, preparation=preparation)
     names = [str(n) for n in prepared['pat']['names']]
     canonical = np.asarray(prepared['pat'][f"V{names.index(name)}"], float) if name in names else None
     pending = []
@@ -698,7 +864,7 @@ def _stage_control_side(context, spec, name):
             raise ValueError('AC9 cannot switch control: the saved layout correspondence is missing')
         V = np.empty(len(me.vertices) * 2)
         fl.data.foreach_get('vector', V)
-        V = mirror_flat(V.reshape(-1, 2), outlines[source].B, outlines[name].B)
+        V = mirror_flat(V.reshape(-1, 2), outlines[source].B, outlines[name].B, plane)
         canonical_match = (canonical is not None and canonical.shape == V.shape
                            and np.allclose(canonical, V, atol=1e-3, rtol=0))
         if canonical_match:
@@ -714,11 +880,13 @@ def _stage_control_side(context, spec, name):
         M = Matrix([q['matrix'][i:i + 4] for i in range(0, 16, 4)])
         q['matrix'] = [float(v) for row in (T @ F @ M @ F) for v in row]
         if ORG_PROP in props:
-            org = props[ORG_PROP]
-            props[ORG_PROP] = [2.0 * cx / MM - org[0], org[1], org[2]]
+            org = list(props[ORG_PROP])
+            org[k] = 2.0 * cx / MM - org[k]
+            props[ORG_PROP] = org
         if ORIGIN_SHIFT_PROP in props:
-            shift = props[ORIGIN_SHIFT_PROP]
-            props[ORIGIN_SHIFT_PROP] = [-shift[0], shift[1], shift[2]]
+            shift = list(props[ORIGIN_SHIFT_PROP])
+            shift[k] = -shift[k]
+            props[ORIGIN_SHIFT_PROP] = shift
         props[KEY_PROP], props[KK_PROP] = layout_key(V), bool(canonical_match)
         q['props'] = props
         clone = me.copy()
@@ -733,7 +901,7 @@ def _stage_control_side(context, spec, name):
                 co = np.empty(len(attr.data) * 3)
                 attr.data.foreach_get('vector', co)
                 co = co.reshape(-1, 3)
-                co[:, 0] = (2.0 * cx - co[:, 0]) if attr.name == GEN_ATTR else -co[:, 0]
+                co[:, k] = (2.0 * cx - co[:, k]) if attr.name == GEN_ATTR else -co[:, k]
                 attr.data.foreach_set('vector', co.astype(np.float32).ravel())
         clone.update()
         return clone, q
@@ -787,18 +955,23 @@ def split_pair(context, spec, outlines, a, b, keep_shape=False):
     if not keep_shape and not is_moved(ob):
         remove([a, b], spec)
         return
+    from .core import spec as S
+    plane = outlines[src_name].plane
+    k = 1 if plane == 'y' else 0
+    D3 = np.array(S.mirror_diag(plane))
     src = ob.data
     n = len(src.vertices)
     co = np.empty(n * 3)
     src.vertices.foreach_get('co', co)
-    co = co.reshape(-1, 3) * [-1.0, 1.0, 1.0]
+    co = co.reshape(-1, 3) * D3
     fl = np.empty(n * 2)
     src.attributes[FLAT_ATTR].data.foreach_get('vector', fl)
-    fl_t = mirror_flat(fl.reshape(-1, 2), outlines[src_name].B, outlines[twin].B)
+    fl_t = mirror_flat(fl.reshape(-1, 2), outlines[src_name].B, outlines[twin].B, plane)
     g = np.empty(n * 3)
     src.attributes[GEN_ATTR].data.foreach_get('vector', g)
-    cx = center_x(spec) * MM
-    g = g.reshape(-1, 3) * [-1.0, 1.0, 1.0] + [2.0 * cx, 0.0, 0.0]
+    F, cx = _plane_c(spec, plane, src_name)
+    g = g.reshape(-1, 3) * D3
+    g[:, k] += 2.0 * cx
     src.calc_loop_triangles()
     T = np.empty(len(src.loop_triangles) * 3, np.int64)
     src.loop_triangles.foreach_get('vertices', T)
@@ -809,20 +982,22 @@ def split_pair(context, spec, outlines, a, b, keep_shape=False):
     me.attributes.new(FLAT_ATTR, 'FLOAT2', 'POINT').data.foreach_set('vector', fl_t.astype(np.float32).ravel())
     me.attributes.new(GEN_ATTR, 'FLOAT_VECTOR', 'POINT').data.foreach_set('vector', g.astype(np.float32).ravel())
     nob = bpy.data.objects.new(PREFIX + twin, me)
-    F = Matrix.Diagonal((-1.0, 1.0, 1.0, 1.0))
-    nob.matrix_world = Matrix.Translation((2.0 * cx, 0.0, 0.0)) @ F @ ob.matrix_world @ F
-    org = origin_mm(ob)
+    nob.matrix_world = _mirror_T(plane, cx) @ F @ ob.matrix_world @ F
+    org = list(origin_mm(ob))
     _tag(nob, spec, twin, fl_t)
-    nob[ORG_PROP] = [2.0 * cx * 1000.0 - org[0], org[1], org[2]]
+    org[k] = 2.0 * cx * 1000.0 - org[k]
+    nob[ORG_PROP] = org
     if ob.get(ORIGIN_SHIFT_PROP) is not None:
-        shift = ob[ORIGIN_SHIFT_PROP]
-        nob[ORIGIN_SHIFT_PROP] = [-shift[0], shift[1], shift[2]]
+        shift = list(ob[ORIGIN_SHIFT_PROP])
+        shift[k] = -shift[k]
+        nob[ORIGIN_SHIFT_PROP] = shift
     nob[KK_PROP] = True
     nob.color = ob.color
     _collection(context).objects.link(nob)
     for md in [m for m in ob.modifiers if m.type == 'MIRROR']:
         ob.modifiers.remove(md)
     del ob[TWIN_PROP]
+    ob.pop(PLANE_PROP, None)
 
 
 def join_pair(context, spec, a, b, prefer=None):
@@ -843,7 +1018,8 @@ def join_pair(context, spec, a, b, prefer=None):
         if me is not None and me.users == 0:
             bpy.data.meshes.remove(me)
     if not lead.get(TWIN_PROP):
-        _add_mirror(lead, center_empty(context, spec), other)
+        from .core import spec as S
+        _add_mirror(lead, center_empty(context, spec, other), other, S.pair_plane(spec, other))
 
 
 def origin_mm(ob):
@@ -1073,7 +1249,7 @@ def has_edits(ob):
 def sync_pose(context, spec):
     """The placed objects' poses written to the spec's placement (a mirrored pair's object: its twin gets the
     mirror image). Returns the new spec, or None when nothing changed. Called at the start of the AC9 operators
-    that read the placement (Dress, Place, Adjust, Center, Move by Hand, the pose fields, Mirror to Pair...)."""
+    that read the placement (Dress, Place, Adjust, Center, Move by Hand, the pose fields, Mirror Placement...)."""
     from .core import spec as S
     if not spec or not spec.get('placement'):
         return None
@@ -1089,7 +1265,7 @@ def sync_pose(context, spec):
             new[n] = p
         tw = ob.get(TWIN_PROP) or ob.get(FOLLOWER_PROP)
         if tw and tw in pl:
-            pm = S.mirror_pose(p)
+            pm = S.mirror_pose(p, S.pair_plane(spec, n))
             if not same_pose(pm, pl[tw].get('pose')):
                 new[tw] = pm
     if not new:
@@ -1148,13 +1324,19 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
             s_, t_ = t_, s_                     # the side moved by hand leads
         tgt_of[s_] = t_
     tgts = set(tgt_of.values())
+    from .core import spec as S_
     for s_, t_ in tgt_of.items():
         ob = objects(spec).get(names[s_])
         if names[s_] in kept and ob is not None and not ob.get(TWIN_PROP):
             other = objects(spec).get(names[t_])
             if other is not None and other is not ob:
                 remove([names[t_]], spec)
-            _add_mirror(ob, cen, names[t_])
+            _add_mirror(ob, center_empty(context, spec, names[s_]), names[t_], S_.pair_plane(spec, names[s_]))
+        elif names[s_] in kept and ob is not None:
+            set_mirror_plane(ob, S_.pair_plane(spec, names[s_]))      # kept, its pair's plane changed since
+            for md in ob.modifiers:
+                if md.type == 'MIRROR' and md.name == "AC9 Pair":
+                    md.mirror_object = center_empty(context, spec, names[s_])      # ... or its plane's place
     made = []
     for i, n in enumerate(names):
         if i in tgts or n in kept or (only is not None and n not in only):
@@ -1176,7 +1358,7 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
             _give_back(ob, back[n])
             LA.apply_piece(ob, spec, n)
         if i in tgt_of:
-            _add_mirror(ob, cen, names[tgt_of[i]])
+            _add_mirror(ob, center_empty(context, spec, n), names[tgt_of[i]], S_.pair_plane(spec, n))
         ob.color = (0.55, 0.75, 1.0, 1.0)
         ob.pop('ac9_problems', None)        # diagnose.PROP: a placed piece made again starts with none
         coll.objects.link(ob)
@@ -1196,17 +1378,22 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
 # frame. G / R / the Gizmo move the leader and the follower moves at once, mirrored (one undo step). Its world
 # vertices stay where they were, so everything reading matrix_world @ co reads it as before.
 
-def _mirror_empty(context, spec):
-    cen = center_empty(context, spec)
-    ob = bpy.data.objects.get(MIRROR_NAME)
+def _mirror_empty(context, spec, plane='x', piece=None):
+    """The empty a follower is parented to: the mirror in x (or, front / back, in y) about the center (the pair of
+    `piece`: about its own plane position when it has one)."""
+    from .core import spec as S
+    cen = center_empty(context, spec, piece)
+    key = _pair_key(spec, piece) if S.stored_mirror_at(spec, piece) is not None and piece else None
+    name = MIRROR_NAME + ("_Y" if plane == 'y' else "") + (":" + key if key else "")
+    ob = bpy.data.objects.get(name)
     if ob is None:
-        ob = bpy.data.objects.new(MIRROR_NAME, None)
+        ob = bpy.data.objects.new(name, None)
         ob.empty_display_size = 0.05
         ob.hide_select = True
         ob.hide_viewport = True
         _collection(context).objects.link(ob)
     C = Matrix.Translation(cen.location)
-    ob.matrix_world = C @ Matrix.Diagonal((-1.0, 1.0, 1.0, 1.0)) @ C.inverted()
+    ob.matrix_world = C @ Matrix.Diagonal((*S.mirror_diag(plane), 1.0)) @ C.inverted()
     return ob
 
 
@@ -1227,7 +1414,8 @@ def _set_world_co(ob, W, M):
 def set_matrix(ob, M):
     """Put the object at world matrix M; a follower is put there by moving its leader (it copies the leader)."""
     c = ob.constraints.get('AC9_Pair')
-    E = bpy.data.objects.get(MIRROR_NAME)
+    # the follower's own mirror (front / back, or a pair's own plane), not the shared x one
+    E = ob.parent if ob.parent is not None and ob.parent.name.startswith(MIRROR_NAME) else bpy.data.objects.get(MIRROR_NAME)
     if c is not None and c.target is not None and E is not None:
         c.target.matrix_world = E.matrix_world @ M      # follower = Mirror @ leader, Mirror its own inverse
     else:
@@ -1235,13 +1423,13 @@ def set_matrix(ob, M):
     bpy.context.view_layer.update()
 
 
-def _mirror_gap(lead, ob):
+def _mirror_gap(lead, ob, plane='x'):
     """(mm, A): how far (the worst vertex) ob is from where its leader's pose mirrored puts it, and the world matrix
     A taking it there."""
     from .core import spec as S
     pl, po = pose_of(lead), pose_of(ob)
     org = origin_mm(ob) - np.asarray(ob.get(ORIGIN_SHIFT_PROP, (0.0, 0.0, 0.0)), float) * 1000.0
-    A = np.array(pose_matrix(S.mirror_pose(pl), org) @ pose_matrix(po, org).inverted())
+    A = np.array(pose_matrix(S.mirror_pose(pl, plane), org) @ pose_matrix(po, org).inverted())
     Wm = _world_co(ob)
     Wn = (np.c_[Wm, np.ones(len(Wm))] @ A.T)[:, :3]
     return float(np.linalg.norm(Wn - Wm, axis=1).max()) * 1000.0, Matrix(A.tolist())
@@ -1252,7 +1440,13 @@ def link(context, spec, lead, ob):
     if ob.mode == 'EDIT':
         ob.update_from_editmode()
     W = _world_co(ob)
-    E = _mirror_empty(context, spec)
+    from .core import spec as S
+    plane = S.pair_plane(spec, ob.get(PROP, ''))
+    E = _mirror_empty(context, spec, plane, ob.get(PROP))
+    if plane == 'y':
+        ob[PLANE_PROP] = 'y'
+    else:
+        ob.pop(PLANE_PROP, None)
     ob.parent = E
     ob.matrix_parent_inverse = Matrix.Identity(4)
     ob.matrix_basis = Matrix.Identity(4)
@@ -1299,7 +1493,7 @@ def unlink(ob):
     ob.matrix_world = Matrix.Identity(4)
     # the matrix its pose in the spec gives (its leader's mirrored), so pose_of reads that pose from it again
     from .core import spec as S
-    M = matrix_for_pose(ob, S.mirror_pose(pose_of(lead)) if lead is not None else None)
+    M = matrix_for_pose(ob, S.mirror_pose(pose_of(lead), ob.get(PLANE_PROP, 'x')) if lead is not None else None)
     ob.matrix_world = M
     _set_world_co(ob, W, M)
     ob.pop(LEAD_PROP, None)
@@ -1325,7 +1519,7 @@ def link_pairs(context, spec):
         unlink(lead)
         unlink(fol)
         context.view_layer.update()
-        gap, A = _mirror_gap(lead, fol)
+        gap, A = _mirror_gap(lead, fol, S.pair_plane(spec, a))
         if gap > 1.0:                       # placed apart by hand before: it goes to its pair's mirror now (told)
             fol.matrix_world = A @ fol.matrix_world
             context.view_layer.update()
@@ -1368,11 +1562,42 @@ def _connectivity_key(me):
     return (len(me.vertices), hash(loops.tobytes()), hash(sizes.tobytes())), bool((sizes > 3).any())
 
 
-def mirror_flat(F, B_src, B_twin):
-    """Layout points of a source piece mirrored into its twin's outline (as core/pattern_build.py mirrors a twin)."""
+def follow_layout(spec, rigid):
+    """Pieces moved whole in the layout (Whole Pieces' G / R): the layout points their placed objects hold
+    (FLAT_ATTR) moved alike, the 3D shape left as it is. They kept the old points: the point clicked on a placed
+    piece was shown where the piece had been in 2D, and a Dress mapped a hand-moved shape through the old layout.
+    rigid: {piece: (R, t)}, new = R @ old + t; a map new -> old (a dart's turned part) is not invertible here and is
+    skipped (the cloth outside a dart does not move). Returns the pieces whose objects were updated."""
+    done = []
+    obs = objects(spec)
+    for n, r in (rigid or {}).items():
+        ob = obs.get(n)
+        if ob is None or ob.get(PROP) != n or callable(r) or ob.type != 'MESH':
+            continue                     # a pair's mirrored half reads its points from the source's, mirrored
+        R, t = (np.asarray(x, float) for x in r)
+        if np.allclose(R, np.eye(2)) and np.allclose(t, 0.0):
+            continue
+        a = ob.data.attributes.get(FLAT_ATTR)
+        nv = len(ob.data.vertices)
+        if a is None or nv == 0 or len(a.data) != nv:
+            continue
+        F = np.empty(nv * 2)
+        a.data.foreach_get('vector', F)
+        F = F.reshape(-1, 2) @ R.T + t
+        a.data.foreach_set('vector', F.astype(np.float32).ravel())
+        ob.data.update()
+        _ev.pop(ob.name, None)
+        done.append(n)
+    return done
+
+
+def mirror_flat(F, B_src, B_twin, plane='x'):
+    """Layout points of a source piece mirrored into its twin's outline (as core/pattern_build.py mirrors a twin):
+    across x for a left / right pair, across y for a front / back one."""
     ca, cb = 0.5 * (B_src.min(0) + B_src.max(0)), 0.5 * (B_twin.min(0) + B_twin.max(0))
-    F = np.asarray(F, float)
-    return np.stack([cb[0] - (F[:, 0] - ca[0]), F[:, 1] - ca[1] + cb[1]], 1)
+    F = np.asarray(F, float) - ca
+    F[:, 1 if plane == 'y' else 0] *= -1.0
+    return F + cb
 
 
 def _read(context, ob, dg):
@@ -1489,7 +1714,7 @@ def shown(context, spec, outlines, include_off=False):
         tw = ob.get(TWIN_PROP)
         if c['twin'] and tw and outlines is not None and n in outlines and tw in outlines and len(c['W']) >= 2 * n_:
             if c.get('ftw_key') != (c['tkey'], store_key()):
-                c['Ft'] = mirror_flat(c['F'], outlines[n].B, outlines[tw].B)
+                c['Ft'] = mirror_flat(c['F'], outlines[n].B, outlines[tw].B, outlines[n].plane)
                 c['ftw_key'] = (c['tkey'], store_key())
             out[tw] = (c['Ft'], c['T'], c['W'][n_:2 * n_], (ob.name, c['tkey'], 'twin'), c['sig'])
     return out, tuple(sorted(sig))

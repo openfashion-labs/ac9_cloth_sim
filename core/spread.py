@@ -14,7 +14,7 @@ partners): measured on trousers, it lays the added cloth out along the leg, wher
 folding the opening onto the old cut line left a crease Simulate did not undo (2026-10-10).
 """
 import numpy as np
-from ._i18n import rpt
+from ._i18n import rpt, length as len_text
 
 from . import dart as DT
 from . import draft as D
@@ -39,7 +39,7 @@ def _corner_at(spec, name, q):
     pc = D.piece(spec, name)
     (eid, t), d = _outline_point(pc, q)
     if d > SNAP_MM:
-        raise ValueError(rpt("the cut line's end is {0:.1f} mm off the outline: draw it from outline to outline", d))
+        raise ValueError(rpt("the cut line's end is {0} off the outline: draw it from outline to outline", len_text(d)))
     k = D.edge_index(pc, eid)
     L = S.polyline_len(pc['edges'][k]['pts'])
     if t * L <= max(D.SEAM_SNAP, D.MIN_EDGE):
@@ -190,7 +190,7 @@ def spread(spec, name, line_id, amount, mode='hinge', hinge='start', side='auto'
     end) or 'b'. The twin gets the mirror image. Returns {piece: info} (the bridge edges, internal lines moved, the
     side moved, the area added)."""
     if amount < D.MIN_EDGE:
-        raise ValueError(rpt("spread at least {0} mm", D.MIN_EDGE))
+        raise ValueError(rpt("spread at least {0}", len_text(D.MIN_EDGE)))
     if mode not in ('hinge', 'parallel'):
         raise ValueError(f"unknown spread {mode}")
     if seams_on_line(spec, name, line_id):
@@ -214,12 +214,92 @@ def spread(spec, name, line_id, amount, mode='hinge', hinge='start', side='auto'
         c = D.self_axis(pc0)[0]
         selfm = (ms, {'start': 'end', 'end': 'start'}[hinge] if w == -1 else hinge,
                  side if side == 'auto' else ({'a': 'b', 'b': 'a'}[side] if w != -1 else side), c)
+    sym_edit = ms == line_id and _on_center_line(pc0, line_id)
+    # a center line: the piece edited symmetrically about it, or a straight line the piece is a mirror image about
+    # (user 2026-11-11: Symmetric Edit off, one half opened by the whole amount, the corners 31.6 mm off mirroring)
+    on_axis = sym_edit or (side == 'auto' and _mirrors_about(pc0, line_id))
+    if on_axis:                                      # the center line kept where it is (below)
+        axis = None
+        if sym_edit:
+            if not pc0.get('mirror_axis'):
+                D._store_axis(pc0)
+            axis = list(pc0['mirror_axis'])
+        Pl = np.asarray(D.internal(pc0, line_id)['pts'], float)
+        H = Pl[0] if hinge == 'start' else Pl[-1]
+        dl = (Pl[-1] - Pl[0]) / np.linalg.norm(Pl[-1] - Pl[0])
     out = {name: _spread_one(spec, name, line_id, amount, mode, hinge, side, keep=[selfm[3]] if selfm else None)}
+    if on_axis:
+        _recenter(spec, name, axis, mode, amount, H, dl, Pl)
     if selfm:
         out[name]['more'] = [_spread_one(spec, name, selfm[0], amount, mode, selfm[1], selfm[2], keep=[selfm[3]])]
     if twin:
         out[twin[0]] = _spread_one(spec, twin[0], twin[1], amount, mode, twin[2], twin[3])
     return out
+
+
+def _on_center_line(pc, line_id, tol=0.5):
+    """True when internal line line_id lies on the center line of a piece edited symmetrically (within tol mm)."""
+    c, u = D.self_axis(pc)
+    P = np.asarray(D.internal(pc, line_id)['pts'], float) - np.asarray(c, float)
+    return bool(np.abs(P[:, 0] * u[1] - P[:, 1] * u[0]).max() <= tol)
+
+
+def _mirrors_about(pc, line_id, tol=0.5):
+    """True when internal line line_id is straight (within tol mm) and the piece's corners mirror onto its corners
+    across it (each within tol mm): the line is the piece's center line, Symmetric Edit on or not."""
+    P = np.asarray(D.internal(pc, line_id)['pts'], float)
+    if len(P) < 2 or np.linalg.norm(P[-1] - P[0]) < 1e-6:
+        return False
+    c, u = P[0], (P[-1] - P[0]) / np.linalg.norm(P[-1] - P[0])
+    V = P - c
+    if np.abs(V[:, 0] * u[1] - V[:, 1] * u[0]).max() > tol:
+        return False
+    return _asymmetry_about(D.corners(pc), c, u, worst=True) <= tol
+
+
+def _asymmetry_about(C, c, u, worst=False):
+    """How far corners C are from mirroring onto corners across the line through c along u (mm, summed or the
+    worst)."""
+    C = np.asarray(C, float)
+    V = C - c
+    M = c + 2.0 * (V @ u)[:, None] * u - V
+    d = np.linalg.norm(M[:, None, :] - C[None], axis=-1).min(1)
+    return float(d.max() if worst else d.sum())
+
+
+def _asymmetry(pc):
+    """How far the corners are from mirroring onto corners across the piece's center line (mm, summed)."""
+    C = D.corners(pc)
+    M = D.self_reflect(pc)(C)
+    return float(np.linalg.norm(M[:, None, :] - C[None], axis=-1).min(1).sum())
+
+
+def _recenter(spec, name, axis, mode, amount, H, dl, Pl):
+    """A spread along the center line moved one half by the whole amount; turn (flare) or shift (gathers) the whole
+    piece back by half of it, so both halves open alike about the center line, which stays where it was. Spread on
+    a piece edited symmetrically used to tilt it: one half turned about the hinge, the other still (user
+    2026-11-11)."""
+    if mode == 'hinge':
+        r = float(np.linalg.norm((Pl[-1] if np.allclose(H, Pl[0]) else Pl[0]) - H))
+        half = np.degrees(np.arcsin(0.5 * amount / r))         # a = 2 asin(amount / 2r): half of it
+        tries = [dict(deg=s * half, center=H) for s in (1.0, -1.0)]
+    else:
+        nrm = np.array([-dl[1], dl[0]])
+        tries = [dict(shift=tuple(s * 0.5 * amount * nrm), center=H) for s in (1.0, -1.0)]
+    best = None
+    for kw in tries:
+        sp = S.loads(S.dumps(spec))
+        D.transform_piece(sp, name, **kw)
+        if axis is not None:
+            D.piece(sp, name)['mirror_axis'] = list(axis)
+            err = _asymmetry(D.piece(sp, name))
+        else:                                        # about where the line was
+            err = _asymmetry_about(D.corners(D.piece(sp, name)), Pl[0], dl)
+        if best is None or err < best[0]:
+            best = (err, kw)
+    D.transform_piece(spec, name, **best[1])
+    if axis is not None:
+        D.piece(spec, name)['mirror_axis'] = list(axis)
 
 
 def seams_on_line(spec, name, line_id):

@@ -69,7 +69,7 @@ For a detailed explanation of how to add seams, see "Seams" in the feature descr
 
 The shape you see when you release is the shape the simulation starts from. Pieces that turn red are pieces that are inside the body or overlap other pieces (the reason is shown). You can start as is, but it starts more cleanly if you place them again or use the tidying tools in the **Placement** panel.
 
-To place a piece again, select it, return it to the flat pattern with **Back to Flat**, and place it again.
+To place a piece again, select it and place it again with **Place**. **Back to Flat** lays it flat where it is.
 
 <!-- screenshot: right after placing around the body -->
 
@@ -93,7 +93,7 @@ The time the calculation takes depends on the size of the garment and the comput
 
 ## 8. Fix it and dress again
 
-- **Fix the pattern**: drag corners and edges with **Edit Pattern** in the **Pattern** panel. The edited shape is carried onto the dressed garment right away (the cloth has not settled yet). If you then press Phase Sim, it calculates **continuing from the current shape** and settles into the edited pattern.
+- **Fix the pattern**: drag corners and edges with **Edit Pieces** in the **Pattern** panel. The edited shape is carried onto the dressed garment right away (the cloth has not settled yet). If you then press Phase Sim, it calculates **continuing from the current shape** and settles into the edited pattern.
 - **Pinch and fix the cloth by hand**: press **Live Sim** and the calculation keeps running until you stop it. When the cloth starts to move (after 10-15 seconds), pinch and pull the cloth with **Ctrl + left drag**. If cloth has pushed through other cloth, press **Alt** during the drag and the cloth you hold passes through other cloth. Press **Esc** and the shape where you stopped remains (the progress frames are not kept).
 - **Dress again from the start**: with nothing selected, press **Back to Placed** in the **Placement** panel (a confirmation appears), then press Phase Sim.
 

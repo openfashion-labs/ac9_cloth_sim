@@ -16,6 +16,8 @@ sidebar_position: 10
 - 止め方: ボタンが「**停止**」（Stop）に変わるので、もう一度押すか **Esc**。止めた所までのコマが残り、「**フェーズシム**」（Phase Sim）を押すとそこから続きます。計算中は他のボタンが灰色になります。
 - 制限: 始まらないときは、状態表示に `… did not start: <理由>` が残ります。途中で失敗したら、そこまでのコマが残り、止まった理由が出ます。
 
+<!-- screenshot: AC9 実行のパネル -->
+
 ## ライブシム（Live Sim）
 
 - 目的: 画面の形から、止めるまで回り続ける（布を手でつまんで直したい、設定を変えながら様子を見たいとき）。
@@ -58,6 +60,8 @@ sidebar_position: 10
 ## 結果と状態表示
 
 「**フェーズシム**」（Phase Sim）が終わると、Tool タブの「**AC9 服**」（AC9 Garment）の「**結果**」（Result）に、何の結果か（止めたものは `(stopped)`）、日時、コマ数と所要時間が出ます。
+
+<!-- screenshot: AC9 服のパネル（結果） -->
 
 - `Shape: Ctrl+S to keep it` は、結果の形がまだ .blend に保存されていない印です（保存すると `Shape: saved in the blend`）。保存していないファイルなら `Shape: file never saved`。
 - `Frames: on the timeline` は経過を再生できる印、「**手で直す**」（Fix by Hand）の後は `Frames: off (shape kept)`、コマを消した後（「**ライブシム**」（Live Sim）、「**キャッシュを削除**」（Delete Cache）など）は `Frames: dropped (shape kept)`。

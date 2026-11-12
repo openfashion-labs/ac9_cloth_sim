@@ -5,7 +5,7 @@ buttons in Lists > Fasteners (draw_list), the picked one in Properties > Tool, A
 piece's Closes onto in AC9 Piece (draw_closes_onto).
 
 Placing: Add (click the dressed garment or a piece of the flat pattern, one button a click, its hole with it), Line Up
-(N along the internal line picked in Edit Pattern, else the active piece's closure line, else one of its edges at an
+(N along the internal line picked in Edit Pieces, else the active piece's closure line, else one of its edges at an
 inset; the Redo panel sets the number and the spacing), From BOM (a button at each button stitch of a BOM).
 Each button's hole goes on the piece its piece closes onto (Closes onto: an eyedropper, by hand) by
 core/buttons.hole_for; a button with none is for show. One at a time: Set Hole (click the hole's place, another piece
@@ -20,6 +20,7 @@ import bpy
 import numpy as np
 
 from . import button_view as BV
+from . import units as U
 from . import pattern_view as PV
 from . import store
 from .core import button_shape as BS
@@ -233,7 +234,7 @@ class AC9_OT_SimButtonMove(_Click, bpy.types.Operator):
         if self.which == 'HOLE':
             # on its own piece too, away from the button (a cuff closing on itself, user 2026-10-22 b-3)
             if name == b['piece'] and np.linalg.norm(np.asarray(pt) - np.asarray(b['pt'], float)) < BT.SELF_MIN_MM:
-                self.report({'WARNING'}, rpt("On its own piece the hole goes {0:.0f} mm or more from the button", BT.SELF_MIN_MM))
+                self.report({'WARNING'}, rpt("On its own piece the hole goes {0} or more from the button", U.fmt(context, BT.SELF_MIN_MM)))
                 return None
             b['hole'] = {'piece': name, 'pt': pt}
             b['hole_by'] = 'hand'
@@ -252,20 +253,20 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     count: bpy.props.IntProperty(name="Count", default=6, min=1, max=40)
-    top: bpy.props.FloatProperty(name="From Top", default=30.0, min=0.0, max=1000.0, precision=1,
-                                 description="The first button this far down the line (mm)")
-    bottom: bpy.props.FloatProperty(name="From Bottom", default=50.0, min=0.0, max=1000.0, precision=1,
-                                    description="The last button this far above the line's end (mm; Spacing 0)")
-    spacing: bpy.props.FloatProperty(name="Spacing", default=0.0, min=0.0, max=500.0, precision=1,
-                                     description="Between buttons (mm); 0: spread from the top to the bottom")
+    top: bpy.props.FloatProperty(name="From Top", default=0.03, min=0.0, max=1.0, precision=1, subtype='DISTANCE', unit='LENGTH', 
+                                 description="The first button this far down the line")
+    bottom: bpy.props.FloatProperty(name="From Bottom", default=0.05, min=0.0, max=1.0, precision=1, subtype='DISTANCE', unit='LENGTH', 
+                                    description="The last button this far above the line's end (Spacing 0)")
+    spacing: bpy.props.FloatProperty(name="Spacing", default=0.0, min=0.0, max=0.5, precision=1, subtype='DISTANCE', unit='LENGTH', 
+                                     description="Between buttons; 0: spread from the top to the bottom")
     along: bpy.props.StringProperty(name="Along Line", default="",
                                     description="An internal line of the piece to line up on (the one picked in Edit "
                                                 "Pattern when Line Up is pressed)", options={'SKIP_SAVE'})
     edge: bpy.props.StringProperty(name="Edge", default="",
                                    description="An edge id of the piece to line up along instead of the closure line",
                                    options={'SKIP_SAVE'})     # not remembered: another piece has other edges
-    inset: bpy.props.FloatProperty(name="Inset", default=15.0, min=0.0, max=200.0, precision=1,
-                                   description="Along an edge: this far inside it (mm)")
+    inset: bpy.props.FloatProperty(name="Inset", default=0.015, min=0.0, max=0.2, precision=1, subtype='DISTANCE', unit='LENGTH', 
+                                   description="Along an edge: this far inside it")
     replace: bpy.props.BoolProperty(name="Replace", default=True,
                                     description="Remove the piece's buttons first")
     piece: bpy.props.StringProperty(options={'HIDDEN'})
@@ -276,7 +277,7 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
 
     def invoke(self, context, event):
         spec = store.get(context)[0]
-        # an internal line picked in Edit Pattern (a placket's center line): on it (user 2026-10-22)
+        # an internal line picked in Edit Pieces (a placket's center line): on it (user 2026-10-22)
         from . import draft_tool as DT
         ob = context.active_object
         name = ob.get(PV.PIECE_PROP) if ob is not None else None
@@ -307,7 +308,7 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
             line = line if line[0, 1] >= line[-1, 1] else line[::-1]
         elif self.edge:
             try:
-                line = BT.edge_line(sp, self.piece, self.edge, self.inset)
+                line = BT.edge_line(sp, self.piece, self.edge, self.inset * 1000.0)
             except StopIteration:
                 self.report({'WARNING'}, rpt("{0} has no edge {1}", self.piece, self.edge))
                 return {'CANCELLED'}
@@ -316,11 +317,11 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
             if line is None:
                 pc = S.piece_index(sp)[self.piece]
                 eid = max(pc['edges'], key=lambda e: S.polyline_len(np.asarray(e['pts'], float)))['id']
-                line = BT.edge_line(sp, self.piece, eid, self.inset)
+                line = BT.edge_line(sp, self.piece, eid, self.inset * 1000.0)
                 self.edge = eid
         if self.replace:
             sp['buttons'] = [b for b in sp.get('buttons', []) or [] if b.get('piece') != self.piece]
-        pts = BT.line_up(line, self.count, self.top, self.bottom, self.spacing)
+        pts = BT.line_up(line, self.count, self.top * 1000.0, self.bottom * 1000.0, self.spacing * 1000.0)   # fields: m
         no_hole = 0
         for q in pts:
             b = BT.add(sp, self.piece, q, context.scene.ac9_button_style, outlines=outlines)
@@ -330,7 +331,7 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
             context.scene.ac9_button_active = sp['buttons'][-1]['id']
             context.scene.ac9_button_sel = ''
         gap = float(np.linalg.norm(np.diff(np.asarray(pts), axis=0), axis=1).mean()) if len(pts) > 1 else 0.0
-        self.report({'INFO'}, rpt("{0} button(s) on {1}", len(pts), self.piece) + (rpt(", {0:.0f} mm apart", gap) if gap else "")
+        self.report({'INFO'}, rpt("{0} button(s) on {1}", len(pts), self.piece) + (rpt(", {0} apart", U.fmt(context, gap)) if gap else "")
                     + (rpt("; {0} without a hole", no_hole) if no_hole else ""))
         return {'FINISHED'}
 
@@ -817,6 +818,6 @@ def register():
 def unregister():
     for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)
-    for k in ('ac9_button_style', 'ac9_button_active'):
+    for k in ('ac9_button_style', 'ac9_button_active', 'ac9_button_sel'):
         if hasattr(bpy.types.Scene, k):
             delattr(bpy.types.Scene, k)

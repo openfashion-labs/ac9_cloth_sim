@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Slash and spread on the flat pattern (core/spread.py): with the Edit Pattern tool, S on an internal line drawn from
-outline to outline cuts the piece along it and opens it (the amount, flare / gathers and the hinge end in the Redo
-panel). Ctrl+K on such a line cuts the piece in two along it, sewn back by a new seam (core/cut.py)."""
+"""Slash and spread on the flat pattern (core/spread.py): with the Edit Pieces tool, the right-click menu on an internal
+line drawn from outline to outline (Slash and Spread) cuts the piece along it and opens it (a dialog asks the amount, flare / gathers, the hinge end and the side
+that moves first). Cut Along Line (the same menu) cuts the piece in two along it, sewn back by a new seam (core/cut.py)."""
 import bpy
 import numpy as np
 from .i18n import CTX, F9, rpt, tx
+from . import units as U
 
 from . import draft_tool as T
 from . import pattern_view as PV
@@ -21,8 +22,9 @@ class AC9_OT_SimSpread(bpy.types.Operator):
     bl_label = "Slash and Spread"
     bl_options = {'REGISTER', 'UNDO'}
 
-    amount: bpy.props.FloatProperty(name="Spread", default=30.0, translation_context=CTX, min=2.5, max=500.0, precision=1,
-                                    description="How far the cut opens (mm; at the far end for a flare)")
+    amount: bpy.props.FloatProperty(name="Spread", default=0.03, translation_context=CTX, min=0.0025, max=0.5, precision=1,
+                                    subtype='DISTANCE', unit='LENGTH',      # m
+                                    description="How far the cut opens (at the far end for a flare)")
     mode: bpy.props.EnumProperty(name="Open", items=[
         ('hinge', "Flare", "Turn one side about an end of the line: open at the other end only"),
         ('parallel', "Gathers", "Move one side square to the line: open the same at both ends")])
@@ -47,32 +49,58 @@ class AC9_OT_SimSpread(bpy.types.Operator):
         spec, outlines = store.get(context)
         h = T.pick(context, spec, outlines, PV.layout_matrix(context), event.mouse_region_x, event.mouse_region_y)
         if h and h[0] not in ('iline', 'iend'):
-            # S on a piece is Scale Piece (the next key of Edit Pattern; user 2026-10-26, Fable b-1)
+            # not on a line: nothing to cut (S is Scale only since user 2026-11-11; this runs from the right-click menu)
             return {'PASS_THROUGH'}
         if not h:
             self.report({'WARNING'}, "Point at an internal line drawn from outline to outline")
             return {'CANCELLED'}
         self.piece, self.line = h[1], h[2]
-        return self.execute(context)
+        # the numbers first, in a dialog (user 2026-11-11: the Redo panel opens closed)
+        T.dialog_aside(context, event, [self.piece], spec)   # beside the piece: the dialog does not cover the ghost
+        T.ghost_open(self)
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "amount")
+        col.prop(self, "mode")
+        sub = col.column()
+        sub.enabled = self.mode == 'hinge'
+        sub.prop(self, "hinge")
+        col.prop(self, "side")
+        spec, _ = store.get(context)
+        if spec is not None and self.piece:     # the opened piece, drawn on the pattern while the values change
+            T.draw_why(col, T.ghost(self, ("spread", self.piece, self.line, self.amount, self.mode, self.hinge, self.side),
+                                    lambda: self._spread(spec)[:2] + ([],)))
+
+    def _spread(self, spec):
+        """(the spread copy, pieces changed, what spread returned); a ValueError when it may not open so."""
+        sp = S.loads(S.dumps(spec))
+        out = SP.spread(sp, self.piece, self.line, self.amount * 1000.0, self.mode, self.hinge, self.side)
+        bad = D.problems(sp, list(out))
+        if bad:
+            raise ValueError(rpt("Not spread: ") + bad[0])
+        return sp, list(out), out
+
+    def cancel(self, context):
+        T.clear_ghost()
+        T.dialog_back(context)
 
     def execute(self, context):
+        T.clear_ghost()
+        T.dialog_back(context)
         if not self.piece:
             return {'CANCELLED'}
         spec, _ = store.get(context)
         old = S.loads(S.dumps(spec))
-        sp = S.loads(S.dumps(spec))
         try:
-            out = SP.spread(sp, self.piece, self.line, self.amount, self.mode, self.hinge, self.side)
+            sp, _names, out = self._spread(spec)
         except (ValueError, StopIteration) as exc:
             self.report({'WARNING'}, str(exc) or "the line is gone")
             return {'CANCELLED'}
-        bad = D.problems(sp, list(out))
-        if bad:
-            self.report({'WARNING'}, rpt("Not spread: ") + bad[0])
-            return {'CANCELLED'}
         msg = T.commit(context, sp, list(out), old_spec=old)     # the plain carry (core/spread.py)
         info = out[self.piece]
-        self.report({'INFO'}, rpt("Spread {0:.0f} mm ({1}, side {2} moved, +{3:.0f} mm2)", self.amount, 'flare' if self.mode == 'hinge' else 'gathers', info['side'].upper(), info['area_added'])
+        self.report({'INFO'}, rpt("Spread {0} ({1}, side {2} moved, +{3:.0f} mm2)", U.fmt(context, self.amount * 1000.0), 'flare' if self.mode == 'hinge' else 'gathers', info['side'].upper(), info['area_added'])
                     + (rpt("; its mirror line too") if info.get('more') else "")
                     + (rpt("; {0}", msg) if msg else "") + rpt(F9))
         return {'FINISHED'}

@@ -39,13 +39,13 @@ Blender's standard Options or Workspace panels may appear first. Collapse them a
 
 AC9's tools line up at the end of the Object Mode tool column. Long-press to show the other tools in the same family (▾).
 
-`Transform Pattern ｜ Edit Pattern ｜ Draw Piece ▾ Rectangle Piece ▾ Ellipse Piece ｜ Internal Line ▾ Internal Rectangle ▾ Internal Ellipse ｜ Edit Seams ▾ Add Seam ▾ Add Seam (M:N) ── Edit Measure ▾ Tape Around ▾ Tape Along ▾ Tape Straight ｜ Place`
+`Whole Pieces ｜ Edit Pieces ｜ Draw Piece ▾ Rectangle Piece ▾ Ellipse Piece ｜ Internal Line ▾ Internal Rectangle ▾ Internal Ellipse ｜ Edit Seams ▾ Add Seam ▾ Add Seam (M:N) ── Edit Measure ▾ Tape Around ▾ Tape Along ▾ Tape Straight ｜ Place`
 
 - The pattern tools before the divider appear only when **Pattern Tools** in the **Setup** panel is on. When you load or draw a pattern, it turns on automatically, once per file (if you turn it off yourself, it stays off). It also turns on automatically when you press a tool button in another panel.
-- When you hold a tool, the tool options row shows "Works on: …" (what the tool works on) and that tool's keys. With **Edit Pattern**, only the keys that work on what is under the cursor are shown (all the keys are in **Keys** at the bottom of the **Pattern** panel). If you put the cursor over something the tool can't work on, a yellow hint appears next to the cursor.
+- When you hold a tool, the tool options row shows "Works on: …" (what the tool works on) and that tool's keys. With **Edit Pieces**, only the keys that work on what is under the cursor are shown (all the keys are in **Keys** at the bottom of the **Pattern** panel). If you put the cursor over something the tool can't work on, a yellow hint appears next to the cursor.
 - A tool changes what it does depending on what you click (a pattern, the body, a dressed garment, and so on).
 - In the pattern view in the middle of the **Work Screen**, the tool column shows only AC9's tools and Blender's Select, Move, Rotate, and Annotate (the other tools are just hidden; their keys still work).
-- **Right-click**: in the middle of an operation, it cancels. When nothing is happening, it opens a menu for what is under the cursor (for **Transform Pattern**, **Edit Pattern**, **Edit Seams**, **Place**, **Edit Measure**, and on a dressed garment). The thing you right-click is selected first, and the menu items do the same as the keys and buttons.
+- **Right-click**: in the middle of an operation, it cancels. When nothing is happening, it opens a menu for what is under the cursor (for **Whole Pieces**, **Edit Pieces**, **Edit Seams**, **Place**, **Edit Measure**, and on a dressed garment). The thing you right-click is selected first, and the menu items do the same as the keys and buttons.
 - For the sidebar's tool buttons, pressing the one that is already pressed returns you to **Select Box** (Blender's ordinary selection).
 - While you hold an AC9 tool, **X** and **Delete** remove the corner, notch, or internal line end under the cursor. If there isn't one, they remove the selected internal line, seam, or measurement. Pieces are removed after a confirmation. The objects themselves are not deleted.
 

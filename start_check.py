@@ -31,8 +31,9 @@ def read_screen(context, spec, g, mode):
                 out[n] = ('placed', hs, "")
             else:                                   # the half a pair's Mirror modifier shows
                 F_, T_, W_ = hs
-                cx = PLV.center_x(spec)
-                out[n] = ('mirrored', (F_, T_, W_ * np.array([-1.0, 1.0, 1.0]) + np.array([2.0 * cx, 0.0, 0.0])), "")
+                from .core import spec as S_
+                pl_ = S_.pair_plane(spec, n)
+                out[n] = ('mirrored', (F_, T_, S_.mirror_points(W_, pl_, S_.mirror_center(spec, pl_, n))), "")
         elif src == 'result':
             if mode == 'START':
                 out[n] = ('rule', None, "started again from the placement")

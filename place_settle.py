@@ -11,11 +11,14 @@ The piece moves alone; its sewn points, the body and the other cloth stay. Repea
      a vertex on the other side, or closer than GAP, goes along that piece's normal to GAP on its side. A vertex whose
      nearest point is at that piece's edge (outside its shadow) is left.
   S3 edge lengths back: each edge into LEN_BAND of its length on the pattern, the sewn points held.
+     Moving vertex paths are clipped before crossing static other cloth. Initial contacts may separate;
+     this does not cover reverse vertex/face, edge/edge, coplanar motion, or existing intersections.
 Then measured (the body, crossings with the other cloth, stretch, squashed triangles): what is left is marked red on
 the object and said in one line, the shape is kept (user: a check that only refuses is of little use).
 
 Not solved: two pieces that both move (the two fronts), a folded piece whose partner's edge should go between its
 two layers, the deep body. Those stay red."""
+from . import prepare_build as PB
 import json
 
 import bpy
@@ -71,6 +74,81 @@ def _crossing_tris(Y, T, others, fixed):
     return np.array(sorted(hit), np.int64)
 
 
+def _step_obstacles(others, bvh_factory=None):
+    """Static cloth triangles for free-vertex path tests, in millimeters."""
+    triangles = [np.asarray(X, float)[np.asarray(T, int)] for X, T in others if len(T)]
+    if not triangles:
+        return None
+    q = np.concatenate(triangles)
+    normal = np.cross(q[:, 1] - q[:, 0], q[:, 2] - q[:, 0])
+    norm = np.linalg.norm(normal, axis=1)
+    good = norm > 0
+    q, normal, norm = q[good], normal[good], norm[good]
+    if not len(q):
+        return None
+    bvh = bvh_factory(q.reshape(-1, 3), np.arange(q.size // 3).reshape(-1, 3)) if bvh_factory else None
+    # Conservative broad-phase padding for BVH/Vector float32 coordinates.
+    bound = float(np.max(np.abs(q)))
+    padding = 4 * float(np.spacing(np.float32(max(1.0, bound))))
+    rounded = q.astype(np.float32)
+    collapsed = np.flatnonzero(np.linalg.norm(np.cross(rounded[:, 1] - rounded[:, 0],
+                                                       rounded[:, 2] - rounded[:, 0]), axis=1) == 0)
+    return q, normal, norm, q.min(1), q.max(1), bvh, padding, collapsed
+
+
+def _clip_vertex_steps(Y, step, obstacles):
+    """Clip free-vertex S3 paths before static cloth, allowing initial contacts to separate.
+
+    Tests every intersected face's segment parameter, using the original
+    float64 arrays. Only a face already touching the start is skipped; a
+    separate nearby layer still blocks the path. Does not resolve existing
+    intersections, reverse vertex/face, edge/edge, or coplanar motion.
+    """
+    if obstacles is None:
+        return step
+    q, normals, norms, lo, hi, bvh, padding, collapsed = obstacles
+    out = step.copy()
+    for k in np.flatnonzero(np.linalg.norm(step, axis=1) > 0):
+        p, move = Y[k], step[k]
+        end = p + move
+        length = float(np.linalg.norm(move))
+        scale = max(1.0, float(np.max(np.abs(p))), float(np.max(np.abs(end))))
+        eps = 8 * np.finfo(float).eps * scale
+        if bvh is None:
+            ids = np.arange(len(q))
+        else:
+            midpoint = (p + end) * .5
+            radius = length * .5 + padding + 4 * float(np.spacing(np.float32(max(1.0, scale))))
+            ids = np.array(sorted({int(h[2]) for h in bvh.find_nearest_range(Vector(midpoint), radius)} |
+                                  set(collapsed.tolist())), dtype=int)
+        ids = ids[((lo[ids] <= np.maximum(p, end) + eps) &
+                   (hi[ids] >= np.minimum(p, end) - eps)).all(1)]
+        if not len(ids):
+            continue
+        tri, n, nl = q[ids], normals[ids], norms[ids]
+        start = np.einsum('ij,ij->i', p - tri[:, 0], n)
+        change = n @ move
+        active = (np.abs(start) > eps * nl) & (np.abs(change) > eps * nl)
+        t = np.divide(-start, change, out=np.full(len(ids), np.inf), where=active)
+        valid = active & (t > 0) & (t <= 1)
+        if not valid.any():
+            continue
+        tri, n, nl, t = tri[valid], n[valid], nl[valid], t[valid]
+        hit = p + t[:, None] * move
+        nn = nl ** 2
+        a = np.einsum('ij,ij->i', np.cross(tri[:, 1] - hit, tri[:, 2] - hit), n) / nn
+        b = np.einsum('ij,ij->i', np.cross(tri[:, 2] - hit, tri[:, 0] - hit), n) / nn
+        c = 1 - a - b
+        longest = np.max(np.linalg.norm(tri - np.roll(tri, 1, axis=1), axis=2), axis=1)
+        bary_eps = eps * longest / nl
+        inside = np.minimum(np.minimum(a, b), c) >= -bary_eps
+        if inside.any():
+            # The numerical surface margin matches Outside's 1e-4 mm tolerance.
+            allowed = max(0.0, float(t[inside].min()) - 1e-4 / length)
+            out[k] *= allowed
+    return out
+
+
 def settle(Y, V, T, fixed, body, partners, others):
     """Y (n, 3) world mm of the piece, V (n, 2) its pattern points, T its triangles, fixed (n,) its sewn points; body
     a BVH in metres (dress.body_bvh); partners [(X, T)] of the pieces it is sewn to; others [(X, T)] all the other
@@ -83,6 +161,7 @@ def settle(Y, V, T, fixed, body, partners, others):
     L0 = np.linalg.norm(V[E[:, 0]] - V[E[:, 1]], axis=1)
     free = ~np.asarray(fixed, bool)
     pb = [(_bvh_mm(X, Tp), _boundary_verts(np.asarray(Tp), len(X)), np.asarray(X, float)) for X, Tp in partners if len(Tp)]
+    obstacles = _step_obstacles(others, _bvh_mm)
     # the side of each partner: where most of the piece's vertices near it are now
     sides = []
     for bv, _bd, _X in pb:
@@ -138,6 +217,7 @@ def settle(Y, V, T, fixed, body, partners, others):
             np.add.at(cnt, E[:, 1], 1)
             step = acc / np.maximum(cnt, 1)[:, None]
             step[~free] = 0.0
+            step = _clip_vertex_steps(Y, step, obstacles)
             Y += step
     num = measure(Y, V, T, fixed, body, others)
     num.update(pushed_body=moved_body, pushed_side=moved_side, deep=int(deep.sum()))
@@ -265,7 +345,8 @@ class AC9_OT_SimSettle(bpy.types.Operator):
             return False
         return True
 
-    def execute(self, context):
+    @PB.prepared_consumer
+    def execute(self, context, *, preparation=None):
         from . import place_seam as PS
         from . import placement as PL
         spec, _ = store.get(context)
@@ -274,7 +355,7 @@ class AC9_OT_SimSettle(bpy.types.Operator):
         names = list(dict.fromkeys(n if obs.get(n) is not None and obs[n].get(PLV.PROP) == n else lead.get(n)
                                    for n in PL.lead_only(spec, PL.selected_pieces(context)) if n in obs))
         names = [n for n in names if n]
-        got, why = PS.shapes(context, spec)
+        got, why = PS.shapes(context, spec, preparation=preparation)
         if got is None:
             self.report({'WARNING'}, why)
             return {'CANCELLED'}
@@ -301,7 +382,7 @@ class AC9_OT_SimSettle(bpy.types.Operator):
             PLV.invalidate_shown()
             ok_any = True
             self.report({'INFO'}, report(n, num, left))
-            PS.mark_on_next_run(spec, [n])
+            PS.mark_on_next_run(spec, [n], preparation=preparation)
         return {'FINISHED'} if ok_any else {'CANCELLED'}
 
 

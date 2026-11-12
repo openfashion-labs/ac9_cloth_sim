@@ -245,6 +245,8 @@ def resolve(value, panel=None, environ=None):
     out['weight_gsm'], out['bending_uNm'] = float(out['weight_gsm']), float(out['bending_uNm'])
     if panel is not None and getattr(panel, 'fast_live', False):
         out['fast_live'] = True
+    if panel is not None and getattr(panel, 'native_three', False):
+        out['native_three'] = True
     out['name'] = name
     out['from_env'] = sorted(env)
     return out

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
 from .i18n import CTX, tx, wrap
+from . import units as U
 
 import bpy
 
@@ -33,7 +34,9 @@ class AC9_UL_SimSeams(bpy.types.UIList):
         sub = row.row(align=True)
         sub.ui_units_x = 3.4
         sub.alignment = 'RIGHT'
-        sub.label(text=tx("{0:.0f}/{1:.0f}", item.len_a, item.len_b) + (tx(" {0:+.0f}", d) if abs(d) >= 1 else ""))
+        # in the scene's unit, one digit fewer than the pattern's boxes (mm 0, cm 1, in 2): the row is narrow
+        sub.label(text=f"{U.num(context, item.len_a, body=True)}/{U.num(context, item.len_b, body=True)}"
+                  + (f" {U.num(context, d, signed=True, body=True)}" if abs(d) >= 1 else ""))
 
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)
@@ -98,9 +101,22 @@ def draw_run(layout, context, status=True):
     row = col.row(align=True)
     row.prop(context.scene.ac9_cloth_sim, "live_gravity", text="Gravity")
     row.prop(context.scene.ac9_cloth_sim, "local_gravity", text="Gravity")
+    # the floor at Z = 0 for every run (user 2026-11-10): beside the runs it changes, off while one runs (read at
+    # its start)
+    row = layout.row()
+    row.enabled = run is None
+    row.prop(context.scene.ac9_cloth_sim, "floor", text="Floor (Z = 0)")
     fast = layout.column(align=True)
     fast.enabled = run is None
-    fast.prop(context.scene.ac9_cloth_sim, "fast_live", text="AC9 Fast Live (Experimental)")
+    choice = fast.row()
+    choice.enabled = not context.scene.ac9_cloth_sim.native_three or context.scene.ac9_cloth_sim.fast_live
+    choice.prop(context.scene.ac9_cloth_sim, "fast_live", text="AC9 Fast Live (Test)")
+    choice = fast.row()
+    choice.enabled = not context.scene.ac9_cloth_sim.fast_live or context.scene.ac9_cloth_sim.native_three
+    choice.prop(context.scene.ac9_cloth_sim, "native_three", text="AC9 Native 3 (Test)")
+    if context.scene.ac9_cloth_sim.native_three:
+        fast.label(text="Static body; no Piece Layer")
+        fast.label(text="Restarts from shown shape")
     if context.scene.ac9_cloth_sim.fast_live:
         fast.label(text="2 substeps + a correction")
         fast.label(text="Static body")
@@ -131,7 +147,7 @@ def draw_run(layout, context, status=True):
     head.label(text="Live Options")
     if body is not None:
         row = body.row(align=True)
-        row.prop(context.scene.ac9_cloth_sim, "stroke_radius", text="Smooth")
+        row.prop(context.scene.ac9_cloth_sim, "stroke_radius_len", text="Smooth")
         row.prop(context.scene.ac9_cloth_sim, "stroke_strength", text="Strength")
     if status and spec is not None:
         draw_run_status(layout, context, spec)
@@ -248,6 +264,7 @@ class AC9_PT_SimMain(bpy.types.Panel):
             for entry in warning.splitlines():
                 for i, line in enumerate(wrap(entry, _wrap_width(context))):
                     box.label(text=line, icon='ERROR' if i == 0 else 'NONE')
+        draw_units(layout, context)
         # the garment's files (user 2026-10-21: New Garment and the DXF in and out are Setup's; SVG in 2026-10-31)
         layout.operator("ac9_cloth_sim.new_pattern", icon='FILE_NEW')
         row = layout.row(align=True)
@@ -279,6 +296,17 @@ class AC9_PT_SimMain(bpy.types.Panel):
         draw_garments(layout, spec)
         draw_overlay_switch(layout.row(align=True), props)
         layout.operator("ac9_cloth_sim.refresh", icon='FILE_REFRESH')
+
+
+def draw_units(layout, context):
+    """Units: mm / cm / m / in, one pressed: every length on the screen in it (user 2026-11-11). The particle
+    distance stays mm."""
+    from . import units
+    row = layout.row(align=True)
+    row.label(text="Units")
+    cur = units.current(context)
+    for key, label, _sy, _lu in units.CHOICES:
+        row.operator("ac9_cloth_sim.set_units", text=label, depress=(cur == key)).unit = key
 
 
 def draw_garments(layout, spec):
@@ -341,9 +369,7 @@ class AC9_PT_SimDraft(bpy.types.Panel):
         layout = self.layout
         # the flat pattern view is the Work Screen's (user 2026-10-21: the Pattern View button is no longer needed);
         # New Garment and the DXF are in Setup
-        row = layout.row(align=True)                    # lengths as the scene shows them (user 2026-10-20: mm)
-        if context.scene.unit_settings.system == 'METRIC':
-            row.prop(context.scene.unit_settings, "length_unit", text="")
+        row = layout.row(align=True)        # the length unit is Setup's (user 2026-11-11); the snapping stays here
         from . import shape_tool as ST
         ST.draw_snap_settings(context, row)
         # the toolbar's groups opened up, by what they make (user 2026-10-21); a tool's button shows pressed while it
@@ -351,8 +377,8 @@ class AC9_PT_SimDraft(bpy.types.Panel):
         from . import toolbar as TB
         spec, _ = store.get(context)
         row = layout.row(align=True)        # the two pattern tools (user 2026-10-28, DECISIONS cloth-sim-transform-edit-split)
-        TB.tool_button(row, context, "ac9_cloth_sim.transform_pattern_tool", "Transform", 'ORIENTATION_GLOBAL')
-        TB.tool_button(row, context, "ac9_cloth_sim.edit_pattern_tool", "Edit Pattern", 'RESTRICT_SELECT_OFF')
+        TB.tool_button(row, context, "ac9_cloth_sim.transform_pattern_tool", "Whole Pieces", 'ORIENTATION_GLOBAL')
+        TB.tool_button(row, context, "ac9_cloth_sim.edit_pattern_tool", "Edit Pieces", 'RESTRICT_SELECT_OFF')
         # Update BOM Seams is a labeled button in Setup; manual regrouping remains available through F3.
         for title, tools in (
                 ("Piece", (("draw_piece_tool", "Draw", 'MESH_DATA'), ("rect_tool", "Rectangle", 'MESH_PLANE'),
@@ -377,17 +403,14 @@ class AC9_PT_SimDraft(bpy.types.Panel):
         col.label(text="Selected Pieces")
         row = col.row(align=True)
         row.operator("ac9_cloth_sim.mirror_copy", text="Mirror Copy", icon='MOD_MIRROR')
-        row.operator("ac9_cloth_sim.match_twin", text="Mirror to Pair", icon='ARROW_LEFTRIGHT')
+        # (Mirror to Pair, a twin made the mirror image of the other again, was taken out: deleting one and Mirror
+        # Copy of the other does it, user 2026-11-11)
         # the name: the Tool tab's AC9 Piece field and F2 (user OK 2026-10-25: one place to look, not three)
         row = col.row(align=True)
         row.operator("ac9_cloth_sim.duplicate_pieces", text="Duplicate", icon='DUPLICATE')     # user 2026-10-26
         row.operator("ac9_cloth_sim.delete_piece", text="Delete", icon='TRASH')
-        # the dressed shape of one side given to the other (user 2026-11-04): shown once there is a result
-        if spec is not None:
-            from . import dress as DR_
-            g_ = bpy.data.objects.get(DR_.garment_name(spec))
-            if g_ is not None and DR_.has_result(g_):
-                col.operator("ac9_cloth_sim.mirror_result", text="Mirror 3D to Pair", icon='MOD_MIRROR')
+        # Mirror 3D to Pair (the dressed shape of one side given to the other) is in the Tool tab's AC9 Piece now: it
+        # sat with the 2D tools here and read as one of them (user 2026-11-11, REVIEW_fable_flat_turn_snap_mirror_ui §3)
         # Symmetric Edit is a piece's setting: the Tool tab's AC9 Piece (user 2026-10-21)
         apart = twins_apart(spec) if spec else []
         if apart:
@@ -396,13 +419,13 @@ class AC9_PT_SimDraft(bpy.types.Panel):
             box.label(text=tx("{0} left / right pair(s) no longer mirror images", len(apart)), icon='ERROR')
             for a, b in apart[:3]:
                 box.label(text=tx("    {0}  /  {1}", a, b))
-            box.label(text="Select one and Mirror to Pair to make them match")
+            box.label(text="Delete one and Mirror Copy the other to make them match")
         draw_keys(layout, context)
         # Simulate is in the Run panel (user 2026-10-14: one place for the run buttons)
 
 
 def draw_keys(layout, context):
-    """Every key of Edit Pattern, closed until opened: the tool's header shows only the keys for what is under the
+    """Every key of Edit Pieces, closed until opened: the tool's header shows only the keys for what is under the
     cursor (user 2026-10-23, Fable review REVIEW_fable_tool_hints_2026-10-23)."""
     from . import draft_tool as DT
     head, body = layout.panel("ac9_cloth_sim_pattern_keys", default_closed=True)
@@ -411,7 +434,7 @@ def draw_keys(layout, context):
         return
     n = max(12, _wrap_width(context) - 12)
     col = body.column(align=True)
-    for title, keys in (("Transform Pattern", DT.TRANSFORM_KEYS), ("Edit Pattern", DT.ALL_KEYS)):
+    for title, keys in (("Whole Pieces", DT.TRANSFORM_KEYS), ("Edit Pieces", DT.ALL_KEYS)):
         col.label(text=tx(title))
         for key, what in keys:
             for i, ln in enumerate(wrap(tx(what), n)):
@@ -478,7 +501,7 @@ def draw_seam_attrs(layout, context, spec, act, viewport=True):
                    f"{sd['to'][0]} {sd['to'][1]:.2f} ({arrow})")
         layout.label(text=txt)
         r = layout.row(align=True)
-        r.label(text=tx("    {0:.1f} mm", L))
+        r.label(text="    " + U.fmt(context, L))
         if viewport:
             r.operator("ac9_cloth_sim.seam_move_side", text=tx("Move {0}", k.upper()), icon='FORWARD').side = k
     _seam_buttons(layout, spec, act)
@@ -730,9 +753,15 @@ class AC9_PT_SimPlacement(bpy.types.Panel):
         # no Fold button (user 2026-10-24): the Tool tab's Fold Angle on a line, a seam's Fold (deg), fold the placed shape
         # a small piece carried onto the pieces it is sewn to, its shape kept as far as it goes (user 2026-10-22)
         row = layout.row(align=True)
+        row.operator_context = 'INVOKE_DEFAULT'
         row.operator("ac9_cloth_sim.move_to_seam", text="Part to Seam", icon='SNAP_EDGE')
         # a narrow band laid on the edge it is sewn to, for Live (user 2026-10-22)
         row.operator("ac9_cloth_sim.lay_on_edge", text="Band on Edge", icon='MOD_CURVE')
+        if show_hints(context):
+            col = layout.column(align=True)
+            col.label(text=tx("Choose targets, then Enter"), icon='INFO')
+            col.label(text=tx("Shift-click: add/remove"), icon='BLANK1')
+            col.label(text=tx("A: all targets; Esc: cancel"), icon='BLANK1')
         # the piece on top of the ones it overlaps, only when asked (user 2026-10-25)
         layout.operator("ac9_cloth_sim.move_outside", text="Move Outside", icon='SELECT_EXTEND')
         draw_hint(layout, context, tx("Pick pieces, press on a guide, drag, release, then Phase Sim"))
@@ -750,7 +779,7 @@ class AC9_PT_SimPlacement(bpy.types.Panel):
         col = layout.column(align=True)
         col.operator("ac9_cloth_sim.reset", text="Back to Placed", icon='LOOP_BACK')
         col.operator("ac9_cloth_sim.reset_placed", text="Back to Guide", icon='LOOP_BACK')
-        col.operator("ac9_cloth_sim.clear_placement", text="Back to Flat", icon='X')
+        col.operator("ac9_cloth_sim.clear_placement", text="Back to Flat", icon='MESH_PLANE')
         if dressed:
             draw_hint(layout, context, tx("Simulated: pick pieces (2D or on the garment), Move by Hand"))
         elif nob:
@@ -764,24 +793,10 @@ class AC9_PT_SimPlacement(bpy.types.Panel):
             p = PLV.pose_of(ob) or {'loc': [0.0] * 3, 'rot': [0.0] * 3}
             col = layout.column(align=True)
             col.label(text=ob[PLV.PROP] + (tx(" + {0}", ob[PLV.TWIN_PROP]) if ob.get(PLV.TWIN_PROP) else ""))
-            col.label(text=tx("Move ") + "  ".join(tx("{0:+.1f}", v) for v in p['loc']) + tx(" mm"))
+            col.label(text=tx("Move ") + "  ".join(U.num(context, v, signed=True) for v in p['loc']) + " " + U.unit(context)[1])
             col.label(text=tx("Turn ") + "  ".join(tx("{0:+.1f}", v) for v in p['rot']) + tx(" deg"))
-            row = layout.row(align=True)
-            row.operator("ac9_cloth_sim.set_pose", text="Type Move", icon='OBJECT_ORIGIN')
-            row.operator("ac9_cloth_sim.mirror_pose", text="Mirror Pair", icon='MOD_MIRROR')
-        # left / right: which kind of pair the selected piece is in, and the buttons named for what they do now
-        from . import placement as PL_
-        sel = PL_.selected_pieces(context)
-        st = lr_state(spec, sel[0]) if len(sel) == 1 else None
-        if st is not None:
-            if st[0][0] is not None:
-                layout.label(text=st[0][0], icon='MOD_MIRROR')
-            draw_hint(layout, context, st[0][1], icon='BLANK1' if st[0][0] is not None else 'INFO')
-        row = layout.row(align=True)
-        row.operator("ac9_cloth_sim.unlink_pair", text=tx("Link") if st and st[1] == 'unlinked' else tx("Unlink"),
-                     icon='LINKED' if st and st[1] == 'unlinked' else 'UNLINKED')
-        row.operator("ac9_cloth_sim.pair", text="Unpair" if st and st[1] == 'paired' else "Pair", icon='MOD_MIRROR')
-        layout.operator("ac9_cloth_sim.swap_sides", text="Swap Sides", icon='ARROW_LEFTRIGHT')
+            layout.operator("ac9_cloth_sim.set_pose", text="Type Move", icon='OBJECT_ORIGIN')
+        # the pair's state and buttons: Tool tab > AC9 Piece > Pair (user 2026-11-11, REVIEW_fable_pair_ui b-1)
 
 
 def lr_state(spec, name):
@@ -800,7 +815,7 @@ def lr_state(spec, name):
     for p in spec.get('pairs', []):
         if name in p:
             o = p[1] if name == p[0] else p[0]
-            return ([tx("Paired with {0}", o), tx("Mirror Pair copies a move")], 'paired')
+            return ([tx("Paired with {0}", o), tx("Mirror Placement copies a move")], 'paired')
     return ([None, tx("No pair: select two pieces, then Pair")], 'none')
 
 
@@ -893,8 +908,8 @@ def draw_piece_list(layout, spec, select=False):
     """The current garment's pieces with their four state buttons. select: the name is a button that selects the
     piece in the viewport (the Properties editor then shows it)."""
     from .core import spec as S
-    # the Off (All) pieces as one line: a BOM keeps every piece of the file (a jacket's 133, 8 on), and 133
-    # rows took 1.4 ms a redraw; they come back by selecting them (wire) in the viewport -> Active
+    # the Off (All) pieces folded into one line: a BOM keeps every piece of the file (a jacket's 133, 8 on), and
+    # 133 rows took 1.4 ms a redraw; opened, they list with their state buttons
     n_off = sum(1 for pc in spec['pieces'] if S.piece_state(pc) == 'off_all')
     # a piece object deleted with Blender's own X (the pattern still has it; user 2026-10-21): marked, Restore
     from . import draft_tool as DT
@@ -922,8 +937,22 @@ def draw_piece_list(layout, spec, select=False):
             r.alert = pc['name'] in gone
             r.label(text=(pc.get('label') or pc['name'])[:16])
             states(r)
-    if n_off:
-        col.label(text=tx("{0} Off All (click one to bring back)", n_off), icon=STATE_ICON['off_all'])
+    if n_off and hasattr(layout, 'panel'):
+        # folded by default: a BOM keeps every piece of the file (a jacket's 125 unused ones); opened, each piece
+        # has its state buttons like the rows above (user 2026-11-11: the old line said "click one" but was a label)
+        head, body = layout.panel("ac9_cloth_sim_off_all_pieces", default_closed=True)
+        head.label(text=tx("{0} Off All", n_off), icon=STATE_ICON['off_all'])
+        if body is not None:
+            bc = body.column(align=True)
+            for pc in spec['pieces']:
+                if S.piece_state(pc) != 'off_all':
+                    continue
+                r = bc.row(align=True)
+                r.alert = pc['name'] in gone
+                r.label(text=(pc.get('label') or pc['name'])[:16])
+                for st in S.PIECE_STATES:
+                    op = r.operator("ac9_cloth_sim.piece_state", text="", icon=STATE_ICON[st], depress=(st == 'off_all'))
+                    op.state, op.scope, op.piece = st, 'PIECE', pc['name']
     if gone:
         col.operator("ac9_cloth_sim.restore_pieces", text=tx("Restore {0} Deleted Object(s)", len(gone)), icon='ERROR')
 
@@ -943,6 +972,10 @@ def draw_missing_pieces(layout, context, spec):
     for ln in wrap(', '.join(gone[:6]) + (' …' if len(gone) > 6 else ''), 36):
         box.label(text=ln)
     box.operator("ac9_cloth_sim.restore_pieces", text=tx("Restore {0} Deleted Object(s)", len(gone)), icon='FILE_REFRESH')
+    # how to delete a piece (user 2026-11-12: it happens with Blender's own tools active, where the right-click menu
+    # has no Delete Piece; an AC9 tool's X deletes the piece)
+    for key in ("Delete pieces with X in an AC9 tool", "(Transform Pattern, Edit Pattern, ...)", "X in Select Box, Move, ... deletes", "only the object"):
+        box.label(text=tx(key))
 
 
 def draw_fabric(layout, context, spec):

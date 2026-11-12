@@ -17,7 +17,7 @@ Each piece has four states (in the **Pieces** tab of **Lists**, or in **State** 
 - **Freeze** and **Off Pattern** hold the piece still in every step, including the sewing steps.
 - The state buttons switch a left and right pair together (a mirrored pair, and a pair you made with **Pair**). To change just one side, Ctrl+click. A piece brought back from **Off All** is lined up with the mirrored shape of the side that stayed.
 - **Invert Selection** in the **State** row reselects the other pieces of this garment (the steps for "garment groups").
-- Pieces set to **Off All** show only as a count in the list. To bring them back, select the gray piece with **Edit Pattern** and set it to **Active**.
+- Pieces set to **Off All** show only as a count in the list. To bring them back, select the gray piece with **Edit Pieces** and set it to **Active**.
 - The garment row in the **Pieces** tab: the filled circle marks the current garment, `10 on 2 fz 1 off` is the count per state, and the three icons on the right switch them all at once. A piece row is the name (press it to select) and four state buttons. A red row is a piece whose object alone was deleted with Blender's X, and you can bring it back with **Restore N Deleted Object(s)**.
 
 ## Layering

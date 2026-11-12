@@ -11,6 +11,7 @@ Where things are kept:
 - in the spec: spec['measure'] = {'targets': {key: mm}, 'pattern': [{'name', 'a': {...}, 'b': {...}}]} -- the
   finished sizes the user typed in, and the pattern lengths (outline points by edge and t, so they follow edits).
 """
+import hashlib
 import json
 from .i18n import CTX, rpt, tx
 
@@ -27,6 +28,7 @@ from . import dress
 from . import pattern_view as PV
 from . import placement
 from . import store
+from . import units
 from . import toolbar as TB
 from . import view_visibility as VV
 from .core import body_axes as BA
@@ -48,11 +50,21 @@ _ui = {'hot': None, 'preview': None, 'preview_label': None,
 
 
 def _cm(v):
-    return "—" if v is None else f"{v / 10.0:.1f}"
+    """A body length (mm) as a number in the scene's length unit (the tables; their unit is said once). The name is
+    from when they were always cm (user 2026-11-11: one unit everywhere)."""
+    from . import units
+    return "—" if v is None else units.num(bpy.context, v, body=True)
 
 
 def _signed_cm(v):
-    return "—" if v is None else f"{v / 10.0:+.1f}"
+    from . import units
+    return "—" if v is None else units.num(bpy.context, v, signed=True, body=True)
+
+
+def _len(v):
+    """A body length (mm) with the unit: "45.2 cm", "452 mm", "17.80 in"."""
+    from . import units
+    return units.fmt(bpy.context, v, body=True)
 
 
 # ---------------------------------------------------------------- storage
@@ -102,9 +114,11 @@ def _dir_world(ob, d):
 class BodyCache:
     """The body mesh (world mm) with its guides, built once per tool run."""
 
-    def __init__(self, context, ob):
-        co, tri = placement.body_arrays(context, ob)
+    def __init__(self, context, ob, co=None, tri=None, geo=None):
+        if co is None:
+            co, tri = placement.body_arrays(context, ob)
         self.ob = ob
+        self.geo = geo or geo_key(ob, co, tri)
         self.body = BA.Body(co, tri)
         self.gd, self.m = BA.guides(self.body)
         self._planes = None
@@ -120,14 +134,61 @@ class BodyCache:
 _cache = {'key': None, 'cache': None}
 
 
-def body_cache(context, ob, fresh=False):
-    """The body's BodyCache, kept while the body is the same object with the same mesh and place (2026-10-21: it was
-    built on every press, 0.9 s on a 31k-vertex body). fresh: build it again (Measure Body)."""
-    key = (ob.name, ob.data.as_pointer(), len(ob.data.vertices), tuple(round(x, 6) for r in ob.matrix_world for x in r),
-           ob.data.shape_keys.key_blocks.active.value if ob.data.shape_keys and ob.data.shape_keys.key_blocks else None)
-    if fresh or _cache['key'] != key or _cache['cache'] is None or _cache['cache'].ob != ob:
-        _cache.update(key=key, cache=BodyCache(context, ob))
-    return _cache['cache']
+def geo_key(ob, co, tri):
+    """A fingerprint of the body's evaluated shape that is the same in every session: the measurements keep it, so a
+    body reshaped since (a sculpt, a proportion edit, a pose) is told from one that is not. Taken in the body's own
+    space (co: world mm, brought back), rounded to 0.1 um: moving or turning the whole body leaves the measurements
+    as they are (they are kept in the body's space too), and does not take them all again on the next press."""
+    L = _to_local(ob, co) if len(co) else np.zeros((0, 3))
+    h = hashlib.blake2b(digest_size=12)
+    h.update(np.round(L, 4).astype(np.float64).tobytes())
+    # the object's scale and turn: they change the sizes in world mm (the space brought back hides them)
+    h.update(np.round(np.array(ob.matrix_world)[:3, :3], 6).astype(np.float64).tobytes())
+    h.update(np.ascontiguousarray(tri, np.int64).tobytes())
+    return h.hexdigest()
+
+
+def body_cache(context, ob, fresh=False, check=True):
+    """The body's BodyCache, kept while the body's evaluated shape is the same (2026-10-21: it was built on every
+    press, 0.9 s on a 31k-vertex body). The shape is read on every call (a few ms) so a body reshaped by a sculpt or
+    an edit with the same vertices is built again; the key once held the vertex count only and a sculpted body was
+    measured as it had been. fresh: build it again (Measure Body). check=False: keep the one built for this body
+    without reading the shape (the hover under the cursor; the tool's press checks).
+    When the body was reshaped since the stored measurements were taken, they are all taken again here, before the
+    tool changes one of them: one line on the new body and the others on the old one would not add up."""
+    c = _cache['cache']
+    if not fresh and not check and c is not None and c.ob == ob:
+        return c
+    co, tri = placement.body_arrays(context, ob)
+    geo = geo_key(ob, co, tri)
+    key = (ob.name, geo, tuple(round(x, 6) for r in ob.matrix_world for x in r))    # moved: the world-mm body anew
+    if fresh or _cache['key'] != key or c is None or c.ob != ob:
+        _cache.update(key=key, cache=BodyCache(context, ob, co, tri, geo))
+    c = _cache['cache']
+    if not fresh:
+        data = read(ob)
+        if (data.get('items') or data.get('tapes')) and data.get('body_geo') != geo:
+            try:
+                remeasure_all(context, ob, data, c)
+            except Exception as e:                      # never in the way of the tool: the old values stay
+                print("AC9 Cloth Sim: measuring the reshaped body again failed:", e)
+    return c
+
+
+def remeasure_all(context, ob, data, cache):
+    """Every measurement taken again on the body as it is now (Measure Body, and a tool's first press on a reshaped
+    body): the levels found again (the user's offsets kept), the tapes laid again (their points ride the skin)."""
+    res = None
+    if data.get('items'):
+        res, _ = measure_body(context, ob, data, cache)
+    for t in data.get('tapes', []):
+        try:                                           # one tape that fails does not leave the ones after it old
+            store_tape(ob, cache, t, data)
+        except Exception as e:
+            print("AC9 Cloth Sim: laying the tape again failed:", t.get('name'), e)
+    data['body_geo'] = cache.geo
+    write(ob, data)
+    return res
 
 
 def _body(context):
@@ -163,6 +224,8 @@ def measure_body(context, ob, data, cache=None, only=None, fresh=False):
     """Measure the body (only: these keys, the others kept as they are) and store it."""
     cache = cache or body_cache(context, ob, fresh=fresh)
     res = ME.measure_body(cache.body, cache.gd, cache.m, data.get('offsets', {}), only=only, planes=cache.planes)
+    if only is None:
+        data['body_geo'] = cache.geo
     store_body(ob, res, data, merge=only is not None)
     return res, cache
 
@@ -179,12 +242,58 @@ def tape_compute(cache, t):
         r = ME.tape_around(cache.body, p, n)
         return None if r is None else (r[0], r[1], r[2])
     P = (np.c_[np.asarray(t['pts'], float) * 0.001, np.ones(len(t['pts']))] @ M.T)[:, :3] * 1000.0
+    N = [None if n is None else _dir_world(ob, n) for n in t['normals']] if t.get('normals') else [None] * len(P)
+    P, N = _on_skin(cache, t, P, N)
     if t['kind'] == 'straight':                      # pulled taut between two points: over the bulges, across
-        N = [_dir_world(ob, n) for n in t['normals']] if t.get('normals') else [None, None]   # the hollows (10/21)
-        return ME.tape_taut(cache.body, P[0], P[-1], N[0], N[-1])
-    N = [_dir_world(ob, n) for n in t['normals']]
+        return ME.tape_taut(cache.body, P[0], P[-1], N[0], N[-1])                            # the hollows (10/21)
+    N = [ME.surface_normal(cache.body, p) if n is None else n for p, n in zip(P, N)]
     L, straight, poly = ME.tape_along(cache.body, P, N)
     return L, straight, poly
+
+
+def _on_skin(cache, t, P, N):
+    """The clicked points of an Along / Straight tape on the body as it is now: kept on their triangles (t['anchors'],
+    [tri, w0, w1, w2] each) while the body has the same triangles, else (an older file, a remeshed body) moved to
+    the nearest skin point. The anchors and the points are written back to t (body-local mm), so the next press
+    starts from the skin, not from where the point was before the body changed. A tape laid in space would float
+    off a body made thinner (7 mm off after taking 12 % off a waist) and turn into a straight line past 20 mm."""
+    body, ob = cache.body, cache.ob
+    A = t.get('anchors')
+    ok = A is not None and len(A) == len(P) and t.get('ntri') == len(body.T)
+    out_p, out_n, anchors = [], [], []
+    for i, p in enumerate(P):
+        q = ME.anchor_point(body, A[i][0], A[i][1:]) if ok else None
+        if q is not None:
+            a = (int(A[i][0]), np.asarray(A[i][1:], float))
+            # the clicked normal kept: it picks the plane the tape runs in (tape_segment), and the same plane after a
+            # reshape keeps the tape on the same way round (the skin's normal now swung a front-to-back tape from
+            # round the side to over the shoulder: 199 -> 473 mm on a body made thinner)
+            n = N[i] if N[i] is not None else ME.surface_normal(body, q)
+        else:
+            r = ME.surface_anchor(body, p)
+            if r is None:
+                out_p.append(p), out_n.append(N[i]), anchors.append(None)
+                continue
+            a, q = (r[0], r[1]), r[2]
+            n = N[i] if N[i] is not None else ME.surface_normal(body, q)           # kept, as above
+        out_p.append(q)
+        out_n.append(n)
+        anchors.append([a[0]] + [round(float(x), 6) for x in a[1]])
+    if all(a is not None for a in anchors):
+        t['anchors'], t['ntri'] = anchors, int(len(body.T))
+    else:
+        t.pop('anchors', None), t.pop('ntri', None)
+    t['pts'] = _round(_to_local(ob, out_p), 2)
+    t['normals'] = [np.round(_dir_local(ob, n), 6).tolist() if n is not None else None for n in out_n]
+    if not any(n is not None for n in t['normals']):
+        t.pop('normals')
+    return np.asarray(out_p, float), out_n
+
+
+def drop_anchors(t):
+    """A tape whose point the user moved: the point is where it was put, not on its old triangle."""
+    t.pop('anchors', None)
+    t.pop('ntri', None)
 
 
 def store_tape(ob, cache, t, data):
@@ -197,6 +306,7 @@ def store_tape(ob, cache, t, data):
     geo.setdefault('tapes', {})[t['name']] = {'pts': _round(_to_local(ob, r[2])), 'closed': t['kind'] == 'around',
                                               **({'straight': True} if t['kind'] == 'straight' else {})}
     data['tapes'] = [t if x['name'] == t['name'] else x for x in data['tapes']]
+    data['body_geo'] = cache.geo                       # body_cache took the others again on a reshaped body first
     write(ob, data)
     write(ob, geo, GEO)
     return True
@@ -308,6 +418,8 @@ class AC9_OT_MeasureBody(bpy.types.Operator):
         ob = _body(context)
         data = read(ob)
         try:
+            # on a reshaped body (a sculpt, a proportion edit): the levels are found again (the waist at the
+            # narrowest, the user's offsets kept) and the tapes laid again with their points on the skin
             res, cache = measure_body(context, ob, data, fresh=True)
             for t in data.get('tapes', []):
                 store_tape(ob, cache, t, data)
@@ -331,9 +443,10 @@ class AC9_OT_MeasureResetLevels(bpy.types.Operator):
 
     def execute(self, context):
         ob = _body(context)
+        cache = body_cache(context, ob)                 # first: on a reshaped body it takes everything again
         data = read(ob)
         data['offsets'] = {}
-        measure_body(context, ob, data)
+        measure_body(context, ob, data, cache)
         _redraw(context)
         return {'FINISHED'}
 
@@ -380,8 +493,8 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
     def invoke(self, context, event):
         ob = _body(context)
         self.ob = ob
+        self.cache = body_cache(context, ob)               # first: on a reshaped body it takes everything again
         self.data = read(ob)
-        self.cache = body_cache(context, ob)
         self.drag = None
         self.polys = self._polys(context)
         context.area.header_text_set(self.HEADER)
@@ -445,6 +558,7 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
             t['p'] = loc
         else:
             t['pts'][self.drag['i']] = loc
+            drop_anchors(t)                               # the moved point sits where it was put
             if t.get('normals'):
                 t['normals'][self.drag['i']] = np.round(_dir_local(self.ob, hit[1]), 6).tolist()
         if store_tape(self.ob, self.cache, t, self.data):
@@ -490,7 +604,7 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
                 t = self._move_tape(context, event)
                 if t is not None:
                     from . import measure_edit as MEE
-                    context.area.header_text_set(tx("{0}: {1} cm   release: keep   Esc / right-click: put back", t['name'], _cm(MEE.tape_value(t))))
+                    context.area.header_text_set(tx("{0}: {1}   release: keep   Esc / right-click: put back", t['name'], _len(MEE.tape_value(t))))
                 _redraw(context)
                 return {'RUNNING_MODAL'}
             k, (u, mm) = self.drag['key'], self.drag['axis']
@@ -498,7 +612,7 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
             self.data.setdefault('offsets', {})[k] = round(off, 1)
             res, _ = measure_body(context, self.ob, self.data, self.cache, only=self._only(k))
             v = res.get(k)
-            context.area.header_text_set(tx("{0}: {1} cm, moved {2:+.0f} mm   release: keep   Esc / right-click: put back", tx(LABEL.get(k, k)), _cm(v['value'] if v else None), off))
+            context.area.header_text_set(tx("{0}: {1}, moved {2}   release: keep   Esc / right-click: put back", tx(LABEL.get(k, k)), _len(v['value'] if v else None), units.fmt(context, off, signed=True, body=True)))
             return {'RUNNING_MODAL'}
         if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
             hot = _ui['hot'] or ''
@@ -591,7 +705,7 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
         return TB.start_modal(self, context, event)        # the Measure tool's click is the first point
 
     def _header(self, context, val):
-        v = "" if val is None else f"{val / 10.0:.1f} cm   "
+        v = "" if val is None else _len(val) + "   "
         if self.mode == 'AROUND':
             txt = tx("Tape Around: {0}click: keep   Tab: direction ({1})   Esc / right-click: done", v, PLANES[self.plane][1])
         elif self.mode == 'STRAIGHT':
@@ -609,7 +723,7 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
     def _keep(self, context, t):
         t['name'] = _next_tape_name(self.data)
         if store_tape(self.ob, self.cache, t, self.data):
-            self.report({'INFO'}, rpt("{0}: {1} cm", t['name'], _cm(t['value'])))
+            self.report({'INFO'}, rpt("{0}: {1}", t['name'], _len(t['value'])))
             from . import measure_edit as MEE                # the new tape is the one picked
             MEE.select(context, 'tape:' + t['name'])
             _redraw(context)
@@ -643,7 +757,7 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
         if len(P) >= 2:
             L, _, poly = ME.tape_along(self.cache.body, P, N)
             _ui['preview'] = (poly * 0.001, False)
-            _ui['preview_label'] = (poly[-1] * 0.001, f"{L / 10.0:.1f} cm")
+            _ui['preview_label'] = (poly[-1] * 0.001, _len(L))
             self._header(context, L)
         elif P:
             _ui['preview'] = (np.array(P) * 0.001, False)
@@ -768,8 +882,9 @@ def measure_garment(context, bo, go, frame=None):
     mc = next((m for m in go.modifiers if m.type == 'MESH_CACHE' and m.show_viewport), None)
     if frame is not None and (mc is None or frame >= context.scene.frame_end):
         frame = None
-    data = read(bo)
-    res, cache = measure_body(context, bo, data)
+    cache = body_cache(context, bo)               # first: on a reshaped body it takes everything again; the data read
+    data = read(bo)                               # before it would write the old tapes back over the new ones
+    res, _ = measure_body(context, bo, data, cache)
     g = ME.measure_garment(cache.body, garment_mesh(context, go, result=frame is None), res)
     out = {'body': bo.name, 'frame': frame, 'items': {}}
     for k, it in g.items():
@@ -817,7 +932,7 @@ class AC9_OT_MeasureSetTarget(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     key: StringProperty()
-    value: FloatProperty(name="Target (cm)", min=0.0, max=1000.0, precision=1)
+    value: FloatProperty(name="Target", min=0.0, max=10.0, precision=1, subtype='DISTANCE', unit='LENGTH')   # m
 
     @classmethod
     def description(cls, context, props):
@@ -829,7 +944,7 @@ class AC9_OT_MeasureSetTarget(bpy.types.Operator):
 
     def invoke(self, context, event):
         spec, _ = store.get(context)
-        self.value = spec.get('measure', {}).get('targets', {}).get(self.key, 0.0) / 10.0
+        self.value = spec.get('measure', {}).get('targets', {}).get(self.key, 0.0) / 1000.0
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
@@ -837,7 +952,7 @@ class AC9_OT_MeasureSetTarget(bpy.types.Operator):
         spec = S.loads(S.dumps(spec))
         tg = spec.setdefault('measure', {}).setdefault('targets', {})
         if self.value > 0:
-            tg[self.key] = round(self.value * 10.0, 1)
+            tg[self.key] = round(self.value * 1000.0, 1)
         else:
             tg.pop(self.key, None)
         store.put(context, spec)
@@ -932,7 +1047,7 @@ class AC9_OT_MeasurePattern(bpy.types.Operator):
                 oa, ob_ = outlines[self.first[0]], outlines[h[0]]
                 st, al = ME.pattern_distance(oa, oa.s_of(self.first[1], self.first[2]), ob_, ob_.s_of(h[1], h[2]))
                 _ui['preview'] = (np.array([self.first[3], h[3]]), False)
-                _ui['preview_label'] = (h[3], f"{st / 10.0:.1f} cm" + ("" if al is None else f" / {al / 10.0:.1f}"))
+                _ui['preview_label'] = (h[3], _len(st) + ("" if al is None else f" / {_cm(al)}"))
             elif h is not None:
                 _ui['preview_pieces'] = (h[0],)
                 _ui['preview'] = (np.array([h[3], h[3]]), False)
@@ -1064,7 +1179,7 @@ class AC9_PT_SimMeasure(bpy.types.Panel):
                 r.label(text=_cm(g['value']) if g['covered'] else "open")
                 r.label(text=_signed_cm(g['ease']))
         row = box.row()
-        row.label(text="cm. Girths: a tape pulled round the body")
+        row.label(text=tx("{0}. Girths: a tape pulled round the body", units.unit(context)[1]))
         row.operator("ac9_cloth_sim.measure_reset_levels", text="", icon='LOOP_BACK')
         if go is not None and gi and gdat.get('frame') is not None:     # a frame in the middle of the run
             box.label(text=tx("Cloth: frame {0}", gdat['frame']), icon='TIME')
@@ -1166,7 +1281,8 @@ def _build(context):
     key = (ob.name if ob else None, ob[PROP] if ob is not None and PROP in ob else None,
            ob[GEO] if ob is not None and GEO in ob else None, tuple(map(tuple, ob.matrix_world)) if ob else None,
            go[PROP] if go is not None and PROP in go else None, id(spec), _ui['hot'],
-           context.scene.ac9_cloth_sim_measure.sel, visible_pattern, body_visible, garment_visible)
+           context.scene.ac9_cloth_sim_measure.sel, visible_pattern, body_visible, garment_visible,
+           (context.scene.unit_settings.system, context.scene.unit_settings.length_unit))   # labels in the unit
     if _draw_cache['key'] == key:
         return _draw_cache
     from . import measure_edit as MEE

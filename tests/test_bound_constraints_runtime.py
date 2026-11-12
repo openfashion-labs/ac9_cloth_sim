@@ -30,6 +30,57 @@ def reference(q, w, d):
 
 
 class BoundConstraintTests(unittest.TestCase):
+    def test_native_fused_increment_matches_original_writes(self):
+        rng = np.random.default_rng(12)
+        for count in (4, 257):
+            reference = rng.uniform(-2, 2, (count, 3)).astype(np.float32)
+            positions = (reference + rng.uniform(-.03, .03, (count, 3))).astype(np.float32)
+            displacement = rng.uniform(-.001, .001, (count, 3)).astype(np.float32)
+            scales = rng.uniform(0, 1, count).astype(np.float32)
+            scales[:2] = [0., 1.]
+            ref = wp.array(reference, dtype=wp.vec3, device='cpu')
+            pos = wp.array(positions, dtype=wp.vec3, device='cpu')
+            disp = wp.array(displacement, dtype=wp.vec3, device='cpu')
+            accepted = wp.empty_like(pos); increment = wp.empty_like(pos)
+            wp.launch(B.prepare_increment, dim=count, inputs=[ref, pos, disp, accepted, increment], device='cpu')
+            expected_increment = reference + displacement - positions
+            np.testing.assert_array_equal(accepted.numpy(), positions)
+            np.testing.assert_array_equal(increment.numpy(), expected_increment)
+            scale = wp.array(scales, device='cpu')
+            wp.launch(B.apply_increment, dim=count, inputs=[accepted, increment, scale, pos, ref, disp], device='cpu')
+            expected_position = positions + expected_increment * scales[:, None]
+            np.testing.assert_array_equal(pos.numpy(), expected_position)
+            np.testing.assert_array_equal(disp.numpy(), expected_position - reference)
+
+    def test_finished_increment_is_exact_placement_fixed_point(self):
+        for height in [.02, .0001]:
+            for offset in [0., .001]:
+                q = np.array([[0., 0., 0.], [.02, 0., 0.], [0., height, 0.], [0., 0., 0.]], np.float32)
+                model = SimpleNamespace(device=wp.get_device('cpu'), particle_count=4,
+                    spring_indices=wp.array([], dtype=int, device='cpu'),
+                    particle_colors=wp.array([0, 1, 2, 3], dtype=int, device='cpu'),
+                    particle_color_groups=[wp.array([i], dtype=int, device='cpu') for i in range(4)])
+                binding = B.BoundConstraints(model, [3], [[0, 1, 2]], [[.2, .3, .5]], [[0, 0, offset]])
+                pos = wp.array(q, dtype=wp.vec3, device='cpu'); binding.place(pos)
+                ref = wp.clone(pos)
+                for delta in [.00001, -.00002, .00003]:
+                    proposal = np.zeros_like(q); proposal[2] = [delta, -delta, delta]
+                    disp = wp.array(proposal, dtype=wp.vec3, device='cpu')
+                    binding.prepare_increment(ref, pos, disp)
+                    scales = wp.ones(4, dtype=float, device='cpu')
+                    binding.limit_travel(ref, scales, .00019125)
+                    pos.assign(pos.numpy() + scales.numpy()[:, None] * binding.increment.numpy())
+                    binding.finish_increment(pos, ref, disp)
+                    before = pos.numpy().copy()
+                    diagnostics = {n: getattr(binding, n).numpy().copy() for n in
+                        ['accepted', 'increment', 'limits', 'minimum_scale', 'scale_counts', 'path_counts', 'sweep_error']}
+                    before_disp = disp.numpy().copy()
+                    binding.place(pos)
+                    np.testing.assert_array_equal(pos.numpy(), before)
+                    np.testing.assert_array_equal(disp.numpy(), before_disp)
+                    for n, value in diagnostics.items():
+                        np.testing.assert_array_equal(getattr(binding, n).numpy(), value)
+
     def test_skinny_support_cannot_flip_and_jump_out_of_query_radius(self):
         q = np.array([[0, 0, 0], [.02, 0, 0], [0, .0001, 0], [.02 / 3, .0001 / 3, .001]], np.float32)
         model = SimpleNamespace(device=wp.get_device('cpu'), particle_count=4,
@@ -55,7 +106,7 @@ class BoundConstraintTests(unittest.TestCase):
     def test_restored_fold_contacts_preserve_explicit_seam_and_other_pieces(self):
         tri = np.array([[0, 1, 2], [3, 4, 5]], np.int32)
         edges = np.array([[-1, -1, 0, 1], [-1, -1, 3, 4], [-1, -1, 6, 7]], np.int32)
-        model = SimpleNamespace(tri_indices=wp.array(tri, dtype=int, ndim=2, device='cpu'),
+        model = SimpleNamespace(particle_count=8, tri_indices=wp.array(tri, dtype=int, ndim=2, device='cpu'),
                                 edge_indices=wp.array(edges, dtype=int, ndim=2, device='cpu'))
         vf, vo = N._csr(np.array([0, 3, 6]), np.array([1, 0, 0]), 8, 2)
         ef, eo = N._csr(np.array([0, 0, 1]), np.array([1, 2, 0]), 3, 3)

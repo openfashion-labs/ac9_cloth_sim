@@ -9,7 +9,7 @@ it ended as Simulate's lay does (0 / 0 / 0, docs/testing/RESULT_place_tools_stag
 
 The partners' edge is taken as placed now (hand moves, folds, Part to Seam in); placed apart where they are not
 sewn yet (the front and back necklines at the shoulders) the band runs straight over the gaps, and its length is
-compared without them (solver/lay.py lay_piece bridge). The solver's code runs in the solver's Python (scipy;
+compared without them (solver/lay.py lay_piece bridge). The solver's code runs in the solver's Python (Warp;
 solver/lay_once.py), with its check: laid, the band must have no more vertices in the body and edges through other
 cloth than placed, else it stays. A laid band's vertices and their made-at positions are rewritten and it gets
 LAID_PROP: Simulate takes it as the user's shape but still lays it again on the sewn edge (dress.py: not 'hand'),
@@ -26,11 +26,15 @@ import bpy
 import numpy as np
 
 from . import placed_view as PLV
+from . import units as U
 from . import store
 from .i18n import tx
 
 LAID_PROP = PLV.LAID_PROP
 LAY_ONCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'solver', 'lay_once.py')
+
+
+from . import prepare_build as PB
 
 
 def _object(spec, piece):
@@ -73,8 +77,8 @@ def band_why(spec, piece):
     long_x = f['w'] >= f['h']
     short, long_ = min(f['w'], f['h']), max(f['w'], f['h'])
     if long_ < 4.0 * short:
-        return tx("{0} is not a narrow band ({1:.0f} x {2:.0f} mm): Band on Edge lays bands (a rib); "
-                  "Part to Seam carries a part", piece, long_, short)
+        return tx("{0} is not a narrow band ({1} x {2}): Band on Edge lays bands (a rib); "
+                  "Part to Seam carries a part", piece, U.fmt(bpy.context, long_), U.fmt(bpy.context, short))
     sides = [P for y_ in f['sewn'] for P in f['sides'].get(y_, [])]
     c = 1 if long_x else 0
     if sides and (max(float(np.max(np.asarray(P)[:, c])) for P in sides)
@@ -94,28 +98,30 @@ def _squashed(V, T, Y, lo=0.1):
     return int((a3 < lo * a2).sum())
 
 
-def lay(context, spec, piece, got=None):
+@PB.prepared_consumer
+def lay(context, spec, piece, got=None, targets=None, *, preparation=None):
     """Band on Edge on one piece. Returns (ok, message)."""
     from . import place_seam as PS
     from . import placement as PL
     ob = _object(spec, piece)
     if ob is None:
-        return False, tx("{0} has no placed shape: Place it first", piece)
+        return PB.refuse(preparation, tx("{0} has no placed shape: Place it first", piece))
     if PLV.has_edits(ob):
-        return False, tx("{0}'s placed shape was edited vertex by vertex: Back to Guide first", piece)
+        return PB.refuse(preparation, tx("{0}'s placed shape was edited vertex by vertex: Back to Guide first", piece))
     if any(f.get('piece') == piece and abs(float(f.get('deg') or 0)) >= 90.0 for f in spec.get('folds', [])):
-        return False, tx("{0} has a fold of 90 degrees or more: Band on Edge lays one layer", piece)
-    why = band_why(spec, piece)
+        return PB.refuse(preparation, tx("{0} has a fold of 90 degrees or more: Band on Edge lays one layer", piece))
+    from .core import place_targets as TS
+    why = band_why(TS.filter_spec(spec, piece, targets) if targets is not None else spec, piece)
     if why:
-        return False, why
+        return PB.refuse(preparation, why)
     if got is None:
-        got, why = PS.shapes(context, spec)
+        got, why = PS.shapes(context, spec, preparation=preparation)
         if got is None:
-            return False, why
-    pat, tris, X = got
+            return PB.refuse(preparation, why)
+    pat, tris, X = TS.filter_stitches(got, piece, targets)
     names = [str(n) for n in pat['names']]
     if piece not in names:
-        return False, tx("{0} is not placed", piece)
+        return PB.refuse(preparation, tx("{0} is not placed", piece))
     off = np.cumsum([0] + [len(x) for x in X])
     st = np.asarray(pat['stitch'])
     co, tri = PL.body_arrays(context, context.scene.ac9_cloth_sim.body)
@@ -128,21 +134,21 @@ def lay(context, spec, piece, got=None):
     try:
         row, Xr = _run(context, arrays)
     except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
-        return False, str(exc)
+        return PB.refuse(preparation, str(exc))
     if Xr is None:
         why = row.get('skip') or 'the laid shape is no better than the placed one'
-        return False, tx("{0} not laid: {1}", piece, why)
+        return PB.refuse(preparation, tx("{0} not laid: {1}", piece, why))
     k = names.index(piece)
     Vk = np.asarray(pat[f"V{k}"], float)
     bad = _squashed(Vk, tris[k], Xr)
     if bad:
-        return False, tx("{0} not laid: {1} triangles would be squashed flat", piece, bad)
+        return PB.refuse(preparation, tx("{0} not laid: {1} triangles would be squashed flat", piece, bad))
     # the shape before it, as Part to Seam keeps it: Back to Placed puts this back (user 2026-11-01: the two the same,
     # back to the shape on the guide before the press)
     PLV.save_before_seam(ob, spec)
     why = PS.write_shape(ob, Vk, tris[k], Xr)
     if why:
-        return False, why
+        return PB.refuse(preparation, why)
     ob[LAID_PROP] = json.dumps({'partners': [names[j] for j in row.get('partners', []) if j < len(names)],
                                 'bridged_mm': row.get('bridged_mm', [])})
     PLV.invalidate_shown()
@@ -169,10 +175,26 @@ def lay(context, spec, piece, got=None):
 
 
 class AC9_OT_SimLayOnEdge(bpy.types.Operator):
-    """Lay the selected narrow bands (a neck rib) on the edge they are sewn to before simulating, their width running on along the body, so Live Sim starts with them in place. Back to Placed returns to the shape before this move"""
+    """Choose target pieces, then lay the selected narrow bands on their sewn edges, extending the bands' width. Shift-click adds targets, A chooses all, Enter applies, Esc cancels. Other seams stay enabled for simulation"""
     bl_idname = "ac9_cloth_sim.lay_on_edge"
     bl_label = "Band on Edge"
+    bl_translation_context = 'ac9_cloth_sim'
     bl_options = {'REGISTER', 'UNDO'}
+
+    target_pieces: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    moving_pieces: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def invoke(self, context, event):
+        from . import place_targets
+        return place_targets.invoke(self, context, event)
+
+    def modal(self, context, event):
+        from . import place_targets
+        return place_targets.modal(self, context, event)
+
+    def cancel(self, context):
+        from . import place_targets
+        place_targets.finish(self, context)
 
     @classmethod
     def poll(cls, context):
@@ -202,11 +224,19 @@ class AC9_OT_SimLayOnEdge(bpy.types.Operator):
             return False
         return True
 
-    def execute(self, context):
+    @PB.prepared_consumer
+    def execute(self, context, *, preparation=None):
         from . import placement as PL
         from . import place_seam as PS
         spec, _ = store.get(context)
-        names = [n for n in PL.lead_only(spec, PL.selected_pieces(context))
+        from . import place_targets
+        try:
+            requested, targets = place_targets.arguments(self, context)
+            place_targets.validate(context, requested, targets)
+        except ValueError as exc:
+            self.report({'WARNING'}, str(exc))
+            return {'CANCELLED'}
+        names = [n for n in PL.lead_only(spec, requested)
                  if n in spec['placement'] or PS.sewn_to_placed(spec, n)]
         worn = PS.on_garment(spec, names)
         if worn:
@@ -215,7 +245,9 @@ class AC9_OT_SimLayOnEdge(bpy.types.Operator):
             names = [n for n in names if n not in worn]
         lines0 = []
         for n in [n for n in names if n not in spec['placement']]:
-            sp, why = PS.place_by_partners(context, spec, n)
+            with preparation.attempt() as child:
+                sp, why = PS.place_by_partners(context, spec, n, targets=targets, preparation=preparation)
+                if sp is not None:child.accept()
             if sp is None:
                 names.remove(n)
                 self.report({'WARNING'}, why)
@@ -224,17 +256,19 @@ class AC9_OT_SimLayOnEdge(bpy.types.Operator):
             lines0.append(tx("{0} placed by the pieces it is sewn to", n))
         for m in lines0:
             self.report({'INFO'}, m)
-        spec = PS.objects_for(context, spec, names)
+        spec = PS.objects_for(context, spec, names, preparation=preparation)
         lead = {o[PLV.TWIN_PROP]: o[PLV.PROP] for o in PLV.objects(spec).values() if o.get(PLV.TWIN_PROP)}
         names = list(dict.fromkeys(n if _object(spec, n) is not None else lead.get(n, n) for n in names))
         ok_any = False
         for n in names:
-            ok, msg = lay(context, spec, n, got=PS.fresh_shapes(context) if len(names) == 1 and lines0 else None)
+            with preparation.attempt() as child:
+                ok, msg = lay(context, spec, n, got=PS.fresh_shapes(context) if len(names) == 1 and lines0 else None,
+                              targets=targets, preparation=preparation)
+                if ok:
+                    PS.mark_on_next_run(store.get(context)[0], [n], preparation=preparation)
+                    child.accept()
+            spec = store.get(context)[0]
             ok_any |= ok
-            if ok:
-                # the button acts once: the piece's Start is not written (user 2026-11-03); the laid shape is its
-                # placed shape, which the next run starts from
-                PS.mark_on_next_run(spec, [n])
             self.report({'INFO'} if ok else {'WARNING'}, msg)
         return {'FINISHED'} if ok_any else {'CANCELLED'}
 

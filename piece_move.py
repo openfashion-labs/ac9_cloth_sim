@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Move Piece: after a Dress, a piece is moved or turned on the garment itself (user 2026-10-14, DECISIONS
-cloth-sim-one-mesh-after-dress-2026-10-14 b-A): a click on the garment with the Place or Edit Pattern tool picks the
+cloth-sim-one-mesh-after-dress-2026-10-14 b-A): a click on the garment with the Place or Edit Pieces tool picks the
 piece (toolbar.garment_piece) and puts a handle (an Empty, collection HANDLE_COLL) at its center, selected. G / R /
 the gizmo / typed numbers move the handle as any object, and the piece's part of the garment's mesh follows it
 rigidly. Shift+click adds a piece to the handle.
@@ -17,9 +17,10 @@ from mathutils import Matrix
 from . import pattern_view as PV
 from . import store
 from . import selection as SEL
+from .core import piece_table as PT
 
 HANDLE_COLL = "AC9_ClothSim_Move"
-NAMES_PROP = "ac9_move_pieces"     # the pieces the handle moves (comma separated); PV.PIECE_PROP: the first (Tool tab)
+NAMES_PROP = PT.HANDLE_NAMES       # legacy value retained; PT.HANDLE_IDS is the explicit collection
 _state = {}                        # handle name -> {'idx', 'base' (n, 3) m, 'M0' (4x4), 'last'}
 _busy = [False]
 
@@ -70,14 +71,23 @@ def _shown(context, g):
     return co @ Mw[:3, :3].T + Mw[:3, 3]
 
 
-def clear(context=None):
-    """Remove the handles (the shapes they moved stay)."""
-    for ob in handles():
+def _remove_handles(obs):
+    """Unselect before removing RNA so the layer does not retain a selected empty slot."""
+    for ob in obs:
+        for scene in ob.users_scene:
+            for layer in scene.view_layers:
+                if layer.objects.get(ob.name) == ob:
+                    ob.select_set(False, view_layer=layer)
         _state.pop(ob.name, None)
         bpy.data.objects.remove(ob)
     coll = bpy.data.collections.get(HANDLE_COLL)
     if coll is not None and not coll.objects:
         bpy.data.collections.remove(coll)
+
+
+def clear(context=None):
+    """Remove the handles (the shapes they moved stay)."""
+    _remove_handles(handles())
 
 
 def rebase_handles():
@@ -101,44 +111,73 @@ def pick(context, g, name, extend=False):
     docs/reviews/REVIEW_fable_garment_piece_select_2026-10-22.md, user OK 2026-10-22)."""
     if _live():
         return None
+    previous_busy = _busy[0]
+    _busy[0] = True
+    try:
+        return _pick(context, g, name, extend)
+    finally:
+        _busy[0] = previous_busy
+
+
+def _pick(context, g, name, extend):
+    """Prepare the next handle before retiring the current one."""
     old = handles()
     names = []
     if extend and old:
-        names = [n for n in str(old[0][NAMES_PROP]).split(',') if n]
+        names = list(PT.handle_names(old[0]))
         if name in names:
             names.remove(name)
         else:
             names.append(name)
     else:
         names = [name]
-    clear(context)
-    SEL.deselect_all(context)
     if not names:
+        clear(context)
         return None
     idx = piece_verts(g, names)
     if not len(idx):
         return None
     W = _shown(context, g)[idx]
-    coll = bpy.data.collections.get(HANDLE_COLL)
-    if coll is None:
-        coll = bpy.data.collections.new(HANDLE_COLL)
-        context.scene.collection.children.link(coll)
-        from . import view_setup
-        view_setup.refresh(context)
-    h = bpy.data.objects.new("AC9_Move_" + names[0] + ("" if len(names) == 1 else f"_+{len(names) - 1}"), None)
-    h.empty_display_type = 'ARROWS'
-    lo, hi = W.min(0), W.max(0)
-    h.empty_display_size = float(max(0.03, 0.35 * np.linalg.norm(hi - lo)))
-    h.show_in_front = True
-    # matrix_world set (not only location): read before the depsgraph runs, location alone leaves it the identity, and
-    # the first move then carried the piece by the handle's whole offset from the origin (GUI 2026-10-14: 1.5 m)
-    h.matrix_world = Matrix.Translation(W.mean(0).tolist())
-    h[NAMES_PROP] = ",".join(names)
-    h[PV.PIECE_PROP] = names[0]                  # the Tool tab shows the piece; Reset takes the selected pieces
-    coll.objects.link(h)
+    h = _new_handle(context, names, W)
+    # All fallible shape reads and handle preparation completed. Retire only
+    # the old handles, never the replacement just linked into the collection.
+    SEL.deselect_all(context)
+    _remove_handles(old)
     h.select_set(True)
     context.view_layer.objects.active = h
     _state[h.name] = {'idx': idx, 'base': None, 'M0': None, 'last': tuple(map(tuple, h.matrix_world))}
+    return h
+
+
+def _new_handle(context, names, W):
+    """Create a candidate; a preparation error leaves no candidate datablock behind."""
+    coll = bpy.data.collections.get(HANDLE_COLL)
+    created = coll is None
+    h = None
+    try:
+        if created:
+            coll = bpy.data.collections.new(HANDLE_COLL)
+            context.scene.collection.children.link(coll)
+            from . import view_setup
+            view_setup.refresh(context)
+        h = bpy.data.objects.new("AC9_Move_" + names[0] + ("" if len(names) == 1 else f"_+{len(names) - 1}"), None)
+        h.empty_display_type = 'ARROWS'
+        lo, hi = W.min(0), W.max(0)
+        h.empty_display_size = float(max(0.03, 0.35 * np.linalg.norm(hi - lo)))
+        h.show_in_front = True
+        # Set the matrix, not only location: the first depsgraph read must see
+        # this pivot rather than the identity (the original 1.5 m jump).
+        h.matrix_world = Matrix.Translation(W.mean(0).tolist())
+        h[NAMES_PROP] = ",".join(names)
+        h[PT.HANDLE_IDS] = PT.encode_handle_names(names)
+        h[PV.PIECE_PROP] = names[0]
+        coll.objects.link(h)
+    except Exception:
+        if h is not None:
+            bpy.data.objects.remove(h)
+        if created and coll is not None and not coll.objects:
+            bpy.data.collections.remove(coll)
+        raise
     return h
 
 
@@ -183,7 +222,7 @@ def _moved(scene, depsgraph=None):
                 g = _garment(ctx)
                 if g is None:
                     continue
-                names = [n for n in str(h[NAMES_PROP]).split(',') if n]
+                names = PT.handle_names(h)
                 st = _state[h.name] = {'idx': piece_verts(g, names), 'base': None, 'M0': None,
                                        'last': tuple(map(tuple, h.matrix_world))}
             m = tuple(map(tuple, h.matrix_world))
@@ -203,17 +242,15 @@ def _moved(scene, depsgraph=None):
 
 
 def _drop_unselected():
+    gone = []
     for h in handles():
         try:
             sel = h.select_get()
         except RuntimeError:
             sel = True
         if not sel:
-            _state.pop(h.name, None)
-            bpy.data.objects.remove(h)
-    coll = bpy.data.collections.get(HANDLE_COLL)
-    if coll is not None and not coll.objects:
-        bpy.data.collections.remove(coll)
+            gone.append(h)
+    _remove_handles(gone)
     return None
 
 

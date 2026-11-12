@@ -52,7 +52,9 @@ def preparation(context, spec):
         guides = bool(effective.get('guides'))
         counts = dict(total=len(pieces), enabled=len(enabled), disabled=len(pieces)-len(enabled),
                       enabled_placed=len(enabled)-len(missing), enabled_unplaced=len(missing))
-        blockers = ([ 'body' ] if not body else []) + ([ 'guides' ] if not guides else [])
+        # pieces laid flat need neither (user 2026-11-10); round a guide, the guide
+        flat = any(S.is_flat(p) for p in placed.values())
+        blockers = ([] if flat else ([ 'body' ] if not body else []) + ([ 'guides' ] if not guides else []))
         if not enabled: blockers.append('no_enabled_pieces')
         if missing: blockers.append('unplaced_pieces')
         signature = {'scope': base['scope'], 'pieces': [(p['name'], bool(p.get('enabled', True)), p['name'] in placed) for p in pieces],

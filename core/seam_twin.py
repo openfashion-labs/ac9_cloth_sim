@@ -15,7 +15,7 @@ A side is mirrored point by point: its two ends carried by the mirror map and pu
 outline (or internal line), its direction round the outline reversed (a mirror turns the outline round).
 """
 import re
-from ._i18n import rpt
+from ._i18n import rpt, length as len_text
 
 import numpy as np
 
@@ -26,22 +26,36 @@ TOL_MM = 1.0           # a mirrored end this far off the target outline: the tar
 LEN_TOL = 0.02         # a mirrored side whose length differs more than this (fraction) is not made
 
 
-def _reflect_self(pc):
-    """The mirror map of a single piece across its own center line (draft.self_reflect)."""
+def _reflect_self(pc, plane='x'):
+    """The mirror maps of a single piece onto itself, to try in turn: left / right, across its own center line
+    (draft.self_reflect); front / back, across the line at right angles to it first (a center line runs up unless
+    turned), then across the center line itself (a gusset whose center line was turned to run across)."""
+    if plane == 'y':
+        return [D.self_reflect(pc, across=True), D.self_reflect(pc)]
     return D.self_reflect(pc)
+
+
+def twin_in(spec, piece, plane):
+    """piece's twin when their pair mirrors in `plane`, else None (a gusset's left / right twin is not where a
+    front / back copy of the panel sewn to it goes, user 2026-11-12)."""
+    t = D.twin_of(spec, piece)
+    return t if t is not None and S.pair_plane(spec, piece) == plane else None
 
 
 def _target(spec, piece, name, tw, made=None):
     """(target piece, mirror map) of a side on `piece` when `name`'s seams are mirrored onto its twin `tw`. made:
-    {original: copy} of a group just copied (their twins, though an Off pair is not one in S.twins)."""
+    {original: copy} of a group just copied (their twins, though an Off pair is not one in S.twins). A piece in a
+    pair mirrored in the same plane goes to its twin; one with no twin, or with a twin in the other plane, stays and
+    is mirrored onto itself (_reflect_self: a list of maps to try in a front / back mirror)."""
     if piece == name:
         return tw, D.mirror_fn(D.piece(spec, name), D.piece(spec, tw))
     if made and piece in made:
         return made[piece], D.mirror_fn(D.piece(spec, piece), D.piece(spec, made[piece]))
-    t2 = D.twin_of(spec, piece)
+    plane = S.pair_plane(spec, name) if name else S.pair_plane(spec, piece)
+    t2 = twin_in(spec, piece, plane)
     if t2 is not None:
         return t2, D.mirror_fn(D.piece(spec, piece), D.piece(spec, t2))
-    return piece, _reflect_self(D.piece(spec, piece))
+    return piece, _reflect_self(D.piece(spec, piece), plane)
 
 
 def _nearest_s(ol, q):
@@ -55,8 +69,18 @@ def _nearest_s(ol, q):
 
 
 def mirror_side(spec, side, name, tw, outlines, skip=(), made=None):
-    """The side mirrored (a new SIDE dict), or (None, why)."""
-    tp, M = _target(spec, side['piece'], name, tw, made)
+    """The side mirrored (a new SIDE dict), or (None, why). A target with several maps to try (_reflect_self): the
+    first that lands on the outline, as long, on a place not sewn."""
+    tp, Ms = _target(spec, side['piece'], name, tw, made)
+    why = None
+    for M in (Ms if isinstance(Ms, list) else [Ms]):
+        out, why = _mirror_side_by(spec, side, name, tp, M, outlines, skip)
+        if out is not None:
+            return out, None
+    return None, why
+
+
+def _mirror_side_by(spec, side, name, tp, M, outlines, skip):
     src, dst = D.piece(spec, side['piece']), D.piece(spec, tp)
     if 'line' in side:
         P = M(D.internal(src, side['line'])['pts'])
@@ -75,12 +99,12 @@ def mirror_side(spec, side, name, tw, outlines, skip=(), made=None):
         q = M(ol_s.at(ol_s.s_of(*side[end])))[0]
         s, d = _nearest_s(ol_d, q)
         if d > TOL_MM:
-            return None, f"{tp} is not symmetric there ({d:.1f} mm off)"
+            return None, f"{tp} is not symmetric there ({len_text(d)} off)"
         e, t = ol_d.edge_t(s)
         out[end] = [e, round(float(t), 6)]
     L0, L1 = abs(ol_s.span(side)), abs(ol_d.span(out))
     if abs(L1 - L0) > LEN_TOL * max(L0, 1e-6):
-        return None, f"mirrored on {tp} it is {L1:.0f} mm long, not {L0:.0f}"
+        return None, f"mirrored on {tp} it is {len_text(L1)} long, not {len_text(L0)}"
     if tp == side['piece'] and tp != name:
         # a single piece mirrored about its own middle: right for a front, wrong for a band closed into a ring whose
         # center front is not the middle of the strip (a raglan's neckband, 2026-10-14). Where the mirror image lands
@@ -114,16 +138,14 @@ def _taken(spec, side, ol, skip, tol=1.0):
     return None
 
 
-def _swap_lr(s):
-    if s == 'left':
-        return 'right'
-    if s == 'right':
-        return 'left'
-    return s
+def _swap_lr(s, plane='x'):
+    """A seam path's side mirrored: left / right swap in a left / right mirror, front / back in a front / back one."""
+    sw = {'left': 'right', 'right': 'left'} if plane != 'y' else {'front': 'back', 'back': 'front'}
+    return sw.get(s, s)
 
 
-def _mirror_guide(g):
-    if not g:
+def _mirror_guide(g, plane='x'):
+    if not g or plane == 'y':              # a front / back mirror keeps an arm on its side
         return g
     m = re.match(r'^(.*)_(L|R)$', g)
     return f"{m.group(1)}_{'R' if m.group(2) == 'L' else 'L'}" if m else g
@@ -146,10 +168,11 @@ def _mirror_seam(spec, sm, name, tw, outlines, made=None):
             return None, why
     nm = {kk: v for kk, v in sm.items() if kk not in ('id', 'a', 'b', 'bom')}
     nm.update(id=_new_id(spec, sm['id']), a=sides['a'], b=sides['b'], source='user')
+    pl_ = S.pair_plane(spec, name) if name else S.pair_plane(spec, sm['a']['piece'])
     if sm.get('path'):
-        nm['path'] = dict(sm['path'], side=_swap_lr(sm['path'].get('side', 'auto')))
+        nm['path'] = dict(sm['path'], side=_swap_lr(sm['path'].get('side', 'auto'), pl_))
         if sm['path'].get('guide'):
-            nm['path']['guide'] = _mirror_guide(sm['path']['guide'])
+            nm['path']['guide'] = _mirror_guide(sm['path']['guide'], pl_)
     return nm, None
 
 
@@ -197,6 +220,10 @@ def mirror_onto_twins(spec, ids):
         tw = {p: D.twin_of(spec, p) for p in ps}
         if any(t is None for t in tw.values()):
             continue                               # the user's rule: both ends on pairs, else no mirror
+        if len({S.pair_plane(spec, p) for p in ps}) > 1:
+            # a front / back pair sewn to a left / right one: no pair of twins is its mirror image
+            notes.append(f"{sm['id']}: its pieces mirror in different planes")
+            continue
         if any(tw[p] in ps for p in ps):
             continue                               # sews a pair's two halves to each other
         nm, why = _mirror_seam(spec, sm, None, None, outlines, tw)
@@ -237,7 +264,7 @@ def mirror_seams_group(spec, made):
         if f.get('seam') in idmap:
             turn = f.get('turn')
             if turn is not None:
-                turn = made.get(turn) or D.twin_of(spec, turn) or turn
+                turn = made.get(turn) or twin_in(spec, turn, S.pair_plane(spec, next(iter(made)))) or turn
             folds.append(dict(f, seam=idmap[f['seam']], **({'turn': turn} if turn is not None else {})))
     if folds:
         spec['folds'] = folds
@@ -269,9 +296,10 @@ def mirror_seams(spec, name):
             nm = {kk: v for kk, v in sm.items() if kk not in ('id', 'a', 'b', 'bom')}
             nm.update(id=_new_id(spec, sm['id']), a=sides['a'], b=sides['b'], source='user')
             if sm.get('path'):
-                nm['path'] = dict(sm['path'], side=_swap_lr(sm['path'].get('side', 'auto')))
+                pl_ = S.pair_plane(spec, name)
+                nm['path'] = dict(sm['path'], side=_swap_lr(sm['path'].get('side', 'auto'), pl_))
                 if sm['path'].get('guide'):
-                    nm['path']['guide'] = _mirror_guide(sm['path']['guide'])
+                    nm['path']['guide'] = _mirror_guide(sm['path']['guide'], pl_)
             spec['seams'].append(nm)
             made.append(nm['id'])
             idmap[sm['id']] = nm['id']

@@ -4,6 +4,7 @@
 No placement reconstruction or persistent parent/layer relationship is involved.
 Distances are world millimeters. Triangle winding defines a cloth's front.
 """
+from . import prepare_build as PB
 import json
 import numpy as np
 from mathutils import Vector
@@ -360,7 +361,7 @@ def translation(Y, T, surfaces, direction, gap):
     return Y+d*amount, dict(distance=amount, overlap_pairs=hits, direction=d.tolist(), furthest_triangle=furthest)
 
 
-def snapshot(context, spec):
+def snapshot(context, spec, *, preparation=None):
     """Current world shapes with their exact write-back indices, before modifiers."""
     import bpy
     from . import display_state as DS, placed_view as PV, dress as D
@@ -380,9 +381,10 @@ def snapshot(context, spec):
         if np.linalg.det(np.asarray(ob.matrix_world)[:3,:3]) < 0:
             T=T[:,::-1]
         if name != ob[PV.PROP]:
-            X=X.copy(); X[:,0]=2*PV.center_x(spec)-X[:,0]; T=T[:,::-1]
+            pl_=S.pair_plane(spec,name)
+            X=S.mirror_points(X,pl_,S.mirror_center(spec,pl_,name)); T=T[:,::-1]
             pcs={pc['name']:pc for pc in spec['pieces']}
-            V=PV.mirror_flat(V,S.Outline(pcs[ob[PV.PROP]]).B,S.Outline(pcs[name]).B)
+            V=PV.mirror_flat(V,S.Outline(pcs[ob[PV.PROP]]).B,S.Outline(pcs[name]).B,pl_)
         out[name] = dict(X=X,T=T,flat=V,owner='placed',ob=ob)
     if g is not None and any(s['source']=='result' and s['solid'] for s in states.values()):
         raw = D.garment_co(context,g).astype(float)
@@ -411,7 +413,7 @@ def snapshot(context, spec):
     # Shapes not materialized yet remain pure guide input until commit.
     missing=[n for n,s in states.items() if s['solid'] and s['source']=='proxy']
     if missing:
-        res=D.prepare(context,context.scene.ac9_cloth_sim.mesh_size,shapes_only=True,placed_only=True)
+        res=D.prepare(context,context.scene.ac9_cloth_sim.mesh_size,shapes_only=True,placed_only=True, preparation=preparation)
         for i,name in enumerate(map(str,res['pat']['names'])):
             if name in missing:
                 out[name]=dict(X=np.asarray(res['X'][i],float),T=np.asarray(res['tris'][i]),flat=np.asarray(res['pat'][f'V{i}']),owner='proxy',ob=None)
@@ -429,7 +431,7 @@ def _clear(Y, T, others, co, tr):
     return True
 
 
-def move_selected(context, names, ring_ok=False):
+def move_selected(context, names, ring_ok=False, *, preparation=None):
     """Plan every selected piece from one snapshot; commit only after validation.
 
     ring_ok: a piece the outside step cannot move in one direction (its partner wraps around it) is left where it
@@ -443,103 +445,105 @@ def move_selected(context, names, ring_ok=False):
     active=context.view_layer.objects.active.name if context.view_layer.objects.active else None
     backup = PV.PreparedResetBackup(context, spec)
     try:
-        shapes,g,raw = snapshot(context,spec)
-        if not names or any(n not in shapes for n in names):
-            raise ValueError("Select pieces with a current 3D shape first")
-        tags={}
-        if spec.get('seams'):
-            res=D.prepare(context,context.scene.ac9_cloth_sim.mesh_size,shapes_only=True,placed_only=True)
-            tags=seam_tags(shapes,res['pat'],spec)
-        plans,seen=[],set()
-        co,tr=PL.body_arrays(context,context.scene.ac9_cloth_sim.body)
-        for n in names:
-            row=shapes[n];ob=row['ob']
-            key=ob.name if row['owner']=='placed' else n
-            if key in seen:continue
-            seen.add(key)
-            excluded=set(names)
-            if row['owner']=='placed':
-                excluded|={ob.get(PV.PROP),ob.get(PV.TWIN_PROP)}
-            others=[(r['X'],r['T']) for k,r in shapes.items() if k not in excluded]
-            paired=False
-            if row['owner']=='placed' and ob.get(PV.TWIN_PROP):
-                other=ob[PV.TWIN_PROP] if n==ob[PV.PROP] else ob[PV.PROP]
-                paired=other in shapes
-            try:
-                W,num=correct(row['X'],row['T'],others,(co,tr),8.0,tags=tags,validate=not paired)
-            except ValueError as exc:
-                # A partner that wraps around (Part to Seam has already bent the piece out of it): nothing to move.
-                if not (ring_ok and not paired and str(exc) in RING_REFUSALS and _clear(row['X'],row['T'],others,co,tr)):
-                    raise
-                plans.append((n,row['X'].copy(),dict(distance=0.0,ring=True)))
-                continue
-            if row['owner']=='placed' and ob.get(PV.TWIN_PROP):
-                twin=ob[PV.TWIN_PROP] if n==ob[PV.PROP] else ob[PV.PROP]
-                if twin in shapes:
-                    d=np.asarray(num['direction']);dm=d.copy();dm[0]*=-1
-                    tw=shapes[twin]
-                    _,tn=correct(tw['X'],tw['T'],others,(co,tr),8.0,direction=dm,tags=tags,validate=False)
-                    amount=max(num['distance'],tn['distance'])
-                    W,num=correct(row['X'],row['T'],others,(co,tr),8.0,direction=d,minimum=amount,tags=tags)
-                    correct(tw['X'],tw['T'],others,(co,tr),8.0,direction=dm,minimum=amount,tags=tags)
-            plans.append((n,W,num))
-        final={n:r['X'] for n,r in shapes.items()}
-        changed=set()
-        for n,W,_ in plans:
-            final[n]=W;changed.add(n)
-            row=shapes[n]
-            if row['owner']=='placed':
-                ob=row['ob'];twin=ob.get(PV.TWIN_PROP)
-                other=twin if n==ob[PV.PROP] else ob[PV.PROP]
-                if twin and other in shapes:
-                    X=W.copy();X[:,0]=2*PV.center_x(spec)-X[:,0]
-                    final[other]=X;changed.add(other)
-        from . import place_settle as PT
-        body_bv=PT._bvh_mm(co,tr)
-        for n in changed:
-            if shapes[n]['owner']=='result':
-                for k,r in shapes.items():
-                    if k!=n and r['owner']=='result' and np.intersect1d(shapes[n]['idx'],r['idx']).size:
-                        raise ValueError("The result shares vertices across pieces: separate them before moving")
-            other=[(final[k],r['T']) for k,r in shapes.items() if k!=n]
-            if PT._crossing_tris(final[n],shapes[n]['T'],other,np.zeros(len(final[n]),bool)).size:
-                raise ValueError("The selected pieces would still cross cloth: move them separately")
-            for p in final[n]:
-                q,normal,_,_=body_bv.find_nearest(Vector(p))
-                if q is not None and (Vector(p)-q).dot(normal)<-1e-4:
-                    raise ValueError("The mirrored correction would enter the body: move this piece by hand")
-        # No mutation until all plans exist. A refused second piece rolls back the first.
-        if any(shapes[n]['owner']=='result' for n,_,_ in plans):
-            for m in g.modifiers:
-                if m.type=='MESH_CACHE':m.show_viewport=m.show_render=False
-            D.set_positions(g,raw)
-        proxy=[n for n,_,_ in plans if shapes[n]['owner']=='proxy']
-        if proxy:
-            spec=PS.objects_for(context,spec,proxy)
-            for n in proxy:
-                ob=PV.objects(spec).get(n)
-                hs=PV.hand_shape(ob) if ob is not None else None
-                if hs is None or hs[2].shape!=shapes[n]['X'].shape or not np.allclose(hs[2],shapes[n]['X'],atol=1e-3):
-                    raise ValueError("The saved placed shape differs from the guide: show it first")
-        for n,W,num in plans:
-            row=shapes[n];delta=W[0]-row['X'][0]
-            if row['owner']=='result':
-                M=np.asarray(g.matrix_world);loc=(W*.001-M[:3,3])@np.linalg.inv(M[:3,:3]).T
-                raw[row['idx']]=loc
-            else:
-                ob=row['ob'] if row['owner']=='placed' else PV.objects(spec)[n]
-                if n!=ob[PV.PROP]:delta=delta.copy();delta[0]*=-1
-                M=ob.matrix_world.copy();M.translation+=Vector(delta*.001);ob.matrix_world=M
-        if raw is not None and any(shapes[n]['owner']=='result' for n,_,_ in plans):
-            D.set_positions(g,raw)
-        sp=PV.sync_pose(context,spec)
-        if sp is not None:store.put(context,sp)
-        PM.rebase_handles()
-        PV.invalidate_shown()
-        return {n:num for n,_,num in plans}
+        with PB.operation(context, owner=preparation, consumer_backup=backup) as preparation:
+            shapes,g,raw = snapshot(context,spec, preparation=preparation)
+            if not names or any(n not in shapes for n in names):
+                raise ValueError("Select pieces with a current 3D shape first")
+            tags={}
+            if spec.get('seams'):
+                res=D.prepare(context,context.scene.ac9_cloth_sim.mesh_size,shapes_only=True,placed_only=True, preparation=preparation)
+                tags=seam_tags(shapes,res['pat'],spec)
+            plans,seen=[],set()
+            co,tr=PL.body_arrays(context,context.scene.ac9_cloth_sim.body)
+            for n in names:
+                row=shapes[n];ob=row['ob']
+                key=ob.name if row['owner']=='placed' else n
+                if key in seen:continue
+                seen.add(key)
+                excluded=set(names)
+                if row['owner']=='placed':
+                    excluded|={ob.get(PV.PROP),ob.get(PV.TWIN_PROP)}
+                others=[(r['X'],r['T']) for k,r in shapes.items() if k not in excluded]
+                paired=False
+                if row['owner']=='placed' and ob.get(PV.TWIN_PROP):
+                    other=ob[PV.TWIN_PROP] if n==ob[PV.PROP] else ob[PV.PROP]
+                    paired=other in shapes
+                try:
+                    W,num=correct(row['X'],row['T'],others,(co,tr),8.0,tags=tags,validate=not paired)
+                except ValueError as exc:
+                    # A partner that wraps around (Part to Seam has already bent the piece out of it): nothing to move.
+                    if not (ring_ok and not paired and str(exc) in RING_REFUSALS and _clear(row['X'],row['T'],others,co,tr)):
+                        raise
+                    plans.append((n,row['X'].copy(),dict(distance=0.0,ring=True)))
+                    continue
+                if row['owner']=='placed' and ob.get(PV.TWIN_PROP):
+                    twin=ob[PV.TWIN_PROP] if n==ob[PV.PROP] else ob[PV.PROP]
+                    if twin in shapes:
+                        d=np.asarray(num['direction']);dm=d.copy();dm[0]*=-1
+                        tw=shapes[twin]
+                        _,tn=correct(tw['X'],tw['T'],others,(co,tr),8.0,direction=dm,tags=tags,validate=False)
+                        amount=max(num['distance'],tn['distance'])
+                        W,num=correct(row['X'],row['T'],others,(co,tr),8.0,direction=d,minimum=amount,tags=tags)
+                        correct(tw['X'],tw['T'],others,(co,tr),8.0,direction=dm,minimum=amount,tags=tags)
+                plans.append((n,W,num))
+            final={n:r['X'] for n,r in shapes.items()}
+            changed=set()
+            for n,W,_ in plans:
+                final[n]=W;changed.add(n)
+                row=shapes[n]
+                if row['owner']=='placed':
+                    ob=row['ob'];twin=ob.get(PV.TWIN_PROP)
+                    other=twin if n==ob[PV.PROP] else ob[PV.PROP]
+                    if twin and other in shapes:
+                        pl_=S.pair_plane(spec,other);X=S.mirror_points(W,pl_,S.mirror_center(spec,pl_,other))
+                        final[other]=X;changed.add(other)
+            from . import place_settle as PT
+            body_bv=PT._bvh_mm(co,tr)
+            for n in changed:
+                if shapes[n]['owner']=='result':
+                    for k,r in shapes.items():
+                        if k!=n and r['owner']=='result' and np.intersect1d(shapes[n]['idx'],r['idx']).size:
+                            raise ValueError("The result shares vertices across pieces: separate them before moving")
+                other=[(final[k],r['T']) for k,r in shapes.items() if k!=n]
+                if PT._crossing_tris(final[n],shapes[n]['T'],other,np.zeros(len(final[n]),bool)).size:
+                    raise ValueError("The selected pieces would still cross cloth: move them separately")
+                for p in final[n]:
+                    q,normal,_,_=body_bv.find_nearest(Vector(p))
+                    if q is not None and (Vector(p)-q).dot(normal)<-1e-4:
+                        raise ValueError("The mirrored correction would enter the body: move this piece by hand")
+            # No mutation until all plans exist. A refused second piece rolls back the first.
+            if any(shapes[n]['owner']=='result' for n,_,_ in plans):
+                for m in g.modifiers:
+                    if m.type=='MESH_CACHE':m.show_viewport=m.show_render=False
+                D.set_positions(g,raw)
+            proxy=[n for n,_,_ in plans if shapes[n]['owner']=='proxy']
+            if proxy:
+                spec=PS.objects_for(context,spec,proxy, preparation=preparation)
+                for n in proxy:
+                    ob=PV.objects(spec).get(n)
+                    hs=PV.hand_shape(ob) if ob is not None else None
+                    if hs is None or hs[2].shape!=shapes[n]['X'].shape or not np.allclose(hs[2],shapes[n]['X'],atol=1e-3):
+                        raise ValueError("The saved placed shape differs from the guide: show it first")
+            for n,W,num in plans:
+                row=shapes[n];delta=W[0]-row['X'][0]
+                if row['owner']=='result':
+                    M=np.asarray(g.matrix_world);loc=(W*.001-M[:3,3])@np.linalg.inv(M[:3,:3]).T
+                    raw[row['idx']]=loc
+                else:
+                    ob=row['ob'] if row['owner']=='placed' else PV.objects(spec)[n]
+                    if n!=ob[PV.PROP]:delta=delta.copy();delta[0]*=-1
+                    M=ob.matrix_world.copy();M.translation+=Vector(delta*.001);ob.matrix_world=M
+            if raw is not None and any(shapes[n]['owner']=='result' for n,_,_ in plans):
+                D.set_positions(g,raw)
+            sp=PV.sync_pose(context,spec)
+            if sp is not None:store.put(context,sp); PB.replan_source(preparation)
+            PM.rebase_handles()
+            PV.invalidate_shown()
+            return {n:num for n,_,num in plans}
     except Exception:
-        backup.rollback()
-        PL.AC9_OT_SimMoveByHand._restore_selection(context,selected,active)
+        if backup.can_restore():
+            backup.rollback()
+            PL.AC9_OT_SimMoveByHand._restore_selection(context,selected,active)
         raise
     finally:
         backup.close()

@@ -5,6 +5,7 @@ The spec owns simulation state, reset_pieces owns the placement override, and
 mesh metadata owns result membership. Visibility and Mask are outputs, never
 evidence that a piece changed its shape source. No new saved state enum.
 """
+from . import prepare_build as PB
 import json
 import os
 from .core import spec as S
@@ -82,17 +83,14 @@ def snapshot(spec, g=None):
 
 def job(g):
     """Read-only, cached job lookup for drawing; never repairs ac9_job."""
-    import bpy
+    from . import result_reference as RR
     if g is None:
         return None
     paths = tuple(m.filepath for m in g.modifiers if m.type == 'MESH_CACHE' and m.filepath)
-    key = (g.as_pointer(), str(g.get('ac9_job', '')), paths)
+    key = (g.as_pointer(), str(g.get('ac9_job', '')), paths, g.library.filepath if g.library else '')
     if key not in _jobs:
-        p = key[1]
-        if not p or not os.path.isdir(p):
-            p = next((os.path.dirname(bpy.path.abspath(f)) for f in paths
-                      if os.path.exists(os.path.join(os.path.dirname(bpy.path.abspath(f)), 'scene.idx.npz'))), None)
-        _jobs[key] = p
+        ref = RR.resolve(g, display=True)
+        _jobs[key] = ref.path if ref is not None else None
     return _jobs[key]
 
 
@@ -135,16 +133,17 @@ def apply(context, spec, create_missing=False, allow_split=False):
                 missing.clear()
         if create_missing and missing and not D.AC9_OT_SimDress.running():
             try:
-                res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size,
-                                shapes_only=True, placed_only=True)
-                pn = [str(n) for n in res['pat']['names']]
-                pairs = [(a, b) for a, b in res['pairs'] if pn[a] in missing and pn[b] in missing]
-                made, _, _ = PV.build(context, spec, res['pat'], res['tris'], res['X'], pairs, only=missing)
-                if made:
-                    context.view_layer.update()
-                if result_names(g) and made:
-                    D.set_shown_as_placed(g, spec, set(D.reset_pieces(g)) | set(made) |
-                                          {pn[b] for a, b in pairs if pn[a] in made})
+                with PB.operation(context) as preparation:
+                    res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size,
+                                    shapes_only=True, placed_only=True, preparation=preparation)
+                    pn = [str(n) for n in res['pat']['names']]
+                    pairs = [(a, b) for a, b in res['pairs'] if pn[a] in missing and pn[b] in missing]
+                    made, _, _ = PV.build(context, spec, res['pat'], res['tris'], res['X'], pairs, only=missing)
+                    if made:
+                        context.view_layer.update()
+                    if result_names(g) and made:
+                        D.set_shown_as_placed(g, spec, set(D.reset_pieces(g)) | set(made) |
+                                              {pn[b] for a, b in pairs if pn[a] in made})
                 # PV.build restores saved hand geometry and its pose once.
                 # That visible shape, not a cylinder proxy, is the next start.
             except (ValueError, RuntimeError) as exc:

@@ -13,6 +13,7 @@ Ctrl+wheel tilts it forward / back (Shift: by 1 deg).
 """
 import math
 from .i18n import CTX, rpt, tx
+from . import units as U
 
 import bpy
 import numpy as np
@@ -144,7 +145,7 @@ def hover(context, event, tool):
             r = around_at(context, ob, event)
             if r is not None:
                 MT._ui['preview'] = (r[0][2] * 0.001, True)
-                context.area.header_text_set(tx("Tape Around: {0:.1f} cm   click: keep, Tab: direction, Ctrl+wheel: tilt ({1:+.0f} deg)", r[0][0] / 10.0, ring_tilt(context)))
+                context.area.header_text_set(tx("Tape Around: {0}   click: keep, Tab: direction, Ctrl+wheel: tilt ({1:+.0f} deg)", MT._len(r[0][0]), ring_tilt(context)))
         if MT._ui['preview'] is None and prev is not None:
             context.area.header_text_set(None)
         changed = changed or prev is not None or MT._ui['preview'] is not None
@@ -166,7 +167,7 @@ def around_at(context, ob, event, plane=None, tilt=None):
     hit = MT._ray_body(context, ob, event)
     if hit is None:
         return None
-    cache = MT.body_cache(context, ob)
+    cache = MT.body_cache(context, ob, check=False)          # the hover: no reading the body per mouse move
     n0 = MT._plane_normal(cache, hit[0], plane or ring_plane(context))
     n = tilted(n0, ring_tilt(context) if tilt is None else tilt, 0.0)
     r = ME.tape_around(cache.body, hit[0], n)
@@ -205,7 +206,10 @@ class AC9_OT_MeasureTiltRing(bpy.types.Operator):
     delta: FloatProperty()
 
     def invoke(self, context, event):
-        key = MT._ui['hot'] if (MT._ui['hot'] or '').startswith('tape:') else sel(context)
+        hot = MT._ui['hot'] or ''
+        if hot and not hot.startswith('tape:'):     # over a measured line (it cannot tilt): not the picked tape
+            return {'PASS_THROUGH'}
+        key = hot or sel(context)
         if not key or not key.startswith('tape:'):
             return {'PASS_THROUGH'}
         t = next((t for t in MT.read(MT._body(context)).get('tapes', []) if t['name'] == key[5:]), None)
@@ -216,7 +220,7 @@ class AC9_OT_MeasureTiltRing(bpy.types.Operator):
         sc.ac9_msel_tilt_fb = max(-80.0, min(80.0, sc.ac9_msel_tilt_fb + self.delta))
         t = next(t for t in MT.read(MT._body(context))['tapes'] if t['name'] == key[5:])
         if context.area is not None:
-            context.area.header_text_set(tx("{0}: {1} cm, tilted {2:+.0f} deg", t['name'], MT._cm(t.get('value')), t['tilt'][0]))
+            context.area.header_text_set(tx("{0}: {1}, tilted {2:+.0f} deg", t['name'], MT._len(t.get('value')), t['tilt'][0]))
         _hover['xy'] = None
         return {'FINISHED'}
 
@@ -270,11 +274,12 @@ def delete_selected(context, report=None):
         select(context, '')
     else:
         ob = MT._body(context)
-        data = MT.read(ob)
-        if not data.get('offsets', {}).get(name):
+        if not MT.read(ob).get('offsets', {}).get(name):
             return False
+        cache = MT.body_cache(context, ob)             # first: on a reshaped body it takes everything again
+        data = MT.read(ob)
         data['offsets'].pop(name, None)
-        MT.measure_body(context, ob, data, only=MT.AC9_OT_MeasureMoveLevel._only(name))
+        MT.measure_body(context, ob, data, cache, only=MT.AC9_OT_MeasureMoveLevel._only(name))
         MT._redraw(context)
     return True
 
@@ -311,10 +316,10 @@ class AC9_OT_MeasureMirror(bpy.types.Operator):
         return s is not None and s[0] == 'tape'
 
     def execute(self, context):
-        _, name, t = selected(context)
         ob = MT._body(context)
+        cache = MT.body_cache(context, ob)                 # first: on a reshaped body it takes everything again
         data = MT.read(ob)
-        cache = MT.body_cache(context, ob)
+        _, name, t = selected(context)
         cx = float(np.asarray(cache.gd['torso']['o'], float)[0])        # world mm: the body's center line
         M, Mi = MT._mat(ob)
 
@@ -326,7 +331,7 @@ class AC9_OT_MeasureMirror(bpy.types.Operator):
             v = MT._dir_world(ob, d)
             v[0] = -v[0]
             return np.round(MT._dir_local(ob, v), 6).tolist()
-        u = {k: v for k, v in t.items() if k not in ('name', 'value', 'extra')}
+        u = {k: v for k, v in t.items() if k not in ('name', 'value', 'extra', 'anchors', 'ntri')}
         if t['kind'] == 'around':
             u['p'] = MT._round(MT._to_local(ob, _mirror_pts(w([t['p']]), cx))[0], 2)
             for k in ('n', 'n0'):
@@ -337,7 +342,7 @@ class AC9_OT_MeasureMirror(bpy.types.Operator):
         else:
             u['pts'] = MT._round(MT._to_local(ob, _mirror_pts(w(t['pts']), cx)), 2)
             if 'normals' in t:
-                u['normals'] = [mirror_dir(n) for n in t['normals']]
+                u['normals'] = [None if n is None else mirror_dir(n) for n in t['normals']]
         side = " (L)" if w([u.get('p') or u['pts'][0]])[0][0] > cx else " (R)"
         base = name[:-4] if name.endswith((" (L)", " (R)")) else name
         names = {x['name'] for x in data.get('tapes', [])}
@@ -349,7 +354,7 @@ class AC9_OT_MeasureMirror(bpy.types.Operator):
             self.report({'WARNING'}, "The mirror position is off the body")
             return {'CANCELLED'}
         select(context, 'tape:' + nm)
-        self.report({'INFO'}, rpt("{0}: {1} cm", nm, MT._cm(tape_value(u))))
+        self.report({'INFO'}, rpt("{0}: {1}", nm, MT._len(tape_value(u))))
         return {'FINISHED'}
 
 
@@ -446,6 +451,7 @@ def _tilt_set(i):
         if s is None or s[0] != 'tape' or s[2]['kind'] != 'around':
             return
         ob = MT._body(context)
+        cache = MT.body_cache(context, ob)                 # first: on a reshaped body it takes everything again
         data = MT.read(ob)
         t = next(t for t in data['tapes'] if t['name'] == s[1])
         tilt = list(t.get('tilt') or [0.0, 0.0])
@@ -454,7 +460,7 @@ def _tilt_set(i):
         t.setdefault('n0', np.round(MT._dir_local(ob, n0), 6).tolist())
         t['tilt'] = tilt
         t['n'] = np.round(MT._dir_local(ob, tilted(n0, tilt[0], tilt[1])), 6).tolist()
-        if MT.store_tape(ob, MT.body_cache(context, ob), t, data):
+        if MT.store_tape(ob, cache, t, data):
             MT._redraw(context)
     return set_
 
@@ -487,23 +493,23 @@ def draw_tool_tab(layout, context):
     if kind == 'item':
         col.label(text=tx(MT.LABEL.get(name, name)), icon='DRIVER_DISTANCE')
         col.label(text=tx("{0} (Measure Body)", tx(KINDS.get(rec['kind'], rec['kind']))))
-        col.label(text=tx("{0} cm", MT._cm(rec['value'])))
+        col.label(text=MT._len(rec['value']))
         if ME.HELP.get(name):
             col.label(text=tx(ME.HELP[name])[:60])
         off = MT.read(MT._body(context)).get('offsets', {}).get(name)
         if off:
-            col.label(text=tx("Moved {0:+.0f} mm (Edit Measure)", off))
+            col.label(text=tx("Moved {0} (Edit Measure)", MT._len(off) if off is None else U.fmt(context, off, signed=True, body=True)))
     elif kind == 'tape':
         col.prop(mp, "ac9_msel_name")
         col.label(text=tx(KINDS.get(rec['kind'], rec['kind'])), icon='MESH_CIRCLE' if rec['kind'] == 'around' else
                   ('IPO_LINEAR' if rec['kind'] == 'straight' else 'CURVE_PATH'))
         if rec['kind'] == 'along':
             col.prop(mp, "ac9_msel_main", expand=True)
-            col.label(text=tx("Along {0} cm  /  straight {1} cm", MT._cm(rec.get('value')), MT._cm(rec.get('extra'))))
+            col.label(text=tx("Along {0}  /  straight {1}", MT._len(rec.get('value')), MT._len(rec.get('extra'))))
         elif rec['kind'] == 'straight':
-            col.label(text=tx("Taut {0} cm  /  through {1} cm", MT._cm(rec.get('value')), MT._cm(rec.get('extra'))))
+            col.label(text=tx("Taut {0}  /  through {1}", MT._len(rec.get('value')), MT._len(rec.get('extra'))))
         else:
-            col.label(text=tx("{0} cm", MT._cm(rec.get('value'))))
+            col.label(text=MT._len(rec.get('value')))
         if rec['kind'] == 'around':
             col.prop(mp, "ac9_msel_tilt_fb")
             col.prop(mp, "ac9_msel_tilt_side")
@@ -515,7 +521,7 @@ def draw_tool_tab(layout, context):
         col.label(text="On the pattern", icon='DRIVER_DISTANCE')
     tg = MT._target(spec, name) if kind != 'tape' else None
     if kind != 'tape' and spec is not None:
-        col.operator("ac9_cloth_sim.measure_set_target", text=tx("Target: {0} cm", MT._cm(tg))).key = name
+        col.operator("ac9_cloth_sim.measure_set_target", text=tx("Target: {0}", MT._len(tg))).key = name
     row = layout.row(align=True)
     if kind == 'tape':
         row.operator("ac9_cloth_sim.measure_mirror", icon='MOD_MIRROR')
@@ -545,7 +551,7 @@ def draw_list(layout, context):
     from . import ui
     for key, label, v, icon in rows:               # the rows of every list (REVIEW_fable_lists_ui_2026-10-25 section 2)
         ui.draw_pick_row(col, "ac9_cloth_sim.measure_select", label[:18], depress=key == cur, icon=icon,
-                         right=tx("{0} cm", MT._cm(v)), right_units=3.0).key = key
+                         right=MT._len(v), right_units=3.0).key = key
     if not rows:
         layout.label(text="Measure Body (Measure panel), or lay a tape", icon='INFO')
 

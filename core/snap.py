@@ -151,7 +151,7 @@ def angle_of(origin, q):
     return math.degrees(math.atan2(d[1], d[0]))
 
 
-# ---------------------------------------------------------------- gaps while dragging (Edit Pattern)
+# ---------------------------------------------------------------- gaps while dragging (Edit Pieces)
 # While a point, an internal line or an edge is dragged: its distances to the lines around it in its own piece, and
 # snapping to the middle, to even spacing and to a distance another internal line has (user 2026-10-23, DECISIONS
 # cloth-sim-drag-distance-snap-2026-10-23, Fable review REVIEW_fable_snap_measure_input_2026-10-23).

@@ -5,7 +5,7 @@ so. A tool works by what is clicked (the pattern, the body, the garment), not by
 REVIEW_fable_ui_layout_r2_2026-10-13 §2). The pattern tools are in the toolbar only while the "Pattern Tools"
 switch at the top of the sidebar is on (scene.ac9_cloth_sim.pattern_tools).
 
-  ──  Edit Pattern | Draw Piece ▾ Rectangle Piece ▾ Ellipse Piece | Internal Line ▾ Internal Rectangle ▾
+  ──  Edit Pieces | Draw Piece ▾ Rectangle Piece ▾ Ellipse Piece | Internal Line ▾ Internal Rectangle ▾
       Internal Ellipse | Edit Seams ▾ Add Seam                                (the switch on)
   ──  Edit Measure ▾ Tape Around ▾ Tape Along ▾ Tape Straight | Place      (always)
   (names: user 2026-10-21, DECISIONS cloth-sim-select-measure-delete-2026-10-21; the ids are kept)
@@ -59,7 +59,7 @@ WORKS = {
     'PLACE': ("body (pattern: picks pieces)", "the body and the pattern",
               {'BODY', 'PATTERN', 'PLANE', 'NONE', 'GARMENT', 'OTHER', 'OBSTACLE', 'PLACED'}),
 }
-NAMES = {'EDIT_PATTERN': "Edit Pattern", 'TRANSFORM_PATTERN': "Transform Pattern", 'DRAW_PIECE': "Draw Piece", 'DRAW_LINE': "Internal Line",
+NAMES = {'EDIT_PATTERN': "Edit Pieces", 'TRANSFORM_PATTERN': "Whole Pieces", 'DRAW_PIECE': "Draw Piece", 'DRAW_LINE': "Internal Line",
          'RECT': "Rectangle Piece", 'ELLIPSE': "Ellipse Piece", 'IRECT': "Internal Rectangle",
          'IELLIPSE': "Internal Ellipse", 'EDIT_SEAMS': "Edit Seams", 'ADD_SEAM': "Add Seam",
          'ADD_SEAM_MN': "Add Seam (M:N)", 'MEASURE': "Tape Around",
@@ -186,6 +186,15 @@ def _guide_under(context, event):
     o = np.array(region_2d_to_origin_3d(context.region, context.region_data, xy)) * 1000.0
     d = np.array(region_2d_to_vector_3d(context.region, context.region_data, xy))
     return BA.ray_hit(spec['guides'], o, d) is not None
+
+
+def placed_piece(context, ob, idx):
+    """The piece of a placed object's face (placed_view.placed_face_piece), or None."""
+    from . import placed_view as PLV
+    try:
+        return PLV.placed_face_piece(context, ob, idx)
+    except Exception:
+        return None
 
 
 def garment_piece(ob, idx):
@@ -353,7 +362,7 @@ class AC9_OT_SimToolHover(bpy.types.Operator):
                     PC.tape_point(context, event, kind)
                 else:
                     PC.clear(context)
-            elif t in DRAW_TOOLS:                        # the pattern's view, as with Edit Pattern
+            elif t in DRAW_TOOLS:                        # the pattern's view, as with Edit Pieces
                 from . import draft_tool as DT
                 DT.hover_piece(context, event)
                 if ok:
@@ -456,6 +465,14 @@ class AC9_OT_SimToolClick(bpy.types.Operator):
             r = _call("ac9_cloth_sim.add_seam_mn", event)
         elif t == 'PLACE':
             guide = kind != 'PATTERN' and _guide_under(context, event)
+            # off the guides the pieces are laid flat (user 2026-11-10): on the body, a Collision object, another
+            # mesh or the ground, and a flat placed piece slides; the garment still picks its pieces
+            if not guide and kind in ('BODY', 'OBSTACLE', 'OTHER', 'NONE'):
+                guide = True
+            elif not guide and kind == 'PLACED':
+                from .core import spec as S_
+                spec_ = store.get(context)[0] or {}
+                guide = S_.is_flat(spec_.get('placement', {}).get(placed_piece(context, ob, idx)))
             to_place = kind != 'PATTERN' and SEL.any_pieces(context)
             picked = kind == 'PLACED' and ob.select_get()
             b = place_branch(kind, picked, event.shift, to_place, guide)
@@ -479,7 +496,7 @@ class AC9_OT_SimToolClick(bpy.types.Operator):
                 set_note(context, event, "Place: click pattern pieces first (Shift: more), then a guide")
                 return _branch_done(b, {'CANCELLED'})
             if b == 'no_guide':
-                set_note(context, event, "Place: press on a guide (the cylinders round the avatar)")
+                set_note(context, event, "Place: press on a guide, a surface or the ground (not on the pattern)")
                 return _branch_done(b, {'CANCELLED'})
             _branch['name'] = b
             r = _call("ac9_cloth_sim.place", event)
@@ -539,11 +556,11 @@ def works_on(layout, tool):
     layout.label(text=tx("Works on: ") + tx(WORKS[tool][0]), icon='INFO')
 
 
-# what each tool does, one line in its header after "Works on" (user 2026-10-21: only Edit Pattern and Edit Seams
+# what each tool does, one line in its header after "Works on" (user 2026-10-21: only Edit Pieces and Edit Seams
 # said it; the rest was only in the tooltips). X / Del deletes with every AC9 tool (DELETE_KEYS).
 KEYS = {
-    'DRAW_PIECE': "click corners  first corner / Enter: close  type mm: length  Shift 15 deg  Backspace undo",
-    'DRAW_LINE': "click points on a piece  Enter: finish  Shift 15 deg  type mm: length  Backspace undo",
+    'DRAW_PIECE': "click corners  first corner / Enter: close  type a length  Shift 15 deg  Backspace undo",
+    'DRAW_LINE': "click points on a piece  Enter: finish  Shift 15 deg  type a length  Backspace undo",
     'RECT': "drag, or click two corners  Shift square  Alt from center  type W Tab H Enter",
     'ELLIPSE': "drag, or click two corners  Shift circle  Alt from center  type W Tab H Enter",
     'IRECT': "drag inside a piece, or click two corners  Shift square  Alt from center",
@@ -553,7 +570,7 @@ KEYS = {
     'MEASURE': "click: keep the ring  Tab direction  Ctrl+wheel tilt (Shift 1 deg)  click a line: pick",
     'TAPE_ALONG': "click points  Enter: keep  Backspace undo  Esc / right-click: cancel  click a line: pick",
     'TAPE_STRAIGHT': "click two points: pulled taut (over bulges, across hollows)  click a line: pick",
-    'MOVE_LEVEL': "drag a line or a tape, release: keep  Esc / right-click: put back  Ctrl+wheel on a ring: tilt",
+    'MOVE_LEVEL': "drag a line or a tape, release: keep  Esc / right-click: put back  Ctrl+wheel on a laid ring: tilt",
     'PLACE': ("click pieces (Shift more), press on a guide and drag  drag a placed piece: moves it  "
               "angle / height / tilt: AC9 Piece  on the garment: G / R the piece"),
 }
@@ -580,7 +597,7 @@ class AC9_WT_DrawPiece(bpy.types.WorkSpaceTool):
     bl_idname = "ac9_cloth_sim.draw_piece_tool"
     bl_label = "Draw Piece"
     bl_description = ("Draw a new pattern piece: click its corners, click the first corner or Enter to close. Type "
-                      "a number for the side length, Ctrl: whole mm")
+                      "a number for the side length, Ctrl: no snapping")
     bl_icon = "ops.gpencil.draw.poly"
     bl_widget = None
     bl_keymap = (
@@ -727,7 +744,7 @@ class AC9_WT_MoveLevel(bpy.types.WorkSpaceTool):
     bl_label = "Edit Measure"
     bl_description = ("Edit a measurement on the body: drag a measured line up or down, or a tape you laid to "
                       "another place (a ring slides with the cursor, a tape's nearest point follows it); Ctrl+wheel "
-                      "over a ring tilts it forward / back (Shift: by 1 deg)")
+                      "over a ring tape you laid tilts it forward / back (Shift: by 1 deg)")
     bl_icon = "ops.transform.edge_slide"
     bl_widget = None
     bl_keymap = _tape_keymap('MOVE_LEVEL') + (

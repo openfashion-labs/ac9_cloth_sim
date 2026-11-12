@@ -112,7 +112,7 @@ def _placed_uv(context, ob, dg, verts, w):
         src, tw = ob.get(PLV.PROP), ob.get(PLV.TWIN_PROP)
         if outlines is None or src not in outlines or tw not in outlines:
             return None
-        p = PLV.mirror_flat(p[None], outlines[src].B, outlines[tw].B)[0]
+        p = PLV.mirror_flat(p[None], outlines[src].B, outlines[tw].B, outlines[src].plane)[0]
     return np.asarray(p) / 1000.0
 
 

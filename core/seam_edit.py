@@ -12,7 +12,7 @@ a stale link (Fable review 2026-10-13).
 """
 import colorsys
 import zlib
-from ._i18n import rpt
+from ._i18n import rpt, length as len_text
 
 import numpy as np
 
@@ -238,7 +238,7 @@ def _move_one(sm, k, which, ds, tr):
         s1 += ds
     nd = s1 - s0
     if d != 0 and np.sign(nd) != np.sign(d) or abs(nd) < MIN_SIDE_MM:
-        raise ValueError(rpt("{0}: the side would be shorter than {1:.0f} mm", sm['id'], MIN_SIDE_MM))
+        raise ValueError(rpt("{0}: the side would be shorter than {1}", sm['id'], len_text(MIN_SIDE_MM)))
     if is_closed(tr) and abs(nd) > tr.L - MIN_SIDE_MM:
         raise ValueError(rpt("{0}: the side would go all the way round", sm['id']))
     if not is_closed(tr):

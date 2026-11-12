@@ -24,6 +24,8 @@ TIMING = {'wall0': round(time.time() - (time.perf_counter() - _T0), 3)}
 def _tmark(k):
     TIMING[k] = round(time.perf_counter() - _T0, 3)
     _trace('timing_' + k)
+    if globals().get('_AC9_PREPARED_GATE') is not None:
+        _AC9_PREPARED_GATE.progress(k)
 
 
 import numpy as np
@@ -36,6 +38,10 @@ import warp as wp
 # smooth compression softening of the BW stretch axes (ratio < 0 or absent = off).
 _cfg0 = json.load(open(sys.argv[3], encoding='utf-8')) if len(sys.argv) > 3 else {}
 FAST_LIVE = bool(_cfg0.get('fast_live'))
+NATIVE_THREE = bool(_cfg0.get('native_three'))
+if NATIVE_THREE:
+    from native_three_contract import validate_config as _validate_native_three
+    _validate_native_three(_cfg0)
 # Live before sewn (2026-11-04, user): until every pattern stitch is sewn, a Fast Live run is the product's Live -
 # 10 substeps of 1/(fps x 10) and the body's default contact damping. From the placed pieces the 2 substeps with no
 # damping closed the seams hard and pressed the cloth into the body (user's 4-piece shirt: 114 points 1 mm+ inside,
@@ -115,6 +121,19 @@ print('newton', newton.__file__, 'membrane', 'bw' if MEMBRANE_BW else 'nh', flus
 
 idx_f, av_f, cfg_f, out = sys.argv[1:5]
 cfg = json.load(open(cfg_f, encoding='utf-8')); os.makedirs(out, exist_ok=True)
+_NATIVE_RUNTIME = None
+_PREPARED_GATE = globals().get('_AC9_PREPARED_GATE')
+if NATIVE_THREE and not globals().get('_AC9_PREWARM') and _PREPARED_GATE is None and ('native_runtime_dir' in cfg or 'native_runtime_token' in cfg):
+    from native_runtime_io import WorkerRuntime
+    _NATIVE_RUNTIME = WorkerRuntime(cfg, out)
+    _runtime_cleanup = globals().get('_AC9_CLEANUP')
+    if _runtime_cleanup is not None:
+        _runtime_cleanup(_NATIVE_RUNTIME.close)
+    else:
+        import atexit
+        atexit.register(_NATIVE_RUNTIME.close)
+    _NATIVE_RUNTIME.start()
+LIVE_OUT = str(_NATIVE_RUNTIME.directory) if _NATIVE_RUNTIME is not None else out
 d = dict(np.load(idx_f))
 N_FULL = len(d['Xinit'])
 _tmark('loaded')
@@ -155,7 +174,7 @@ if cfg.get('lay') and pat_names is not None:
 # before anything else: a layer placed under another one before the seams draw them together (the side panel's
 # vent extension under the back's folded flap, as the reference drape has them; dress.py AC9_SIM_STACK_UNDER)
 if cfg.get('stack_under'):
-    from scipy.spatial import cKDTree as _KD
+    from spatial import cKDTree as _KD
     _bk = _KD(np.load(av_f)['body_co'] * 1000.0)
     _moved = []
     for g in cfg['stack_under']:
@@ -252,7 +271,7 @@ if len(BIND_V):
     OL_LOG = []
     if OL:
         _fl = np.asarray(d['flat'], np.float64)                     # mm, full garment, before any subset
-        from scipy.spatial import cKDTree as _KDo
+        from spatial import cKDTree as _KDo
         _bko = _KDo(np.load(av_f)['body_co'] * 1000.0)
         for g in OL:
             gv = np.asarray(g['verts'], np.int64); gr = np.asarray(g['roll'], np.int64)
@@ -466,6 +485,8 @@ F = d['F'].astype(np.int32)
 E = d['E_st'].astype(np.int32)
 E_SEAM = np.array([SEAM_OF.get(frozenset((int(sel[a_]), int(sel[b_]))), '') for a_, b_ in E], dtype=object)
 log = {'cfg': cfg, 'frame_s': []}
+if _NATIVE_RUNTIME is not None:
+    log['native_runtime_io'] = {'directory': LIVE_OUT, 'job_directory': out}
 # the switched-off seams' stitches (scene.idx E_st_off, pattern_build 'stitch_off'): in a Live / Local stage they are
 # springs right after the pattern stitches, held at no stiffness, so the add-on can sew a seam on while the stage
 # runs (live_params below; user 2026-10-23). Never in E: nothing else (guards, hinges, the stitch cap) sees them.
@@ -631,7 +652,7 @@ if cfg.get('depenetrate'):
 # through it). Layers placed in the right order keep it; pushed into it during the run they broke (RESULT_G3 26-31)
 CN = None
 if cfg.get('clear_new') and (cfg.get('init_from_pieces') is not None or cfg['clear_new'].get('outer')):
-    from scipy.spatial import cKDTree as _KDc
+    from spatial import cKDTree as _KDc
     cn_ = cfg['clear_new'] if isinstance(cfg['clear_new'], dict) else {}
     gap_c = float(cn_.get('gap_mm', 2.0)) / 1000.0
     reach_c = float(cn_.get('reach_mm', 25.0)) / 1000.0
@@ -1522,19 +1543,6 @@ if cfg.get('bend_scale_pieces'):
     model.edge_bending_properties.assign(bp)
     log['bend_scale_pieces'] = cfg['bend_scale_pieces']
 
-# "strengthen": make named pieces stiffer than their fabric, membrane and bending alike
-if cfg.get('strengthen_pieces'):
-    tm = model.tri_materials.numpy()                 # per triangle: ke, ka, kd, drag, lift
-    fp_sel = d['fp']
-    ei_ = model.edge_indices.numpy(); bp = model.edge_bending_properties.numpy(); vp = v_piece[sel]
-    for pname, fac in cfg['strengthen_pieces'].items():
-        pi_ = pat_names.index(pname)
-        tm[fp_sel == pi_, 0:2] *= float(fac)
-        tm[fp_sel == pi_, 3] *= float(fac)          # aniso_membrane: the shear too
-        m_ = (ei_[:, 2] >= 0) & (vp[ei_[:, 2]] == pi_)
-        bp[m_, 0] *= float(fac)
-    model.tri_materials.assign(tm); model.edge_bending_properties.assign(bp)
-    log['strengthen_pieces'] = cfg['strengthen_pieces']
 
 
 def _dihedral(P_, H_):
@@ -1676,7 +1684,7 @@ if cfg.get('fold_turn') and cfg.get('fold_deg'):
         else:
             _X = _Xn
     if DRIVE:
-        from scipy.spatial import cKDTree as _KDd, cKDTree      # cKDTree: _layer_sides
+        from spatial import cKDTree as _KDd, cKDTree      # cKDTree: _layer_sides
         _fzd = np.isin(_vpl, [pat_names.index(n_) for n_ in (cfg.get('frozen_pieces') or [])])
         _Thd = F[_fzd[F].all(1)].astype(np.int64)
         _Xd = np.asarray(X0, np.float64)
@@ -2240,7 +2248,26 @@ if BOUND_COUPLING:
     if (_bv_bc < 0).any() or (_bt_bc < 0).any():
         raise ValueError('AC9 bound coupling needs every follower and support in the active model')
     solver.ac9_bound_constraints = _BC.BoundConstraints(model, _bv_bc, _bt_bc, BIND[1][_bc_mask], BIND[2][_bc_mask])
+    solver.ac9_bound_constraints.native_fused = not FAST_LIVE
     log['bound_coupling'] = solver.ac9_bound_constraints.summary
+NATIVE_COLOR_PLAN = None
+if NATIVE_THREE:
+    if not solver.device.is_cuda or model.body_count or model.tet_count:
+        raise ValueError('AC9 Native 3 requires CUDA and a static-body cloth surface')
+    if hasattr(solver, 'ac9_layer_crossings'):
+        raise ValueError('AC9 Native 3 does not support Piece Layer recovery')
+    from native_three_automatic import AutomaticThreeBatchPlan
+    from native_experimental_packed import solve_elasticity_packed
+    from native_experimental_small_tiles import solve_elasticity_width8
+    from native_experimental_sparse_contacts import SparseContacts
+    NATIVE_COLOR_PLAN = AutomaticThreeBatchPlan(model, getattr(solver, 'ac9_bound_constraints', None), validate_materials=False)
+    NATIVE_COLOR_PLAN.install()
+    solver.ac9_elasticity_packed = solve_elasticity_packed
+    solver.ac9_elasticity_narrow = solve_elasticity_width8
+    solver.ac9_native_elastic_widths = tuple(8 if group.size >= 2048 else 16 for group in model.particle_color_groups)
+    solver.ac9_self_contact_queue = SparseContacts(solver)
+    solver.ac9_self_contact_queue.enable_planar = True
+    log['native_three'] = dict(NATIVE_COLOR_PLAN.summary, applied=True, experimental=True)
 if True:
     # the patched particle kernels must be the ones VBD loaded (Newton imports them with the solver), in every run
     _km = sys.modules.get(_KMOD)
@@ -2273,7 +2300,7 @@ if cfg.get('layers') and cfg.get('self_contact', True) and pat_names is not None
     if len(_lay) > model.particle_count:
         sys.exit(f"layers: {len(_lay)} layer ids for {model.particle_count} particles")
     if len(np.unique(_lay)) > 1:
-        from scipy.spatial import cKDTree as _KDl
+        from spatial import cKDTree as _KDl
         _tl = model.tri_indices.numpy().astype(np.int64)
         _xl = np.asarray(X0, np.float64)
         _A, _B, _C = _xl[_tl[:, 0]], _xl[_tl[:, 1]], _xl[_tl[:, 2]]
@@ -2457,7 +2484,7 @@ control = model.control()
 LAYER = []
 LAYER_K = 0
 if cfg.get('layer_order'):
-    from scipy.spatial import cKDTree
+    from spatial import cKDTree
     _BODY_KD = cKDTree(np.asarray(Bv, float))
     _loc_ = (lambda ix: remap[np.asarray(ix, np.int64)]) if SUBSET else (lambda ix: np.asarray(ix, np.int64))
     _ring = [set() for _ in range(len(X0))]
@@ -3276,12 +3303,27 @@ if hasattr(solver, 'ac9_layer_crossings') and cfg.get('layers_coupled', True):
 
 _trace('graph_begin')
 graph = None
+_native_pairs = []
+
+
+def _capture_frame():
+    if (not FAST_LIVE and LAYER_RECOVERY is None
+            and getattr(wp, 'is_conditional_graph_supported', lambda: False)()):
+        # Native repeats the same two buffer orientations. Capture those once
+        # and retain their order as child graphs, without executing a substep.
+        from native_graph import capture as _native_capture
+        frame, counter = _native_capture(_substep_a, _substep_b, sub)
+        _native_pairs.append(counter)
+        return frame
+    with (LAYER_RECOVERY.capture() if LAYER_RECOVERY else wp.ScopedCapture()) as frame:
+        simulate()
+    return frame.graph
+
+
 if cfg.get('graph', True) and wp.get_device().is_cuda:
     # stream capture records the launches without running them; an even substep count leaves s0/s1 as they were
     assert sub % 2 == 0
-    with (LAYER_RECOVERY.capture() if LAYER_RECOVERY else wp.ScopedCapture()) as cap:
-        simulate()
-    graph = cap.graph
+    graph = _capture_frame()
 SPLIT_GRAPHS = None
 if graph is not None and os.environ.get('AC9_TEST_SPLIT_GRAPH'):
     # test (claude 11/03): the same launches as 2*sub graphs (before / after solver.step), a slot after each step
@@ -3300,9 +3342,7 @@ if graph is not None and os.environ.get('AC9_TEST_SPLIT_GRAPH'):
 graph_free = graph                             # the substeps with the freeing kernels (see FREE['launch'])
 if graph is not None and FREE is not None and not FREE['launch']:
     FREE['launch'] = True
-    with (LAYER_RECOVERY.capture() if LAYER_RECOVERY else wp.ScopedCapture()) as cap:
-        simulate()
-    graph_free = cap.graph
+    graph_free = _capture_frame()
     FREE['launch'] = False
 
 _trace('graph_end')
@@ -3421,6 +3461,7 @@ if cfg.get('live'):
              'frozen': set(cfg.get('frozen_pieces') or []) - set(cfg.get('ghost_pieces') or []),
              'gravity': float(cfg.get('gravity_z', -9.81)) != 0.0,
              'elastic': {ELASTIC_P[k_]: ELASTIC[k_][3] for k_ in range(len(ELASTIC)) if ELASTIC_P[k_]},
+             'strengthen_pieces': dict(cfg.get('strengthen_pieces') or {}),
              'ramps': [], 'applied': []}
     LIVEP['terminal']=cfg.get('experimental_fold_terminal')
     if BF2 is not None:
@@ -3498,6 +3539,11 @@ def _live_apply(P_, f_):
         planned,audit=_terminal_module().apply_terminal_field(new_terminal,d['flat'],model.edge_indices.numpy(),model.edge_rest_angle.numpy(),groups,new_fold)
         terminal_targets={k:planned[v['hinges']].copy() for k,v in audit['lines'].items()}
     done_ = []
+    if 'strengthen_pieces' in P_:
+        changed = _set_strengthen(P_['strengthen_pieces'], live=True)
+        if changed:
+            done_.append('strengthen ' + ', '.join(f'{n} x{STRENGTHEN.get(n, 1.):g}' for n in changed))
+        LIVEP['strengthen_pieces'] = dict(STRENGTHEN)
     if 'gravity' in P_ and bool(P_['gravity']) != LIVEP['gravity']:
         LIVEP['gravity'] = bool(P_['gravity'])
         model.set_gravity((0.0, 0.0, -9.81 if LIVEP['gravity'] else 0.0))
@@ -3594,6 +3640,8 @@ def _live_apply(P_, f_):
                     tm_ = model.tri_materials.numpy()
                     tm_[T_, 0:2] *= 0.3                  # core/elastic.STRENGTH
                     tm_[T_, 3] *= 0.3
+                    if NATIVE_COLOR_PLAN is not None:
+                        NATIVE_COLOR_PLAN.validate_tri_materials(tm_)
                     model.tri_materials.assign(tm_)
             done_.append(f"elastic {n_} x{r1_:g}")
         LIVEP['elastic'] = new_
@@ -3677,7 +3725,7 @@ if SETTLE:
 #   crossing: new cloth-through-cloth pairs between pieces (below)
 GUARD = cfg.get('guard')
 if GUARD:
-    from scipy.spatial import cKDTree as _KDg
+    from spatial import cKDTree as _KDg
     G_EVERY = int(GUARD.get('every', 10))
     G_FAR, G_NEAR = float(GUARD.get('far_mm', 15.0)), float(GUARD.get('near_mm', 3.0))
     G_MIN, G_SHARE = int(GUARD.get('min', 30)), float(GUARD.get('share', 0.03))
@@ -3761,18 +3809,14 @@ if cfg.get('jitter'):
     J_ = cfg['jitter'] if isinstance(cfg['jitter'], dict) else {}
     _jF = np.asarray(F, np.int64)
     if len(_jF) and int(_jF.max()) < len(X0):
-        from scipy.sparse import coo_matrix as _jcoo
+        from mesh_graph import mesh_averages
         _jN = len(X0)
-        _je = np.unique(np.sort(np.concatenate([_jF[:, [0, 1]], _jF[:, [1, 2]], _jF[:, [2, 0]]]), 1), axis=0)
-        _jA = _jcoo((np.ones(2 * len(_je)), (np.r_[_je[:, 0], _je[:, 1]], np.r_[_je[:, 1], _je[:, 0]])),
-                    shape=(_jN, _jN)).tocsr()
-        _jA.data[:] = 1.0
-        _jVF = _jcoo((np.ones(3 * len(_jF)), (_jF.ravel(), np.repeat(np.arange(len(_jF)), 3))), shape=(_jN, len(_jF))).tocsr()
+        _jA, _jVF = mesh_averages(_jF, _jN)
         JIT = {'rel_mm': float(J_.get('rel_mm', 0.5)), 'flick_deg': float(J_.get('flick_deg', 4.0)),
                'alpha': float(J_.get('alpha', 0.1)), 'tail': int(J_.get('tail', 30)),
                'F': _jF, 'A': _jA,
-               'M': _jcoo(_jA.multiply(1.0 / np.maximum(np.asarray(_jA.sum(1)).ravel(), 1)[:, None])).tocsr(),
-               'VF': _jcoo(_jVF.multiply(1.0 / np.maximum(np.asarray(_jVF.sum(1)).ravel(), 1)[:, None])).tocsr(),
+               'M': _jA,
+               'VF': _jVF,
                'rel': np.zeros(_jN), 'flk': np.zeros(_jN), 'n': None, 'ever': np.zeros(_jN, np.int32),
                'ring': np.zeros((int(J_.get('tail', 30)), _jN), bool), 'judged': 0,
                'first': np.full(_jN, -1, np.int32), 'trace': [], 's': 0.0,
@@ -3784,11 +3828,10 @@ if cfg.get('jitter'):
             return n_ / (np.linalg.norm(n_, axis=1, keepdims=True) + 1e-12)
 
         def _jit_clusters(mask, score):
-            from scipy.sparse.csgraph import connected_components as _jcc
             ix_ = np.nonzero(mask)[0]
             if not len(ix_):
                 return []
-            nc_, lab_ = _jcc(JIT['A'][ix_][:, ix_], directed=False)
+            nc_, lab_ = JIT['A'].components(mask)
             _vp = v_piece[sel]
             out_ = []
             for c_ in range(nc_):
@@ -3955,6 +3998,51 @@ if KIN_ON:
         q_[BL_V] = _bound_at(BL_T, BL_W, BL_D, q_)
         v_ = state.particle_qd.numpy(); v_[BL_V] = 0.0
         state.particle_q.assign(q_.astype(np.float32)); state.particle_qd.assign(v_)
+# Strengthen changes constitutive stiffness only, after fabric/fold/bind setup.
+# Ratio updates preserve independent elastic changes and the current hysteresis history.
+STRENGTHEN = {}
+STRENGTHEN_TERMINAL_DIRTY = False
+
+def _set_strengthen(values, live=False):
+    global STRENGTHEN, STRENGTHEN_TERMINAL_DIRTY
+    new = {n: float(v) for n, v in values.items() if n in pat_names}
+    if any(not np.isfinite(v) or v < 1.0 or v > 100.0 for v in new.values()):
+        raise ValueError('AC9 Strengthen: multiplier must be finite and between 1 and 100')
+    changed = {n for n in set(new) | set(STRENGTHEN) if new.get(n, 1.) != STRENGTHEN.get(n, 1.)}
+    if changed:
+        tm = model.tri_materials.numpy()
+        bp = model.edge_bending_properties.numpy()
+        ei = model.edge_indices.numpy()
+        vp = v_piece[sel]
+        ratios = np.ones(len(bp), np.float32)
+        for n in changed:
+            ratio = new.get(n, 1.) / STRENGTHEN.get(n, 1.)
+            pi = pat_names.index(n)
+            rows = np.nonzero(d['fp'] == pi)[0]
+            tm[np.ix_(rows, [0, 1, 3] if MEMBRANE_BW else [0, 1])] *= ratio
+            mask = (ei[:, 2] >= 0) & (vp[np.maximum(ei[:, 2], 0)] == pi)
+            ratios[mask] = ratio
+        bp[:, 0] *= ratios
+        if NATIVE_COLOR_PLAN is not None:
+            NATIVE_COLOR_PLAN.validate_tri_materials(tm)
+            NATIVE_COLOR_PLAN.validate_edge_materials(bp)
+        model.tri_materials.assign(tm)
+        model.edge_bending_properties.assign(bp)
+        if BF2 is not None and BF2['f_on'] is not None:
+            BF2['k0'].assign(BF2['k0'].numpy() * ratios[BF2['r_np']])
+        if live and cfg.get('experimental_fold_terminal'):
+            # The terminal checkpoint manifest describes immutable initial stiffness.
+            # Keep the visible result/settings, but rebuild on the next Live after an edit.
+            STRENGTHEN_TERMINAL_DIRTY = True
+    STRENGTHEN = new
+    return sorted(changed)
+
+_set_strengthen(cfg.get('strengthen_pieces') or {})
+if STRENGTHEN:
+    log['strengthen_pieces'] = dict(STRENGTHEN)
+if NATIVE_COLOR_PLAN is not None:
+    log['native_three']['excluded_validation'] = NATIVE_COLOR_PLAN.validate_excluded()
+
 # the stage-start check (solver/start_check.py, user 2026-10-19): the pieces joining in this stage, where they are
 # before frame 1 -- inside the body, through other cloth, sewn through other cloth, or another job's frames. Dress
 # warns and goes on; any other caller stops here unless env AC9_START_CHECK_ALLOW gives a reason
@@ -3965,9 +4053,13 @@ if cfg.get('experimental_fold_terminal'):
     TERMINAL_INITIAL_PROPS=model.edge_bending_properties.numpy().copy()
     TERMINAL_FIELD_STATE=_build_terminal_checkpoint(globals())
 from live_checkpoint import build_signature as _checkpoint_build_signature
+_trace('checkpoint_build_signature_begin')
 _CHECKPOINT_BUILD = _checkpoint_build_signature(globals())
+_trace('checkpoint_build_signature_end')
 from live_checkpoint import fingerprint as _checkpoint_fingerprint
+_trace('checkpoint_fingerprint_begin')
 _CHECKPOINT_FINGERPRINT = _checkpoint_fingerprint(globals())
+_trace('checkpoint_fingerprint_end')
 if cfg.get('checkpoint_in'):
     if not cfg.get('live'):
         raise ValueError('A Live checkpoint can only resume a Live stage')
@@ -3984,6 +4076,7 @@ if cfg.get('checkpoint_in'):
     _RESUME_FRAME = int(_resume_meta['frame'])
     _RESUME_FIRST = s0.particle_q.numpy()[:N_G].copy()
     log['checkpoint_resume'] = {'status': 'restored', 'frame': _RESUME_FRAME}
+_trace('start_check_begin')
 if cfg.get('start_check', True):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import start_check as _SC
@@ -4044,6 +4137,7 @@ if cfg.get('start_check', True):
         log['error'] = 'start check: ' + '; '.join(_sc_rep['problems'])
         res = res[:1]
         frames = 0
+_trace('start_check_end')
 _CHECKPOINT_ORIGIN = (_resume_meta['start_origin'] if _RESUME_FRAME else
                       {'accepted': 'error' not in log, 'start_check': log.get('start_check'),
                        'override': os.environ.get('AC9_START_CHECK_ALLOW'),
@@ -4072,6 +4166,8 @@ if FAST_LIVE and 'error' not in log:
 # left after the frame's move; [frame, 'released']
 log['grab'] = []
 log['stroke'] = []                    # [frame, verts, move mm, own crossing edges, held hinges] / 'released'
+if _PREPARED_GATE is not None:
+    _PREPARED_GATE(globals())
 _tmark('loop_start')
 t_all = time.perf_counter()
 f = _RESUME_FRAME
@@ -4756,23 +4852,34 @@ for f in range(_RESUME_FRAME + 1, frames + 1):
     # the add-on reads these while they are written: on Windows a rename onto a file that is open for reading is
     # refused (it stopped a run at frame 66, 2026-09-28), so a refused update is skipped, never fatal
     try:
-        _pt = os.path.join(out, 'progress_tmp.txt')
+        _pt = os.path.join(LIVE_OUT, 'progress_tmp.txt')
         with open(_pt, 'w') as _fp:
             _fp.write(f"{f} {frames}")
-        os.replace(_pt, os.path.join(out, 'progress.txt'))
+        os.replace(_pt, os.path.join(LIVE_OUT, 'progress.txt'))
     except OSError:
         pass
+    # Validate before either live publication or Stop: rejected frames are diagnostics, never results.
+    if not np.isfinite(res[f]).all():
+        log['error'] = f'non-finite positions at frame {f}'
+        res = res[:f]
+        break
     # frame 1 too: the cloth shows as soon as the loop runs, not LIVE_EVERY frames later (writing only, 2026-10-20)
     if LIVE_EVERY and (f % LIVE_EVERY == 0 or f == frames or f == 1):
         try:
-            _tmp = os.path.join(out, 'live_tmp.npy')
+            _tmp = os.path.join(LIVE_OUT, 'live_tmp.npy')
             _full = (X_full / 1000.0).astype(np.float32).copy()
+            if _NATIVE_RUNTIME is not None:
+                _NATIVE_RUNTIME.set_expected_points(len(_full))
             if WELD is None:
                 _full[sel] = res[f]
             else:
                 _full[SEL_OUT] = res[f][W_MAP]
             _rebuild_bound(_full)
-            np.save(_tmp, _full); os.replace(_tmp, os.path.join(out, 'live.npy'))
+            if not np.isfinite(_full).all():
+                log['error'] = f'non-finite full positions at frame {f}'
+                res = res[:f]
+                break
+            np.save(_tmp, _full); os.replace(_tmp, os.path.join(LIVE_OUT, 'live.npy'))
             if f == _RESUME_FRAME + 1:
                 _trace('first_live_output', frame=f)
         except OSError:
@@ -4800,10 +4907,6 @@ for f in range(_RESUME_FRAME + 1, frames + 1):
         else:
             log['error'] = f'stopped at frame {f}'
         _trace('checkpoint_end', status=log.get('checkpoint', {}).get('status'))
-        res = res[:f + 1]
-        break
-    if not np.isfinite(res[f]).all():
-        log['error'] = f'non-finite positions at frame {f}'
         res = res[:f + 1]
         break
     if GUARD and (f == 1 or f % G_EVERY == 0):
@@ -5066,7 +5169,14 @@ if DRIVE:
             + [round(float(_r.max()), 3)],
             'up_deg': round(D_['meas'](_qe), 1),
             'hinge_deg_p50': round(float(np.degrees(np.median(_dihedral(_qe, D_['H'])))), 1)})
+if _NATIVE_RUNTIME is not None:
+    _NATIVE_RUNTIME.publish()
 _trace('save_frames_begin')
+_valid_full = np.isfinite(full).all(axis=(1, 2))
+if not _valid_full.all():
+    _first_bad_full = int(np.flatnonzero(~_valid_full)[0])
+    log['error'] = f'non-finite full positions at saved frame {_first_bad_full}'
+    full = full[:_first_bad_full]
 np.save(os.path.join(out, 'frames.npy'), full)
 _trace('save_frames_end')
 if BOUND_COUPLING:
@@ -5079,3 +5189,7 @@ log['timing'] = TIMING
 json.dump(log, open(os.path.join(out, 'run_log.json'), 'w'), indent=1)
 _trace('save_log_end')
 print('done', log['t_total'], log.get('error'))
+
+if _NATIVE_RUNTIME is not None:
+    _NATIVE_RUNTIME.success = not bool(log.get('error'))
+    _NATIVE_RUNTIME.close()

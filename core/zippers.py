@@ -23,6 +23,34 @@ from . import spec as S
 PITCH = 5.0             # mm: a held pair every 5 mm (the mesh is ~6 mm)
 
 
+def replace_edges(spec, name, replacements):
+    """Restate whole-edge membership after a geometry-preserving split or join."""
+    for zipper in spec.get('zippers') or []:
+        for key in ('a', 'b'):
+            side = zipper[key]
+            if side['piece'] == name:
+                side['edges'] = list(dict.fromkeys(new for eid in side['edges']
+                                                  for new in replacements.get(eid, [eid])))
+
+
+def check_join(spec, name, corners):
+    """Refuse loss of a zipper boundary that the whole-edge schema cannot represent."""
+    pc = S.piece_index(spec)[name]
+    groups = [{edge['id']} for edge in pc['edges']]
+    for k in corners:
+        previous = (k - 1) % len(groups)
+        groups[previous] |= groups[k]
+        del groups[k]
+    for zipper in spec.get('zippers') or []:
+        for key in ('a', 'b'):
+            side = zipper[key]
+            if side['piece'] != name:
+                continue
+            selected = set(side['edges'])
+            if any(group & selected and not group <= selected for group in groups):
+                raise ValueError(f"{name}: the corner is a zipper endpoint; remove the zipper first")
+
+
 def _edge(spec, piece, eid):
     pc = S.piece_index(spec)[piece]
     return np.asarray(next(e['pts'] for e in pc['edges'] if e['id'] == eid), float)

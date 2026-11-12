@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Walk: the active seam's two sides compared notch by notch (core/walk.py), as a sub-panel of Seams and on the flat
-pattern. Notches are put, slid and removed with the Edit Pattern tool (N, drag, X); Match Notches lays one side's
+pattern. Notches are put, slid and removed with the Edit Pieces tool (N, drag, X); Match Notches lays one side's
 notches where the other's are (the ease spread in proportion); Notches from BOM reads the BOM's."""
 import textwrap
 from .i18n import rpt, tx, wrap
+from . import units as U
 
 import blf
 import bpy
@@ -110,7 +111,7 @@ class AC9_PT_SimWalk(bpy.types.Panel):
             layout.label(text="This seam cannot be walked", icon='ERROR')
             return
         col = layout.column(align=True)
-        col.label(text=tx("Ease-in {0:+.1f} mm ({1:+.1f} %)", w['ease'], w['pct']))
+        col.label(text=tx("Ease-in {0} ({1:+.1f} %)", U.fmt(context, w['ease'], signed=True), w['pct']))
         col.label(text=tx("Notches  A {0}   B {1}", w['na'], w['nb']))
         if w['unpaired']:
             r = col.row()
@@ -122,8 +123,8 @@ class AC9_PT_SimWalk(bpy.types.Panel):
             c = box.column(align=True)
             c.label(text="   A / B        ease-in   total")
             for i, g in enumerate(w['segments'][:MAX_ROWS]):
-                at = f"{g['cum']:+.1f}" if i < len(w['segments']) - 1 else "end"
-                c.label(text=tx("{0}  {1:.1f} / {2:.1f}   {3:+.1f}   {4}", i + 1, g['la'], g['lb'], g['ease'], at))
+                at = U.num(context, g['cum'], signed=True) if i < len(w['segments']) - 1 else "end"
+                c.label(text=tx("{0}  {1} / {2}   {3}   {4}", i + 1, U.num(context, g['la']), U.num(context, g['lb']), U.num(context, g['ease'], signed=True), at))
             if len(w['segments']) > MAX_ROWS:
                 c.label(text=tx("... {0} more", len(w['segments']) - MAX_ROWS))
         layout.label(text="Lay the notches of")
@@ -132,7 +133,7 @@ class AC9_PT_SimWalk(bpy.types.Panel):
         row.operator("ac9_cloth_sim.match_notches", text="B").side = 'b'
         if S.from_bom(spec):
             layout.operator("ac9_cloth_sim.notches_from_bom", icon='IMPORT')
-        for ln in wrap(tx("Edit Seams: N puts a notch here and its partner on the other side (Ctrl+N: this side only). Edit Pattern: N one notch, drag slides it, X removes it"), 34):
+        for ln in wrap(tx("Edit Seams: N puts a notch here and its partner on the other side (Ctrl+N: this side only). Edit Pieces: N one notch, drag slides it, X removes it"), 34):
             layout.label(text=ln)
 
 

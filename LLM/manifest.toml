@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
-addon_version = "0.1.0"
-build_id = "b106226dd0ed6d28e83d7004e3d9bfcb138b89045750777b5bfba4843646a0e6"
+addon_version = "0.1.1"
+build_id = "cae6731ab6696753b87412c7a81a8d9de84c388d884e0df5b9c8776c3aaafb11"
 
 [[documents]]
 id = "guide_blender"
@@ -9,7 +9,7 @@ title = "Blender の基本（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "Blender の基本"
 operators = []
-sha256 = "d062d344b160c308f37e859bd0a1a43931ea59b76485d41c6c4ff5a40d93f3d1"
+sha256 = "98cd7410f655f5609bcdaebe074327cb8eb6351588b168efbc7a11c0af010172"
 
 [[documents]]
 id = "guide_first"
@@ -17,7 +17,7 @@ title = "はじめての 1 着（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "はじめての 1 着"
 operators = []
-sha256 = "d062d344b160c308f37e859bd0a1a43931ea59b76485d41c6c4ff5a40d93f3d1"
+sha256 = "98cd7410f655f5609bcdaebe074327cb8eb6351588b168efbc7a11c0af010172"
 
 [[documents]]
 id = "guide_concepts"
@@ -25,7 +25,7 @@ title = "考え方（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "考え方"
 operators = []
-sha256 = "d062d344b160c308f37e859bd0a1a43931ea59b76485d41c6c4ff5a40d93f3d1"
+sha256 = "98cd7410f655f5609bcdaebe074327cb8eb6351588b168efbc7a11c0af010172"
 
 [[documents]]
 id = "guide_trouble"
@@ -33,7 +33,7 @@ title = "困ったとき（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "困ったとき"
 operators = []
-sha256 = "d062d344b160c308f37e859bd0a1a43931ea59b76485d41c6c4ff5a40d93f3d1"
+sha256 = "98cd7410f655f5609bcdaebe074327cb8eb6351588b168efbc7a11c0af010172"
 
 [[documents]]
 id = "guide_notes"
@@ -41,7 +41,7 @@ title = "案内上の注意と画面の場所"
 path = "procedures.md"
 section = "案内上の注意と画面の場所"
 operators = ["ac9_cloth_sim.update_3d", "ac9_cloth_sim.dress", "ac9_cloth_sim.edit_frame", "ac9_cloth_sim.delete_cache", "ac9_cloth_sim.export_retopo"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "import_bom"
@@ -49,7 +49,7 @@ title = "型紙を読み込む（Import BOM）"
 path = "procedures.md"
 section = "型紙を読み込む（Import BOM）"
 operators = ["ac9_cloth_sim.import_bom"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "update_bom_seams"
@@ -57,7 +57,7 @@ title = "着装形を保ってBOMの縫い目を更新（Update BOM Seams）"
 path = "procedures.md"
 section = "着装形を保ってBOMの縫い目を更新（Update BOM Seams）"
 operators = ["ac9_cloth_sim.seams_from_bom"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "import_dxf"
@@ -65,15 +65,15 @@ title = "型紙を読み込む（Import DXF）"
 path = "procedures.md"
 section = "型紙を読み込む（Import DXF）"
 operators = ["ac9_cloth_sim.import_dxf", "ac9_cloth_sim.export_dxf", "ac9_cloth_sim.import_svg"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "from_mesh"
 title = "型紙を読み込む（From Mesh）"
 path = "procedures.md"
 section = "型紙を読み込む（From Mesh）"
-operators = ["ac9_cloth_sim.from_mesh", "ac9_cloth_sim.new_pattern"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+operators = ["ac9_cloth_sim.from_mesh", "ac9_cloth_sim.new_pattern", "ac9_cloth_sim.set_units"]
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "use_pieces"
@@ -81,15 +81,15 @@ title = "使うピースを選ぶ"
 path = "procedures.md"
 section = "使うピースを選ぶ"
 operators = ["ac9_cloth_sim.select_garment", "ac9_cloth_sim.rename_garment", "ac9_cloth_sim.garment_from_selection", "ac9_cloth_sim.piece_state", "ac9_cloth_sim.invert_piece_selection", "ac9_cloth_sim.enable_all_pieces", "ac9_cloth_sim.refresh"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "edit_pattern"
-title = "型紙を直す（Transform Pattern・Edit Pattern・右クリック・3D Follows Edits）"
+title = "型紙を直す（Whole Pieces・Edit Pieces・右クリック・3D Follows Edits）"
 path = "procedures.md"
-section = "型紙を直す（Transform Pattern・Edit Pattern）"
-operators = ["ac9_cloth_sim.use_tool", "ac9_cloth_sim.edit_pattern", "ac9_cloth_sim.pattern_transform", "ac9_cloth_sim.context_menu", "ac9_cloth_sim.sync_3d", "ac9_cloth_sim.duplicate_pieces", "ac9_cloth_sim.symmetrize", "ac9_cloth_sim.parallel_line", "ac9_cloth_sim.pattern_edit", "ac9_cloth_sim.pattern_drag", "ac9_cloth_sim.pick_piece_under", "ac9_cloth_sim.set_gap", "ac9_cloth_sim.pattern_rotate", "ac9_cloth_sim.add_dart", "ac9_cloth_sim.move_dart", "ac9_cloth_sim.spread", "ac9_cloth_sim.cut_line", "ac9_cloth_sim.piece_label", "ac9_cloth_sim.mirror_copy", "ac9_cloth_sim.match_twin", "ac9_cloth_sim.symmetric_edit", "ac9_cloth_sim.delete_piece", "ac9_cloth_sim.delete_selected", "ac9_cloth_sim.restore_pieces"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+section = "型紙を直す（Whole Pieces・Edit Pieces）"
+operators = ["ac9_cloth_sim.use_tool", "ac9_cloth_sim.edit_pattern", "ac9_cloth_sim.pattern_transform", "ac9_cloth_sim.context_menu", "ac9_cloth_sim.sync_3d", "ac9_cloth_sim.duplicate_pieces", "ac9_cloth_sim.symmetrize", "ac9_cloth_sim.parallel_line", "ac9_cloth_sim.pattern_edit", "ac9_cloth_sim.pattern_drag", "ac9_cloth_sim.pick_piece_under", "ac9_cloth_sim.set_gap", "ac9_cloth_sim.pattern_rotate", "ac9_cloth_sim.add_dart", "ac9_cloth_sim.move_dart", "ac9_cloth_sim.spread", "ac9_cloth_sim.cut_line", "ac9_cloth_sim.piece_label", "ac9_cloth_sim.mirror_copy", "ac9_cloth_sim.symmetric_edit", "ac9_cloth_sim.delete_piece", "ac9_cloth_sim.delete_selected", "ac9_cloth_sim.restore_pieces"]
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "draw_piece"
@@ -97,7 +97,7 @@ title = "型紙を描く（Draw Piece・Internal Line・図形）"
 path = "procedures.md"
 section = "型紙を描く（Draw Piece・Internal Line・図形）"
 operators = ["ac9_cloth_sim.draw_piece", "ac9_cloth_sim.draw_line", "ac9_cloth_sim.draw_shape", "ac9_cloth_sim.delete_internal", "ac9_cloth_sim.cut_out", "ac9_cloth_sim.clone_shape"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "seams"
@@ -105,7 +105,7 @@ title = "縫い目を付ける・直す"
 path = "procedures.md"
 section = "縫い目を付ける・直す"
 operators = ["ac9_cloth_sim.edit_seams", "ac9_cloth_sim.seam_click", "ac9_cloth_sim.seam_list_pick", "ac9_cloth_sim.seam_move_side", "ac9_cloth_sim.seam_notch", "ac9_cloth_sim.add_seam", "ac9_cloth_sim.add_seam_mn", "ac9_cloth_sim.match_length", "ac9_cloth_sim.seam_edit", "ac9_cloth_sim.seam_path", "ac9_cloth_sim.seam_path_part", "ac9_cloth_sim.pick_seam", "ac9_cloth_sim.blend", "ac9_cloth_sim.match_notches", "ac9_cloth_sim.notches_from_bom", "ac9_cloth_sim.close_dart", "ac9_cloth_sim.fold_dart"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "guides"
@@ -113,7 +113,7 @@ title = "使う体と置く目安を用意する（Detect Guides・Edit Guides�
 path = "procedures.md"
 section = "使う体と置く目安を用意する（Detect Guides・Edit Guides）"
 operators = ["ac9_cloth_sim.detect_guides", "ac9_cloth_sim.edit_guides"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "place"
@@ -121,7 +121,7 @@ title = "配置する（Place・Back to Flat・置いた形を整える）"
 path = "procedures.md"
 section = "配置する（Place・Back to Flat）"
 operators = ["ac9_cloth_sim.place", "ac9_cloth_sim.clear_placement", "ac9_cloth_sim.use_tool", "ac9_cloth_sim.unlink_pair", "ac9_cloth_sim.pair", "ac9_cloth_sim.swap_sides", "ac9_cloth_sim.move_to_seam", "ac9_cloth_sim.lay_on_edge", "ac9_cloth_sim.move_outside", "ac9_cloth_sim.settle_placed"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "move_by_hand"
@@ -129,7 +129,7 @@ title = "配置を手で直す（Move by Hand・Back to Guide）"
 path = "procedures.md"
 section = "配置を手で直す（Move by Hand・Back to Guide）"
 operators = ["ac9_cloth_sim.move_by_hand", "ac9_cloth_sim.show_placed", "ac9_cloth_sim.reset_placed", "ac9_cloth_sim.set_pose", "ac9_cloth_sim.mirror_pose"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "simulate"
@@ -137,7 +137,7 @@ title = "シミュレーションする（Phase Sim）"
 path = "procedures.md"
 section = "シミュレーションする（Phase Sim）"
 operators = ["ac9_cloth_sim.update_3d", "ac9_cloth_sim.dress", "ac9_cloth_sim.log", "ac9_cloth_sim.delete_cache"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "live"
@@ -145,7 +145,7 @@ title = "Live Sim・Local Sim と Stop"
 path = "procedures.md"
 section = "Live Sim・Local Sim と Stop"
 operators = ["ac9_cloth_sim.dress", "ac9_cloth_sim.fold_local_sim"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "reset_edit_frame"
@@ -153,7 +153,7 @@ title = "Back to Placed と Edit Frame"
 path = "procedures.md"
 section = "Back to Placed と Edit Frame"
 operators = ["ac9_cloth_sim.reset", "ac9_cloth_sim.edit_frame"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "piece_state"
@@ -161,7 +161,7 @@ title = "ピースの状態を変える"
 path = "procedures.md"
 section = "ピースの状態を変える"
 operators = ["ac9_cloth_sim.piece_state", "ac9_cloth_sim.select_piece", "ac9_cloth_sim.invert_piece_selection", "ac9_cloth_sim.collider", "ac9_cloth_sim.collider_select"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "fabric"
@@ -169,7 +169,7 @@ title = "生地を選ぶ"
 path = "procedures.md"
 section = "生地を選ぶ"
 operators = ["ac9_cloth_sim.fabric_new", "ac9_cloth_sim.fabric_preset", "ac9_cloth_sim.fabric_edit", "ac9_cloth_sim.fabric_default", "ac9_cloth_sim.fabric_remove", "ac9_cloth_sim.fabric_select", "ac9_cloth_sim.interlining_new", "ac9_cloth_sim.interlining_preset", "ac9_cloth_sim.interlining_edit", "ac9_cloth_sim.interlining_remove", "ac9_cloth_sim.interlining_select", "ac9_cloth_sim.piece_mesh", "ac9_cloth_sim.layers_to_zero", "ac9_cloth_sim.set_role", "ac9_cloth_sim.propose_roles", "ac9_cloth_sim.set_fold"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "measure"
@@ -177,7 +177,7 @@ title = "採寸する"
 path = "procedures.md"
 section = "採寸する"
 operators = ["ac9_cloth_sim.measure_body", "ac9_cloth_sim.measure_garment", "ac9_cloth_sim.measure_reset_levels", "ac9_cloth_sim.measure_move_level", "ac9_cloth_sim.measure_tape", "ac9_cloth_sim.measure_tape_remove", "ac9_cloth_sim.measure_pattern", "ac9_cloth_sim.measure_pattern_remove", "ac9_cloth_sim.measure_set_target", "ac9_cloth_sim.measure_highlight", "ac9_cloth_sim.measure_select", "ac9_cloth_sim.measure_delete", "ac9_cloth_sim.measure_mirror"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "to_retopo"
@@ -185,7 +185,7 @@ title = "To AC9 Cloth Retopo"
 path = "procedures.md"
 section = "To AC9 Cloth Retopo"
 operators = ["ac9_cloth_sim.export_retopo"]
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[documents]]
 id = "symptoms"
@@ -193,7 +193,7 @@ title = "症状から探す"
 path = "procedures.md"
 section = "症状から探す"
 operators = []
-sha256 = "7312c925575f59f6ed12e88c85d362f6e6992f9d3ba2967f971558e449ad98e3"
+sha256 = "6a708056b388fc0d8fb56ac01e11fa60fa83c0f49261c66ad6bc3b25587397ee"
 
 [[sources]]
 path = "__init__.py"
@@ -201,7 +201,7 @@ sha256 = "34e96adaffc3e6bb0654f45b5b49205572a8e83d04a5fb2cabd2f79fdd59b446"
 
 [[sources]]
 path = "_addon.py"
-sha256 = "f512d5dfbfe56bc9c2c837bf4192bf1b12a851105500109248d196f8cd841805"
+sha256 = "48e334e2bc76c9ac821aa2fbb716bf1123c801e0ada0b437390283cbb19b27f9"
 
 [[sources]]
 path = "blend_ui.py"
@@ -209,7 +209,7 @@ sha256 = "c9faa5ccc152db362218fe82df1922b09227abafd4f450744daca96fe74726be"
 
 [[sources]]
 path = "button_ui.py"
-sha256 = "97b1dbc76be3da8c94a988439430fb749d76da3bf17b41e7f3f18b4dd74068db"
+sha256 = "ceb260b809c2cfe533e982ce9e2bbd20682384c0db55164c71e8505e8861a238"
 
 [[sources]]
 path = "button_view.py"
@@ -225,7 +225,7 @@ sha256 = "25c7a5b8a7fc9dcb02b7049bd418bd3c950f7dcd1e0a1ffbffae632a3d95eb3d"
 
 [[sources]]
 path = "companion_state.py"
-sha256 = "59ce1032c6b8a40b45ef7b2b6186991627bc09b4e42748138f438f9075a79a23"
+sha256 = "56939484f0bc84980c15abffc8c119f8bfa7fa5f532c96d3e8b227d46637943b"
 
 [[sources]]
 path = "core/__init__.py"
@@ -233,7 +233,7 @@ sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 [[sources]]
 path = "core/_i18n.py"
-sha256 = "2490cf9144626f4422616eddcdf20d00479002da52beedaf9ff6b7deb77b28ba"
+sha256 = "8d32b826ef57c0f520afd50d5a6afc388bfc56eb89f3c03448d9578df92dada1"
 
 [[sources]]
 path = "core/attach.py"
@@ -245,7 +245,7 @@ sha256 = "5d9b42b775b60f2d8ef475afefedf501e1d3c2b1731c821b5d8a8e8849bb6e52"
 
 [[sources]]
 path = "core/body_axes.py"
-sha256 = "4f272867c026a7141941b8bacbcb2611ec829959b0b5de07eabef7014b4323ae"
+sha256 = "3e6007676451b010cc32135c2d811885af654012faf690d11551579b0d340aef"
 
 [[sources]]
 path = "core/bom_parse.py"
@@ -265,15 +265,15 @@ sha256 = "4fc8f4255f4ae124f0a9a42afeed738d27d484f01929c40b1d3428c1d00f913b"
 
 [[sources]]
 path = "core/cut.py"
-sha256 = "d180c092e5d9a728d55677a78fc84e263031c9321fb658692665164362623fdd"
+sha256 = "faafa8967fdc40a22e1d53001eb779d180cc7fd390e843d382fc34e5f6fffc6b"
 
 [[sources]]
 path = "core/dart.py"
-sha256 = "ab3dcc17ce140349115fc23b38097c799af0198213deeb06e33a4849151b73e0"
+sha256 = "77cb7ec7b20907e8fbd84c7bede03b2a5451fbfc436946facb8b6fd8bcd0fea9"
 
 [[sources]]
 path = "core/draft.py"
-sha256 = "755996e41f4cbfb0efa414ca72232cb5348f05939dd4f3630a90ca8dc3e34493"
+sha256 = "ebb0b45de30881e4ddfa600ece51ae4f9b7fac527de0d48554be4b361c2e2438"
 
 [[sources]]
 path = "core/dxf_in.py"
@@ -308,12 +308,16 @@ path = "core/lay.py"
 sha256 = "7eab19f322f0ff7ab4982545d092c3b0bf89c08d0cd71784cddd7ce933380fde"
 
 [[sources]]
+path = "core/live_session.py"
+sha256 = "799b38151e01c563681d5ec9107a8610873bb2d586e28f91b5792e0bacf3d913"
+
+[[sources]]
 path = "core/look.py"
 sha256 = "50e0b674c4e1c4e89bba16948c95edfacaf822d7774d133a1cf69a88ec590237"
 
 [[sources]]
 path = "core/measure.py"
-sha256 = "e39f707f946306bdd7d4c9d3073556a8d8d721f7cb9cf58d6b3a929c270ad00e"
+sha256 = "4c307df87484089a74a350d1939480966048430f3bf27663c71f163f188ed0ea"
 
 [[sources]]
 path = "core/mesh_to_spec.py"
@@ -321,7 +325,15 @@ sha256 = "b2e76a06fcff235e63dbf32c29495cb82d28f82ab46f7f5321f85660908810bc"
 
 [[sources]]
 path = "core/mirror_result.py"
-sha256 = "a9057636d025fee000419e7c6cb447a2e57b37bc96670d027f213e5e7f67f394"
+sha256 = "ea317d9dcd678accc0c9c971b8588df1cec2f90072b4c65d1df80a85452b3531"
+
+[[sources]]
+path = "core/native_three.py"
+sha256 = "bdfe9d8d4248afe352131c52f1bddf94a5cb344b44a11faf8c4b9b1b0bd2ce3a"
+
+[[sources]]
+path = "core/native_three_io.py"
+sha256 = "d34090983458475ccbfa462911803a384eb50eb21ddf81d34301ca6e675da540"
 
 [[sources]]
 path = "core/notch_import.py"
@@ -329,7 +341,7 @@ sha256 = "191f2231ccdbfe918a3e7627b8f699f5d24e4bdaabf0c47945d23d55d82b093d"
 
 [[sources]]
 path = "core/pattern_build.py"
-sha256 = "5e5648e824aabdf60872463bce83e81dac4b6305716fc03218641cc08139ebde"
+sha256 = "2bc7b8e034fc2c93b189696fb163f75e289a4aa5caccf58e53303daa60edbb44"
 
 [[sources]]
 path = "core/phase_from.py"
@@ -337,15 +349,27 @@ sha256 = "4003c0535f032fca08b846ab0635e210ea1591bcdbca7938cfc2bdf8e7533086"
 
 [[sources]]
 path = "core/piece_table.py"
-sha256 = "851fb9aa6030e426029e026204ecd18890f8b29ab2b24369a4f246de7b812be4"
+sha256 = "a23bf3f04f69f9ffecd05dfecf56cc8662a3189139d19fba8b4512de03862e4e"
+
+[[sources]]
+path = "core/place_targets.py"
+sha256 = "e51b9c4e2a3f5f097f389d0bee8bc29a1402531caeff626aa5b148e8f5265cbd"
+
+[[sources]]
+path = "core/prepare_plan.py"
+sha256 = "793aa91033480390e1615f9bb1c148c17bd93d62165f42fb2d2b30c0402233d4"
+
+[[sources]]
+path = "core/prepared_candidate.py"
+sha256 = "747e9f58e7cc4c0ad171ed6c5442e9b9490e7393a00d31314bf055946729b83e"
 
 [[sources]]
 path = "core/presets.py"
-sha256 = "9eebd9dd481fe634e92941cd2866d8d745e648b8a62cd7639aa68883eea5a596"
+sha256 = "6a07a937bce155f70605334b6a70898484ba2cfa2ba9d0178631e2b6040b8aa7"
 
 [[sources]]
 path = "core/recipe.py"
-sha256 = "07adea520b26d6f49afcc183c989a3fb865a9a8ec5e62fdb682a08f939bb6e9c"
+sha256 = "e16bdbe35341ec18d0f390e1812963ada19bb26ad7ee149a85ab400977ecef17"
 
 [[sources]]
 path = "core/roles.py"
@@ -353,7 +377,7 @@ sha256 = "ff68c86dd087ac0614c7deaed2f788a4eaedf420fe248ddaaeca6a81eca9e5bb"
 
 [[sources]]
 path = "core/seam_edit.py"
-sha256 = "3f02543694d040c2d6abc3d74e8d5cdfdc0ad7ee0787d8e68abf54c22c6e82f3"
+sha256 = "767a13e0e4bb309c05d98618e591074623ac1d42f591ebd3599010b5ce8eaa02"
 
 [[sources]]
 path = "core/seam_path.py"
@@ -361,23 +385,27 @@ sha256 = "948a0e8d1039f3197fce5aeb34653ee7ba8225a8dddd52f56be6aefab5939c2d"
 
 [[sources]]
 path = "core/seam_twin.py"
-sha256 = "842eb45bf26a9fabded689fbaf5bd5f49b5cf7e58d839156addc79e2b01fca23"
+sha256 = "67140eeba0e45b01fcdfaff62015952e75ec4633846da20f18d5b8e76ac197f3"
+
+[[sources]]
+path = "core/shape_source.py"
+sha256 = "f8b59f4b4b5a7621ef874c5aa868321d479c32924e07b2155cbc443e559a609e"
 
 [[sources]]
 path = "core/simlog.py"
-sha256 = "128906829c7d5062daab9163e434714a7317d3efa85fe4a0f817ace73a8e06ad"
+sha256 = "53fac02cb61b5d16cc7b406fa7c14fa23d9889e69b4237b2583a4546534568b2"
 
 [[sources]]
 path = "core/snap.py"
-sha256 = "ac151f1dfa4c87ebf7f06a67a158636f8273baa947474246ac7a51586b222a17"
+sha256 = "50f5063643e6420087512b6c27c9e1b919e11364264043aed2b00e3716028d2f"
 
 [[sources]]
 path = "core/spec.py"
-sha256 = "76cb38db498543afdb03752e6591c33701d838148c614703ddc58419e451cd20"
+sha256 = "860b06a0f73b52f66cd8ef5dd684a382374ee5a8079dd866d197328af20ba614"
 
 [[sources]]
 path = "core/spread.py"
-sha256 = "47b586d1b329d8dc37c53d2ebf5161e2f7fdec67d05fb6d72fc337859157dcbe"
+sha256 = "c0adf04259a05a7e7c8759f56eb126a49926428466b424873765b69bba739625"
 
 [[sources]]
 path = "core/start_check.py"
@@ -389,7 +417,7 @@ sha256 = "fc9c03e65a0566a03475a88b5bbd270d432dfb6ebc38f854e9cdffe76391d60d"
 
 [[sources]]
 path = "core/transfer.py"
-sha256 = "04090504506060ece93f47ed11c91f6c129cb80556af4f1bbc301d9eb6992ef6"
+sha256 = "337516e565509429b87a82deefb83ff07865a3410a3bb6973410c5d0e1afe2b6"
 
 [[sources]]
 path = "core/walk.py"
@@ -397,11 +425,11 @@ sha256 = "5d667068821f904d365b3ea043089716b13eb05d61b539fa485a97ac1100357d"
 
 [[sources]]
 path = "core/zippers.py"
-sha256 = "d6c9a62a115d7d3d52b43c910136ee05c23a7fc5e1f4332e88eb5e512e2fc698"
+sha256 = "1f8850384d0aea123081ad6ec2c0279803ea90ec3199c621ea1b5acb4e86dac0"
 
 [[sources]]
 path = "dart_ui.py"
-sha256 = "254d2197e417f2d25d012582ce55d7ac2d17e1f573169e9ff45da30435b6520b"
+sha256 = "e0163e1bbc63c03f1e220609e6b64919271f5e6705aae9c764a6fa18727dba8c"
 
 [[sources]]
 path = "diagnose.py"
@@ -409,19 +437,19 @@ sha256 = "9ebf5017f0ec9fbbacb61d9f8dc94bdb8eedf05fe7846c20203c66eb4bb081ac"
 
 [[sources]]
 path = "display_state.py"
-sha256 = "290a0011151c8b34195d6b3d1bfc9dfb7b6be306982c15e261e9a35fe77fefca"
+sha256 = "1ef71245752ed05ac24be774ce1038aa8a73dd771ccd50ddd520dff629d0c51a"
 
 [[sources]]
 path = "draft_tool.py"
-sha256 = "e0d9bebd1ef697a625a8a0a8a9d5b37f853ac2271d07e8098194e8f9265edec8"
+sha256 = "18170a55d9badec3e4c63c6cb45e1a31eafe449372c6bb0fd0f3e578f029ff9c"
 
 [[sources]]
 path = "dress.py"
-sha256 = "e394ae6f0809629bae89e56838adb67c52933ab3f314de1ded00e3c6235c9714"
+sha256 = "1956e4b531244c2524e6abfeca7d25a688943a7ec8e02cad803ece0cb1f4a6de"
 
 [[sources]]
 path = "export_retopo.py"
-sha256 = "0154c8c4db0f2b6a3d502aaa921853f773dcaa4416390280bc9c31f7c60db07f"
+sha256 = "6023caed11adf768e4fd6e6453b8320da807ea8aa9272ed025957f10d88b6789"
 
 [[sources]]
 path = "fold_sides.py"
@@ -429,11 +457,11 @@ sha256 = "55dc48536825c4a50494bd896fbce803e33fac2e0685a00dbed95a979512d986"
 
 [[sources]]
 path = "garment_mark.py"
-sha256 = "d7867a3497950f60dcd64fa147b47e24e30e4ccedaf7349c1aba52c4b6204793"
+sha256 = "740c94c50bcf454fc78583668932f104b2274e39e9357938cd255e0dc824a351"
 
 [[sources]]
 path = "guide_edit.py"
-sha256 = "8fb4c7952b8b438da3f2409f3525c72504147ccd22e889287361aa5131584f13"
+sha256 = "3a20806c8e992eefa3a8cc628778e13d29a91c1e84c7d50182f5f0dcf5d8c98c"
 
 [[sources]]
 path = "i18n.py"
@@ -441,39 +469,43 @@ sha256 = "d91713f10803cf55131ac59515cd06b73e5dc3dca40613711cff841914d428e1"
 
 [[sources]]
 path = "i18n_ja.py"
-sha256 = "05aca41cd1c22f19b8d6f95446785b096e6af4699a2c8975cdd094d3ce05c1a2"
+sha256 = "c0baf42b4c19d0a6868599b350130c7182e3a81c6ba0e0d3a7143069bdeaa22d"
 
 [[sources]]
 path = "live_resume.py"
-sha256 = "e084f4bab8d1a0dd42ced47421feede1143945240eb82832ec71c9c80799a40f"
+sha256 = "9e9a4e73f3dec631f35bda6414f1301c5e77b238330c13ca58ca7eefadffaf4e"
 
 [[sources]]
 path = "look_apply.py"
-sha256 = "a4603d43a433f8e5b4c723cb60a029a32118a5a6b9c7112b9d45521e5ed90250"
+sha256 = "03ded521675312612749f77e67eb0f4880d33556f2f1bcce78050069b1c323ab"
+
+[[sources]]
+path = "look_reference.py"
+sha256 = "c39e80a4df06aadec161566037f2b5655954ad0219453065ab01b243ebd9581a"
 
 [[sources]]
 path = "measure_edit.py"
-sha256 = "8dc49759316c27c052629447e3d423359aae75ef03c875db4d27dc4cdcd33108"
+sha256 = "de461b894429cc8a1dbb5c40497d97c736a8108de22c381c33a3d421e622cc62"
 
 [[sources]]
 path = "measure_tool.py"
-sha256 = "fdb3dd797b4a4119ffb326999a0a92e53f594a3455071fde258d9255d03687b1"
+sha256 = "76bd5390938f56bad2c61266e6438b7457ffefcc479ae1cb0b029af8dc07fc3c"
 
 [[sources]]
 path = "mesh_import.py"
-sha256 = "bd83e4b58f37282f928a74b9a851b287f67d3847b9956fefda4355940d3bb293"
+sha256 = "8bf307dbffb591039827365d7640afd9d00fd87b265372546087118c5fa0a09d"
 
 [[sources]]
 path = "operators.py"
-sha256 = "69bc0a6bccd0871515d16c55672ffa189bf185ebbcf336646d9d4cf9048ea290"
+sha256 = "cdb1498daf79c1e423e2e983dadebced2f8cd0adfdd5beef67326c783be1164e"
 
 [[sources]]
 path = "outside.py"
-sha256 = "86da003886a1ab930591dc53ac9b4731ac24fc9a07d6656888cf2b7e3e5bc2b1"
+sha256 = "908427bad9d90b9d5c3d7daa5fd1c2f523dc8dc2b48ded963c39df15098dd04c"
 
 [[sources]]
 path = "overlay.py"
-sha256 = "6bbb2b6b0ccc96557a86226dc98f35bbd1a8446127d7b1852ddb7ef724484927"
+sha256 = "4995432481e52d26452920ba4f268cc9dacf25aaabf4529908b289a2a9a07e3d"
 
 [[sources]]
 path = "pattern_view.py"
@@ -481,59 +513,71 @@ sha256 = "8170d5d44495736939c6aa7bc99829e38f0902ee0398c60564fe43d0b738462b"
 
 [[sources]]
 path = "piece_look.py"
-sha256 = "ecb33dc2b4460637343bbe368933c36a28232d17755fc1b8e30443a062758986"
+sha256 = "2dd923e55434e93e801f3a0de987239830711b2efe64f5a4dabd65d453ab39b6"
 
 [[sources]]
 path = "piece_move.py"
-sha256 = "baedfd036fcd716df7a2b9c3f7fc16c5d519778bd13c139e4397ebede6bc02f3"
+sha256 = "c785811624bc69d27c98b09ed3ece8f095ca40b6cf89b669fd05fa5ab82bf7ee"
 
 [[sources]]
 path = "place_fold.py"
-sha256 = "cbc751331f854c367afacdb8f470ac8ac2ff4ca5ada1a10cb3c89d0d387220c9"
+sha256 = "420f03403ac3194f73f090fc696ec87ce9a85a89cf30446ac4a34e5042442402"
 
 [[sources]]
 path = "place_lay.py"
-sha256 = "9ce8bfff301e869d83ac2dfef3f79c05a051706cf3fb63d90a83391c9f6dd922"
+sha256 = "6ea71a428e93edbc4742db705e89d3f45adeb770b8a657a2506d938062959c01"
 
 [[sources]]
 path = "place_seam.py"
-sha256 = "f50ecbe521976f36db673cfb1e50d24463cfeea036ddc24211a0c01b8035ebbb"
+sha256 = "399646d48ee73b5a1d3675b20dba0ba555963851469f7cf096ef5dd0e57f48ac"
 
 [[sources]]
 path = "place_settle.py"
-sha256 = "b752fb27a0608e7108689181bb086cbc865ac969c5d3628ddf59abc31bb9803e"
+sha256 = "623a36fd85877572929abc8ae969a79d35526cbd170f031bb4bb4f64019827b8"
+
+[[sources]]
+path = "place_targets.py"
+sha256 = "97500481a5277e5e7a0e881dcaf8021983238e1f32b665b593f371dd5cd632b4"
 
 [[sources]]
 path = "placed_view.py"
-sha256 = "b23d25fc5cbfa33b78a615422de3b662db06f630c8623d488667ca1d821b61a8"
+sha256 = "ceac76e32402e1f4d4dba8a72774bcfee3de5622d81c719e49bcd257c6685537"
 
 [[sources]]
 path = "placement.py"
-sha256 = "99e921ea0980eeb4d9b625bb77dbc4d79fe8a1bf3f08fb86073d76d22399bd01"
+sha256 = "a952c493bc52288eb79133d9a52eac44412283a63d2cc0764c787cf1a9e54eda"
 
 [[sources]]
 path = "pre_click.py"
 sha256 = "c295a3901564a8ac644d79d8bd6d4d45232f495fa8666f22be213942973c3dd7"
 
 [[sources]]
+path = "prepare_build.py"
+sha256 = "224f86ec27d829d801bdee51254ec543fd44b380e9980349e64b3d93b6fa1cc1"
+
+[[sources]]
 path = "properties.py"
-sha256 = "98161ab44b36b366d708790efe5bf2c0ca37ec1cbbf5dbcfedbfd5c6eb0b54ce"
+sha256 = "4a05c52aece0a0d340bbbe9686b95bbd4e284942f4e2aecffcd2307a6fa60ccc"
+
+[[sources]]
+path = "result_reference.py"
+sha256 = "6cd1dad6b392e45d2c26502f4669e7c293dc77894c2445abb6db00e2fc6ac56f"
 
 [[sources]]
 path = "seam_edit_tool.py"
-sha256 = "a049b1fea73395816c8c750d432e3ed7d2ef954551228e2f79528fabd537bb44"
+sha256 = "d439ba1e9985ef8158d8562e5f1050367ae8f8d41e20febd77770e7b2c80b184"
 
 [[sources]]
 path = "seam_tool.py"
-sha256 = "f238d31995b1555a2742cccd498bd2bb0599956a8943eeca23310d699f774cda"
+sha256 = "3f71b4e84974500e621065b2d05ae602f076995fd5e0be4b4522c14b290817fd"
 
 [[sources]]
 path = "selection.py"
-sha256 = "b21f1cdd4ddd4fa1d3d3f50be40ee2e9ce39a2faf41714886de4e2caf8edfd2e"
+sha256 = "44f77a6ef72df5cdbb9bc8a600f7366a74e9cdce917452de6f3904d011fbd78f"
 
 [[sources]]
 path = "shape_tool.py"
-sha256 = "0c2b9352692a17f05fc782598bd176a14e5ebc8db5ab6c9f92313ae06f1ec1c6"
+sha256 = "5fbea38b48ba3905e57a79a0cc64e79b856fa1995f4677bc5e85bfd980b84916"
 
 [[sources]]
 path = "solver/arm_mask.py"
@@ -541,11 +585,15 @@ sha256 = "c033b7362f1ec08c43ba7b115eddcf208de30f907b8f7b19588c86ee085fdb9c"
 
 [[sources]]
 path = "solver/bound_constraints.py"
-sha256 = "3fd26bd2d6f5577cf0456f8a341722a18b261b446a8ef1a8b7fe4bd076c17370"
+sha256 = "c146ad9bc46350ac5a02fffb141b40e8827c7ad585fb0959d2eebec2d1b095a1"
 
 [[sources]]
 path = "solver/crossings.py"
-sha256 = "c6b5cf00138af3ce972f2601264e47308ce024bff3d05b1b568ba6ec4e8a4255"
+sha256 = "6acef10ea3bcd6c047ecc22d17b9f12bedb1c5cefa58c7e33c467a4772b77c49"
+
+[[sources]]
+path = "solver/dense_opt.py"
+sha256 = "9ac33b9f68b7a2d77c279be055fc082b9fbbd0fa29297a466bb936f2471c4f59"
 
 [[sources]]
 path = "solver/fast_live/__init__.py"
@@ -561,7 +609,7 @@ sha256 = "da99b983f07e2f469559c33ce67beaa55ac08467789248fbadf771452b6643fa"
 
 [[sources]]
 path = "solver/fast_live/bound_reduced.py"
-sha256 = "b5f66e7827d9541c296540ece202042b16f905e74a47d6d431b424a197aa1435"
+sha256 = "0609c50cd4161aed3ac3f3d444e977fd1c65a5fe87e13506bb893c5e24267dc4"
 
 [[sources]]
 path = "solver/fast_live/bw_projected_matrix_gpu_probe.py"
@@ -577,7 +625,7 @@ sha256 = "2f54a4d9b0a4071f338a5815552426cfcb2a83aa6a4aa2a82fd424e7639de607"
 
 [[sources]]
 path = "solver/fast_live/correction.py"
-sha256 = "b501b23359cba2758e9b22f2c6b23802f7538be97eb36e3150927ad9ddfb3dc1"
+sha256 = "6b192f35242dee6f4ad0461372c42278b1726c12780b82cfcb63511e389a4ccd"
 
 [[sources]]
 path = "solver/fast_live/cpu_hinge_geometry.py"
@@ -625,7 +673,7 @@ sha256 = "e10ba9f5d5e9190e567818286065491e5d3aa3966cb650ccc98bcc966cf2c899"
 
 [[sources]]
 path = "solver/fast_live/gpu_system_fixed.py"
-sha256 = "a57312c63136d9322d7384fbff522deb5d4ddd3a5a9be3b69af575690eb8385c"
+sha256 = "1afcc0e1b2a08c2cd29f4257785836977518bdb8f1ddefa32fcfe16aa28352ed"
 
 [[sources]]
 path = "solver/fast_live/gpu_system_substep_budget.py"
@@ -689,11 +737,11 @@ sha256 = "e99fe722b2783544bf7c3a5a6f1c1a9057db5e4bcbab1317778326e2cf484f30"
 
 [[sources]]
 path = "solver/lay.py"
-sha256 = "0043c840be3705a04dd8dbdc3c35004de76738c7473bde22a50fe783ccbdfc9f"
+sha256 = "a89792c01ea66e39fc99a226ac3aad1a824da5c6bbfb7a1bbd00c4d74a43a86f"
 
 [[sources]]
 path = "solver/lay_once.py"
-sha256 = "971ed6d97c61b1495920c0d744c6981a432f62510c45a79dc1cf75cbf6accf48"
+sha256 = "a7cc9ee3407f34fa9dde80248a913a7997b134b194f52abcf6aa92ce953917ca"
 
 [[sources]]
 path = "solver/layer_crossings.py"
@@ -709,11 +757,11 @@ sha256 = "8706773661a6ce671306e01ed25ad26784a43113367dba992c3b245ba643c5d8"
 
 [[sources]]
 path = "solver/layer_patch.py"
-sha256 = "c1825a3d0eeb8c7856aa106fdc565aa8239bcb5cffd39f2b34a74a4cae119508"
+sha256 = "153180e3e59011bb0b7228850ee50f9fe9b6c1d33f7a8bfc0fcb2dae508000d2"
 
 [[sources]]
 path = "solver/layer_patch_active.py"
-sha256 = "3b9cf3acf671795883d24a729438eec00253e345c35391e57646908c64546cb9"
+sha256 = "2b23589b6764d524b76ac878d545243d7bf6553c429c966eabfef0a35de31f3d"
 
 [[sources]]
 path = "solver/layer_patch_contacts.py"
@@ -737,7 +785,63 @@ sha256 = "cb749fed188beb13f8ed0d81a809b55fb97af5e1de6cdcc20857b0bcf27ffe25"
 
 [[sources]]
 path = "solver/live_checkpoint.py"
-sha256 = "fdae1c13a0d1690946bc435fe910c2bea0bbac59fdbae9269312ff2dd0450252"
+sha256 = "1af927906903815679478a2bf44f1104113e595f85654be9a3092c085618c3b1"
+
+[[sources]]
+path = "solver/live_session_worker.py"
+sha256 = "837a0289a147f8a61ef2b3bc0d24d92b4027c84e2ec2804b9e887875c15454d9"
+
+[[sources]]
+path = "solver/mesh_graph.py"
+sha256 = "4799641f8f76a8afccdfdb19e584fc7c00f387e01cf8d42cd037d243eb2729ea"
+
+[[sources]]
+path = "solver/native_experimental_coloring.py"
+sha256 = "3f972ad126a690dac1a53f27d90a778134599173ae1fec446a5a89c096cd66b4"
+
+[[sources]]
+path = "solver/native_experimental_contacts.py"
+sha256 = "95d995549c355f325d85de5fb565bdce8ef0e50e9d109077e97cd83f47555098"
+
+[[sources]]
+path = "solver/native_experimental_packed.py"
+sha256 = "91e399cba639df55b7edc2f65b2f2ff459700d28090f55eeb7d90fb1d5b1bdce"
+
+[[sources]]
+path = "solver/native_experimental_small_tiles.py"
+sha256 = "48c499071105396d5604357882da04856eaca3cf6c0dc24f59e04e71dbccabc7"
+
+[[sources]]
+path = "solver/native_experimental_sparse_contacts.py"
+sha256 = "f8e953b87fdcab5464aeb1a62dadfda90aabf66f33e1ab3dd1ae3ce9672c9d28"
+
+[[sources]]
+path = "solver/native_graph.py"
+sha256 = "ce9f3652bd76335d28c79b880f09c1ad3816127bbe26125da26a33e72962015d"
+
+[[sources]]
+path = "solver/native_jacobi_diagnostic.py"
+sha256 = "d0240b09b13a763cfb361fd50dc52e3433d87fa5adf80a9bc554bf6d91f97def"
+
+[[sources]]
+path = "solver/native_runtime_io.py"
+sha256 = "75de826d17a9d3691affcec9c99c30e7630de182bf76c6c326e6fb919b18c342"
+
+[[sources]]
+path = "solver/native_three_automatic.py"
+sha256 = "6f4f28c2339857e1d0cfe5d7ca520a381e63ccb6ec911c1f2dc387b0cf1db433"
+
+[[sources]]
+path = "solver/native_three_cache.py"
+sha256 = "1af663f19ea7ad57303278e5906b1b960928a219d42867923fae4837c450b59a"
+
+[[sources]]
+path = "solver/native_three_contract.py"
+sha256 = "7ecc3333a09858c86d68d91fff978e1af1e9ba95f2693b44286c82cde1995a6b"
+
+[[sources]]
+path = "solver/native_three_prewarm.py"
+sha256 = "e291696ac540c977e7b1e313a3611cd5a8078c3b9e56031f4dc1b9d059375690"
 
 [[sources]]
 path = "solver/newton_patch/particle_vbd_kernels.py"
@@ -745,23 +849,47 @@ sha256 = "9cb603d9b850751e25a68ae847f191a9b191aad1065f38946a4465d340b60e7a"
 
 [[sources]]
 path = "solver/newton_patch/solver_vbd.py"
-sha256 = "d4290884c9552cd458206219d4f9794db32b7aee42ba0ced082607e5e4361651"
+sha256 = "f73e2651cc1f096f297b6c502e9c00f70b0cc1d75991db60472582cd254a99e5"
 
 [[sources]]
 path = "solver/newton_vbd.py"
-sha256 = "047a353b13a1619198af5623ebac8dc673c7cec0683cbc03a1889affb63d40bd"
+sha256 = "9deb8661c21a33d02bb3b92b1eba353e864d2ddd49cb7818067c016bd1548347"
 
 [[sources]]
 path = "solver/nring_filter.py"
 sha256 = "438649d1e18cc1078390fe5eb1815c3045bd8928157c6e6c3e2ed6fb0a785359"
 
 [[sources]]
+path = "solver/preload_config.py"
+sha256 = "3b40281066ef58a4b82d25a64afc0ec9ab5e50f5f9426a8d20b623c4a36136e9"
+
+[[sources]]
 path = "solver/preload_status.py"
 sha256 = "789b7af5fa874d570790b0c405cfbe8bbb6e6a814c4b49ddbc2947c0bd3deb48"
 
 [[sources]]
+path = "solver/prepared_live.py"
+sha256 = "fa86834e60d8b7deef09c6edd2b9d2fa7576ec7540773e18d0a220a607af269c"
+
+[[sources]]
+path = "solver/prepared_worker.py"
+sha256 = "d38fdea88a662efdffb1a3985ff5e4e8da942fa4de3efcaf5bee101bbde41702"
+
+[[sources]]
+path = "solver/process_tree.py"
+sha256 = "8c026a4f423e43ae458730cf98e6932a0c6ad3ec47f2c2b0bd7a71ad8cf71400"
+
+[[sources]]
 path = "solver/run_stages.py"
-sha256 = "84a27c3c64e9f73663c3e7d039fac308f3602e7ffc3d5f66fb23573d7a8d7a16"
+sha256 = "fb22ffd3d476c9cbfbc11adcae454e1b192822adaeae0dbbb8d20fc6538ee840"
+
+[[sources]]
+path = "solver/spatial.py"
+sha256 = "8c42cbfda336a6808857385d990be26f12cda781e37f49bc7bce914e0483388f"
+
+[[sources]]
+path = "solver/spatial_native.py"
+sha256 = "490dc3cdc00e66a2c1c33c87ba47630fe81bdd673e2f20dd3ecd2a71f6735b5e"
 
 [[sources]]
 path = "solver/start_check.py"
@@ -769,7 +897,7 @@ sha256 = "23e495fd5995d7c8b4e85dc53a2cedd6060eef23da6522cc1f257ad8f2be36e5"
 
 [[sources]]
 path = "solver/stop_control.py"
-sha256 = "959fed258dd6b3a279b3572be0a6e8d39ea72fb81f2a8dbb64d777cd7386d773"
+sha256 = "d6cb6a399abb207ba906e7abe48318c50b49af4119a2b305eaf403521d41e025"
 
 [[sources]]
 path = "solver/terminal_checkpoint.py"
@@ -777,23 +905,27 @@ sha256 = "4cdbc4b1fd67cd25375023c5c70d86aab1aa6546aa65fd10001a052d9c6cb059"
 
 [[sources]]
 path = "solver/untangle.py"
-sha256 = "73965992ad527e4a35c2dbc71afcf919288f0f08a20e4a9f50a512d5ff7f08e3"
+sha256 = "4569bb20a26ca6de68447ee65a4ac85f4aeec273e80a2d4d6b93704158a23c3d"
 
 [[sources]]
 path = "spread_ui.py"
-sha256 = "a2bcea023ad855524720aa90a8820f8288cab8ee5d4ca6f2b91a421ce69fa32e"
+sha256 = "f61dc0cd3c2a20adbc7f8a228ab128840638b3613bd8db2ddd84f95fe459dd31"
 
 [[sources]]
 path = "start_check.py"
-sha256 = "c95132b6223ddb8e591c57c5e3afd3787a4c9ed5a7f06b9052b05dadb4b4c23e"
+sha256 = "7be234e29e0d3c5d9666591356925ccb826a4a8576a9106f232f07f709d11dd7"
 
 [[sources]]
 path = "store.py"
-sha256 = "a255f81ca1eab540d199fdd7cf6fda840ca2b648c97b16aad9609b24faadae8f"
+sha256 = "feb6721d0e5d9531dca04e83f062def169c011982861bc3a77130a6c05f41aed"
+
+[[sources]]
+path = "tests/test_allocation_root.py"
+sha256 = "ad11f185e234b4deca8f37ef4bf754a4cef917c5e81a7bc05c51b2259094ff8b"
 
 [[sources]]
 path = "tests/test_bound_constraints_runtime.py"
-sha256 = "1c9d0c10f8b81e234f1655d0646baa7d01a99d8c0179ac22199cbcc4aa48d6a4"
+sha256 = "df5d4b5dcc91d03c47213c6f008433306acbaa230ec0da83d1d1e5836c81d70a"
 
 [[sources]]
 path = "tests/test_compilation_units.py"
@@ -804,8 +936,20 @@ path = "tests/test_continue_new_pieces.py"
 sha256 = "e2f96bc43bc4ac932037665dd1b4b34b0730ee7877024611fffa605ce3c09003"
 
 [[sources]]
+path = "tests/test_cut_references.py"
+sha256 = "6530143548cb92de7e7cdd174aa297005c63b0d64968cef84ffd26ca26959b1a"
+
+[[sources]]
+path = "tests/test_display_cache.py"
+sha256 = "bde3d38d871c57ae5626dba1ac9b87bbc78cae45c64cd391f212cb626f8e18c8"
+
+[[sources]]
 path = "tests/test_display_plan.py"
 sha256 = "22ff1aade1388db0c4f2764a6bf45a7e3d8bb3344df5dfe9ade545ca589e0575"
+
+[[sources]]
+path = "tests/test_edit_copy_placement.py"
+sha256 = "0862e925c07dc35fa2efaa5dc75ec5931d45938e33c7aa8bc037cd4cfaef3638"
 
 [[sources]]
 path = "tests/test_fast_live_contract.py"
@@ -828,8 +972,48 @@ path = "tests/test_fast_live_sewn.py"
 sha256 = "d2f201096cce5372cea5cc7c74581cf7a3471231e09c3e2f7e252b1471560925"
 
 [[sources]]
+path = "tests/test_handle_names.py"
+sha256 = "b5c59de228eb1bd987de3d9c396e2f02328bda87d1d4d9b4f9b81065c5f8cae1"
+
+[[sources]]
+path = "tests/test_layout_spin.py"
+sha256 = "c1ef0f361142dbbb9778ea345d973e6075cf1dfb2c14888b4dc56a9f4a972b9c"
+
+[[sources]]
+path = "tests/test_live_session.py"
+sha256 = "08c2e189b2dcd9034c7b38ae329c391436f8fafa3a510a30456298fbc75064b5"
+
+[[sources]]
+path = "tests/test_look_reference.py"
+sha256 = "02ef83018e0fbad00ccd56b3a01b3406f9162d0feaf1a445c377821e4477133a"
+
+[[sources]]
 path = "tests/test_mirror_result.py"
 sha256 = "9e5fa3a88b8681fb5a1863863192aa49a71debfd288722640402d726a4fbea3b"
+
+[[sources]]
+path = "tests/test_native_graph_runtime.py"
+sha256 = "1ec6ccb39a90bfa26998beafb6fb5c961ac9a2cfb3b3e67681ccf853c504d4a4"
+
+[[sources]]
+path = "tests/test_native_three_cache.py"
+sha256 = "7d93f276ec8da366061eaad1c73166b4815a730ad33bf62e0ae5f15f981035c5"
+
+[[sources]]
+path = "tests/test_native_three_cache_plan.py"
+sha256 = "5390a942eadf39551a8854de87a716b511b19784d354b61499ebd73511406b46"
+
+[[sources]]
+path = "tests/test_native_three_contract.py"
+sha256 = "d197e0bb88ce5890c027a0d839600bd86ef0740d23de5d943c9ca3a3102ddc5f"
+
+[[sources]]
+path = "tests/test_native_three_io.py"
+sha256 = "64ce48d076151ae7ccafe1615937370622b705918333177bdb18e826148f70ff"
+
+[[sources]]
+path = "tests/test_notch_snap.py"
+sha256 = "5c6cb16553dfe8be7046bcbf8636da2272416546f5cf879fab27ca67917caac0"
 
 [[sources]]
 path = "tests/test_phase_from.py"
@@ -840,8 +1024,68 @@ path = "tests/test_piece_table.py"
 sha256 = "1de986f449d642784186d62e8c16c7e6930880ca9c1cac185d0583213828b819"
 
 [[sources]]
+path = "tests/test_place_flat_frames.py"
+sha256 = "1c093dcc0bdd86934b73eb93935040310738d232f9dac7c1403741f3a2462a82"
+
+[[sources]]
+path = "tests/test_place_targets.py"
+sha256 = "d001a115a781d764d8d093808cd4c9eb2dbb061a6cc0e1eef584a99e3941dcd6"
+
+[[sources]]
+path = "tests/test_preload_config.py"
+sha256 = "26d3cad4d00b8daf3b353413b186d447abaabf6988af92bfc4ed90fa7541c126"
+
+[[sources]]
 path = "tests/test_preload_status.py"
 sha256 = "598af3ff53c8172e23a69e227ea105203bc31c20f683c1f3a7d921f2eebe8565"
+
+[[sources]]
+path = "tests/test_prepare_contracts.py"
+sha256 = "80acf8811f2adadc6a6f6603ff184b42dbed453d39386c5f5ccf42352b89bf4e"
+
+[[sources]]
+path = "tests/test_prepared_automatic_diagnostics.py"
+sha256 = "c055578877befe8f66c2f431589c12399ca943207fc6796c90b32e05c709122a"
+
+[[sources]]
+path = "tests/test_prepared_candidate.py"
+sha256 = "8fb202bd4681ed42e0d5d84358c70641abdfb41fdc264a3034e52b4724f8448e"
+
+[[sources]]
+path = "tests/test_prepared_live.py"
+sha256 = "278ccf347325e6dac9154a83a2f536d10d250332b5f6fa045e06f8c1619bfee6"
+
+[[sources]]
+path = "tests/test_process_tree.py"
+sha256 = "8253959b9c19e8cddd3afe9143101f0ed1896db56f4265d3a524428082b91b96"
+
+[[sources]]
+path = "tests/test_pseam_folded_interpolation.py"
+sha256 = "abdc0710748a449c8e8ccb74d6ead19e6ff3182f5f8cc59d4c15b6957ec78c47"
+
+[[sources]]
+path = "tests/test_reference_contracts.py"
+sha256 = "4e088cc503aadf5c6674d61efe8e8b699e6b96936379290ca75c58049023e69d"
+
+[[sources]]
+path = "tests/test_result_reference.py"
+sha256 = "5900d18e1f81a49ef7e4c510617f4e12e3964a88a27935c00f9a93ef5359d27c"
+
+[[sources]]
+path = "tests/test_settle_vertex_paths.py"
+sha256 = "b14d6e2c263632673a2f37b6cd424c8488e470a61983e7abb037d8883c6c1671"
+
+[[sources]]
+path = "tests/test_simlog_counts.py"
+sha256 = "8b927ca31860d200ed8818ed2e9e0e052931b20a1a086690fa5cb580baca6dc8"
+
+[[sources]]
+path = "tests/test_solver_math.py"
+sha256 = "129ef59bdcdb784711efb9f014dea43da2f0b12414dea49a3b17c30ca8ff2a50"
+
+[[sources]]
+path = "tests/test_spread_center.py"
+sha256 = "08802e107eabc79ba089fdc209a378bfb048258f28e9cc0eb7ec9fe419da34ea"
 
 [[sources]]
 path = "tests/test_stage_cleanup.py"
@@ -856,20 +1100,28 @@ path = "tests/test_stop_control.py"
 sha256 = "646005fcd7444db4a6b79acd4fb32a48326d31eb257dfd45695ce7f0c89ed89e"
 
 [[sources]]
+path = "tests/test_strengthen.py"
+sha256 = "1f78f6fc5207cc1443f71abcc5add0b4b0378e78b541f3da9dae044a03be8ea2"
+
+[[sources]]
 path = "tests/test_twin_seam_mirror.py"
-sha256 = "3edc27940ab21d1f716bd5da4ac7d514ec44cc38c5629ccbf27ecef2add6f65f"
+sha256 = "c81214ffaf5a74777bbfdfcde760abf49fd153005802b43ba2571cb9f8c7cba7"
 
 [[sources]]
 path = "tool_tab.py"
-sha256 = "e95cff58b4c42ada4445deee038633e8ca60abc90a7fd5923faea0bcaf715a1a"
+sha256 = "67764cf73610ad2924301790b1b1f5cb602faaeb46688dca98e697393711a0c7"
 
 [[sources]]
 path = "toolbar.py"
-sha256 = "99fe2fc91e41042d9d91c0cae9c4a730306fef7aaaf592eb071b6f3f75677abe"
+sha256 = "66a9d3350def658d955adb56f161d27f4bb6566b73cf2feb26ec76d8716bb2e0"
 
 [[sources]]
 path = "ui.py"
-sha256 = "17a12d549b39a18e44a13c4a1179b34ebfd6a3d8eec2a49b735860fa6b285d5b"
+sha256 = "15194a9c63194a407cf5119bb6301120afa8d189e6a1226e6d22bc5125fb211a"
+
+[[sources]]
+path = "units.py"
+sha256 = "a4c358c654e599142add554eafa8ef27f29b4797fa6d8edb138b3f02150e2e5b"
 
 [[sources]]
 path = "view_setup.py"
@@ -881,7 +1133,7 @@ sha256 = "994022b6e6289f3428df7914e84826321d65b619b00c500558539e0a23f22105"
 
 [[sources]]
 path = "walk_ui.py"
-sha256 = "b9445d0fae12498df62bb23f82714eb148425a4224dbd49f73171f806c1178fe"
+sha256 = "6acff1553443c8db47484a3c2a501c29016a58d48d097d73a089bf3d1013142e"
 
 [[sources]]
 path = "work_screen.py"

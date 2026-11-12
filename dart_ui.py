@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Darts on the flat pattern (core/dart.py). Add Dart puts a dart on the outline point under the cursor (D with the
-Edit Pattern tool, its width and length in the Redo panel) and trues its mouth. Move Dart (M on a dart's leg or
-apex with Edit Pattern, or Move in the seam box) pivots it to the outline point clicked next, or slides it along
+"""Darts on the flat pattern (core/dart.py). Add Dart puts a dart on the outline point under the cursor (Edit Pieces'
+right-click menu on an outline edge, its width and length in the Redo panel) and trues its mouth. Move Dart (the right-click menu on a
+dart's leg or apex with Edit Pieces, or Move in the seam box) pivots it to the outline point clicked next, or slides it along
 its line (Shift), showing the result under the cursor first; it leaves no corner where the dart was (the seams
 there join up again, user 2026-10-21 B-3). The selected seam's box shows a dart's angle and legs, Move, Fold
 (the mouth folded shut, dotted) and True Mouth (draw_dart_rows)."""
@@ -10,6 +10,7 @@ import gpu
 import numpy as np
 from gpu_extras.batch import batch_for_shader
 from .i18n import CTX, F9, rpt, tx
+from . import units as U
 
 from . import draft_tool as T
 from . import pattern_view as PV
@@ -58,10 +59,10 @@ class AC9_OT_SimAddDart(bpy.types.Operator):
     bl_label = "Add Dart"
     bl_options = {'REGISTER', 'UNDO'}
 
-    width: bpy.props.FloatProperty(name="Width", default=20.0, min=2.0, max=200.0, precision=1,
-                                   description="Width of the dart's mouth along the outline (mm)")
-    length: bpy.props.FloatProperty(name="Length", default=80.0, min=5.0, max=600.0, precision=1,
-                                    description="From the middle of the mouth to the apex (mm)")
+    width: bpy.props.FloatProperty(name="Width", default=0.02, min=0.002, max=0.2, precision=1, subtype='DISTANCE', unit='LENGTH', 
+                                   description="Width of the dart's mouth along the outline")
+    length: bpy.props.FloatProperty(name="Length", default=0.08, min=0.005, max=0.6, precision=1, subtype='DISTANCE', unit='LENGTH', 
+                                    description="From the middle of the mouth to the apex")
     true_mouth: bpy.props.BoolProperty(name="True the Mouth", default=True,
                                        description="Shape the outline across the mouth so that, sewn, it runs on smoothly")
     piece: bpy.props.StringProperty(options={'HIDDEN'})
@@ -91,7 +92,7 @@ class AC9_OT_SimAddDart(bpy.types.Operator):
         old = S.loads(S.dumps(spec))
         sp = S.loads(S.dumps(spec))
         try:
-            out, moved = DT.add_dart(sp, self.piece, self.edge, self.t, self.width, self.length,
+            out, moved = DT.add_dart(sp, self.piece, self.edge, self.t, self.width * 1000.0, self.length * 1000.0,
                                          true=self.true_mouth)
         except (ValueError, StopIteration) as exc:
             self.report({'WARNING'}, str(exc) or "the edge is gone")
@@ -134,7 +135,7 @@ class AC9_OT_SimMoveDart(bpy.types.Operator):
         return T.AC9_OT_SimPatternDrag.poll(context)
 
     def invoke(self, context, event):
-        # the dart under the cursor (M with Edit Pattern: moving a dart changes the piece's shape, so it is an Edit
+        # the dart under the cursor (M with Edit Pieces: moving a dart changes the piece's shape, so it is an Edit
         # Pattern key, not Edit Seams' M, which slides where a seam sews; Fable REVIEW_fable_dart_data_model), else
         # the one picked in the Seams list (the seam box's Move)
         spec, _ = store.get(context)
@@ -169,7 +170,7 @@ class AC9_OT_SimMoveDart(bpy.types.Operator):
         if self.trial and self.trial[3]:
             txt += tx("   cannot: {0}", self.trial[3])
         txt += ("   click the outline: move   S: Pivot / Shift   Tab: side to turn   A: apex follows (Shift)"
-                "   right click / Esc: cancel")
+                "   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
     def _end(self, context):
@@ -414,7 +415,7 @@ def draw_dart_rows(layout, context, spec, act, viewport=True):
     if dt is None:
         return
     box = layout.box()
-    box.label(text=tx("Dart {0:.1f} deg, legs {1:.0f} mm", dt['deg'], dt['length']) + ("" if act.get('enabled', True) else tx(" (off)")))
+    box.label(text=tx("Dart {0:.1f} deg, legs {1}", dt['deg'], U.fmt(bpy.context, dt['length'])) + ("" if act.get('enabled', True) else tx(" (off)")))
     row = box.row(align=True)
     if viewport:
         row.operator("ac9_cloth_sim.move_dart", text="Move")
@@ -426,7 +427,7 @@ def draw_dart_rows(layout, context, spec, act, viewport=True):
     if kink > 1.0:
         box.operator("ac9_cloth_sim.close_dart", text=tx("True Mouth ({0:.0f} deg)", kink))
     if not viewport:
-        box.label(text="Move: M on a leg, Edit Pattern", icon='INFO')
+        box.label(text="Move: right-click a leg, Edit Pieces", icon='INFO')
 
 
 CLASSES = (AC9_OT_SimAddDart, AC9_OT_SimMoveDart, AC9_OT_SimCloseDart, AC9_OT_SimFoldDart)

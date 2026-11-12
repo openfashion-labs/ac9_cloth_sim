@@ -50,3 +50,13 @@ When it is on, it records problems that happen while the garment is being dresse
 - It is off by default. Turn it on before pressing **Phase Sim**.
 - Red marks a "candidate for a problem," and it can show up even on a good garment.
 - The red is drawn by **Diagnose** > **Problems** under **Overlays** (on by default). If you can't see it, check the overlay eye button in the header and the "Problems" checkbox.
+
+## Strengthen
+
+Select pieces, open Properties → Tool → **AC9 Piece**, and enable **Strengthen**. **Strength Factor** defaults to 5 and ranges from 1 to 100. It multiplies stretch, shear, and bending stiffness equally; 1 leaves stiffness unchanged. Mass, thickness, and rest shape stay the same. Selected pieces and their pairs change together.
+
+A purple tint marks strengthened patterns and 3D pieces; Freeze and Off state colors take priority. Toggle Strengthen or edit the factor during Live Sim: the worker applies it at the next frame that receives the change. Disabling it retains the chosen factor. The setting is saved in the spec and .blend and remains effective until disabled.
+
+Interlining adds the mass and bending of a physical material and is separate from Strengthen. You choose whether to retain the strengthened shape or disable it and let the cloth relax. Large multipliers resist sewing and bending more strongly.
+
+The tint is visible when Overlays → Piece Colors is enabled. If Strengthen changes during a Live run using End Taper, the next Live rebuilds from the shown shape. The visible shape and Strengthen settings are still saved.

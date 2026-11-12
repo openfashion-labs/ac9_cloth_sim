@@ -53,13 +53,14 @@ def plan(spec, selected, lead):
     return out, notes
 
 
-def _mirror_layout(F, src_flat, tgt_flat):
+def _mirror_layout(F, src_flat, tgt_flat, plane='x'):
     """Layout points F of the target mirrored into the source's layout (the bounding boxes' centers matched, as
-    placed_view.mirror_flat does the other way)."""
+    placed_view.mirror_flat does the other way; across y for a front / back pair)."""
     ca = 0.5 * (tgt_flat.min(0) + tgt_flat.max(0))
     cb = 0.5 * (src_flat.min(0) + src_flat.max(0))
-    F = np.asarray(F, float)
-    return np.stack([cb[0] - (F[:, 0] - ca[0]), F[:, 1] - ca[1] + cb[1]], 1)
+    F = np.asarray(F, float) - ca
+    F[:, 1 if plane == 'y' else 0] *= -1.0
+    return F + cb
 
 
 def bary(Q, V, T, X):
@@ -88,20 +89,22 @@ def bary(Q, V, T, X):
     return out
 
 
-def mirror_piece(X, flat, F, rng_src, rng_tgt, cx):
-    """(positions for the target's vertices, 'same' | 'mapped'): the source's shape mirrored about x = cx. The same
+def mirror_piece(X, flat, F, rng_src, rng_tgt, cx, plane='x'):
+    """(positions for the target's vertices, 'same' | 'mapped'): the source's shape mirrored about x = cx (front /
+    back, plane 'y': about y = cx). The same
     mirrored mesh (a pair meshed as mirror images: vertex i is vertex i's mirror) is copied vertex for vertex; other
     meshes through the layout (barycentric in the source's triangles)."""
     s0, s1 = rng_src
     t0, t1 = rng_tgt
-    M = np.asarray(X[s0:s1], float) * np.array([-1.0, 1.0, 1.0]) + np.array([2.0 * cx, 0.0, 0.0])
+    from .spec import mirror_points
+    M = mirror_points(np.asarray(X[s0:s1], float), plane, cx)
     fs, ft = np.asarray(flat[s0:s1], float), np.asarray(flat[t0:t1], float)
     if s1 - s0 == t1 - t0:
-        if float(np.abs(_mirror_layout(ft, fs, ft) - fs).max(initial=0.0)) <= SAME_TOL:
+        if float(np.abs(_mirror_layout(ft, fs, ft, plane) - fs).max(initial=0.0)) <= SAME_TOL:
             return M, 'same'
     F = np.asarray(F)
     T = F[(F[:, 0] >= s0) & (F[:, 0] < s1)] - s0
-    return bary(_mirror_layout(ft, fs, ft), fs, T, M), 'mapped'
+    return bary(_mirror_layout(ft, fs, ft, plane), fs, T, M), 'mapped'
 
 
 def closure_top(spec, a, b, side_of):
