@@ -47,6 +47,8 @@ if "_spec" in locals():
         importlib.reload(_view_visibility)
     if "_view_setup" in locals():
         importlib.reload(_view_setup)
+    if "_text_band" in locals():
+        importlib.reload(_text_band)
     for _m in (*([_i18n_ja, _i18n] if '_i18n' in locals() else []), *([_core_i18n] if '_core_i18n' in locals() else []), _spec, *([_shape_source] if '_shape_source' in locals() else []), *([_piece_table] if '_piece_table' in locals() else []), _bom_parse, _bom_to_spec, _body_axes, _pattern_build, _roles, *([_fabric, _look] if '_look' in locals() else []), _recipe, _presets, *([_prepare_plan] if '_prepare_plan' in locals() else []), *([_phase_from] if '_phase_from' in locals() else []), _simlog,  # noqa: F821
                _store, *([_look_apply] if '_look_apply' in locals() else []), _pattern_view, _placed_view, *([_selection] if '_selection' in locals() else []), _overlay, _piece_look, *([_diagnose] if '_diagnose' in locals() else []), _click_log, _toolbar, *([_pre_click] if '_pre_click' in locals() else []), _seam_tool, _seam_edit, _seam_edit_tool, _draft, _snap, _transfer, _dxf_out, _walk, _notch_import, _dart, _spread, *([_cut] if '_cut' in locals() else []), _blend, _draft_tool, _shape_tool, _walk_ui, _dart_ui, _spread_ui, _blend_ui, _placement, _guide_edit, _piece_move, _garment_mark, _work_screen, _attach, _buttons, _zippers, _button_shape, _button_view, _zipper_view, _button_ui, *([_lifecycle_trace, _stop_control] if '_stop_control' in locals() else []), _dress, *([_place_fold] if '_place_fold' in locals() else []), *([_place_seam] if '_place_seam' in locals() else []), *([_place_lay] if '_place_lay' in locals() else []), *([_place_settle] if '_place_settle' in locals() else []), _export_retopo,  # noqa: F821
                _mesh_to_spec, _mesh_import, _measure, _measure_tool, *([_measure_edit] if '_measure_edit' in locals() else []), _properties, _operators, _ui, _tool_tab):                                                     # noqa: F821
@@ -95,6 +97,7 @@ from . import result_reference as _result_reference # noqa: E402
 from . import display_state as _display_state       # noqa: E402
 from . import view_visibility as _view_visibility   # noqa: E402
 from . import view_setup as _view_setup             # noqa: E402
+from . import text_band as _text_band               # noqa: E402
 from . import overlay as _overlay                   # noqa: E402
 from . import piece_look as _piece_look             # noqa: E402
 from . import diagnose as _diagnose                 # noqa: E402

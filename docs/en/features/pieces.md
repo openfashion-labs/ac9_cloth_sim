@@ -7,6 +7,8 @@ sidebar_position: 8
 
 Each piece has four states (in the **Pieces** tab of **Lists**, or in **State** of **AC9 Piece** when you've selected a piece).
 
+![the Pieces tab of Lists](../img/d_lists_pieces.png)
+
 | State | Icon | Moves | Other cloth collides with it | Seams |
 |---|---|---|---|---|
 | **Active** | Play | Yes | Yes | Yes |
@@ -22,7 +24,7 @@ Each piece has four states (in the **Pieces** tab of **Lists**, or in **State** 
 
 ## Layering
 
-- Switch garments with **Garment** and run **Phase Sim**, and other garments that have results automatically become "immovable obstacles". The order is: dress the inner one, then switch **Garment** to the outer one and run **Phase Sim**.
+- Switch garments with **Garment** and run **Live Sim**, and other garments that have results automatically become "immovable obstacles". The order is: dress the inner one, then switch **Garment** to the outer one and run **Live Sim**.
 - What becomes an obstacle is the other garment's last shape. Pieces you set to **Off Pattern** / **Off All** in the other garment are removed from the obstacles.
 - When you simulate another garment, the earlier garments' history (the timeline frames) is dropped and only the last shape stays (the Result field becomes `Frames: dropped (shape kept)`).
 - In the **Collision** tab, you can make things that have no pattern (props, or garments that are ordinary meshes) into obstacles. Select the object and press **Add Selected**; press **Remove** to stop.

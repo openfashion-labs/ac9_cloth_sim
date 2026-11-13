@@ -1407,38 +1407,35 @@ def _draw_px():
     labs = _geo.get('alab', [])
     if not props.show_lengths:                      # the lengths off: the sides still read A and B
         labs = [(p, t.split()[0]) for p, t in labs[:2]] if props.show_overlay else []
+    from . import text_band
+    items = []
     for p, txt in labs:                             # the selected seam's sides and lengths
         xy = location_3d_to_region_2d(region, rv3d, p)
         if xy is None:
             continue
-        w, h = blf.dimensions(fid, txt)
-        blf.color(fid, 0.0, 0.0, 0.0, 0.8)
-        blf.position(fid, xy[0] - w / 2 + 1, xy[1] + 6 - 1, 0)
-        blf.draw(fid, txt)
-        blf.color(fid, 1.0, 1.0, 1.0, 1.0)
-        blf.position(fid, xy[0] - w / 2, xy[1] + 6, 0)
-        blf.draw(fid, txt)
+        w, _h = blf.dimensions(fid, txt)
+        items.append((xy[0] - w / 2, xy[1] + 6, txt, (1.0, 1.0, 1.0, 1.0)))
+    text_band.draw(fid, items)
     if not props.show_names:
         return
     blf.size(fid, 12)
     from .core import roles as RO
     from .i18n import tx
     starts = {pc['name']: RO.start_of(pc) for pc in spec.get('pieces', [])}
+    items = []
     for p, name, on in _geo.get('labels', []):
         xy = location_3d_to_region_2d(region, rv3d, p)
         if xy is None:
             continue
         w, _ = blf.dimensions(fid, name)
-        blf.position(fid, xy[0] - w / 2, xy[1], 0)
-        blf.color(fid, *((1, 1, 1, 0.9) if on else (0.6, 0.6, 0.6, 0.6)))
-        blf.draw(fid, name)
+        items.append((xy[0] - w / 2, xy[1], name, (1, 1, 1, 0.9) if on else (0.6, 0.6, 0.6, 0.8)))
         st_ = starts.get(name, 'placed')
         if st_ != 'placed' and on:                  # the piece's Start under its name (user 2026-11-02)
             t = tx(RO.START_EN[st_])
             w, _ = blf.dimensions(fid, t)
-            blf.position(fid, xy[0] - w / 2, xy[1] - 14, 0)
-            blf.color(fid, *((0.45, 0.85, 1.0, 0.9) if st_ == 'edge' else (1.0, 0.85, 0.35, 0.9)))
-            blf.draw(fid, t)
+            items.append((xy[0] - w / 2, xy[1] - 19, t,
+                          (0.45, 0.85, 1.0, 0.9) if st_ == 'edge' else (1.0, 0.85, 0.35, 0.9)))
+    text_band.draw(fid, items)
 
 
 def invalidate():

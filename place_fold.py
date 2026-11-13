@@ -985,7 +985,9 @@ def draw_why(layout, context, piece, line):
     col = layout.column(align=True)
     for k, t in enumerate(textwrap.wrap(why, 34)):
         col.label(text=t, icon='INFO' if k == 0 else 'BLANK1')
-    col.operator("ac9_cloth_sim.fold_local_sim", text="Local Sim", icon='PIVOT_INDIVIDUAL').piece = piece
+    from . import dress as D
+    if D.experimental(context):             # Local Sim is under Experimental Features (user 2026-11-12)
+        col.operator("ac9_cloth_sim.fold_local_sim", text="Local Sim", icon='PIVOT_INDIVIDUAL').piece = piece
 
 
 class AC9_OT_SimFoldLocalSim(bpy.types.Operator):

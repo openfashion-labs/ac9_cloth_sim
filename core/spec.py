@@ -93,7 +93,7 @@ external tool (MCP) all read and write the same thing.
                    "shear_N_m": float, "bend_hyst_per_m": float,   # kappa_y = 2HB / 2B (1/m), the bending hysteresis
                    "thickness_mm": float | null}],      # the display only (a Solidify), not simulated
       "default_fabric_id": str,                 # (2026-10-20) the garment's default, one of "fabrics": a new spec
-                                                # starts with Cotton Poplin; one saved before gets it from the old
+                                                # starts with Cotton Jersey (Poplin before 2026-11-12); one saved before gets it from the old
                                                 # Dress panel (core/fabric.migrate)
       "interlinings": [{"id": str, "name": str, "preset": str | null,   # (2026-10-25) the garment's interlinings,
                         "source": str, "weight_gsm": float,         # what each adds to the fabric of the pieces

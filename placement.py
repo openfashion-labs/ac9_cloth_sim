@@ -237,7 +237,7 @@ def _reset_on_garment(context, spec, names, *, preparation=None):
     # the next Phase Sim sewing it on from there (user 2026-10-25 b-2)
     spec, new = give_shape(context, spec, pick, preparation=preparation)
     obs = PLV.objects(spec)
-    out = [tx("{0}: placed shape, the next Phase Sim sews it on from there", ', '.join(new))] if new else []
+    out = [tx("{0}: placed shape, the next Live Sim sews it on from there", ', '.join(new))] if new else []
     todo = sorted(n for n in pick if n not in obs and n in on_g)
     if not todo:
         return out
@@ -245,7 +245,7 @@ def _reset_on_garment(context, spec, names, *, preparation=None):
         done = D.reset_to_placed(context, g, spec, todo, context.scene.ac9_cloth_sim.mesh_size, preparation=preparation)
     except ValueError as exc:
         return out + [tx("not reset ({0})", exc)]
-    return out + ([tx("reset {0} (the next Phase Sim sews it on from here)", ', '.join(done))] if done else [])
+    return out + ([tx("reset {0} (the next Live Sim sews it on from here)", ', '.join(done))] if done else [])
 
 
 def replace_prepared(context, spec, res, reset=(), only=None):
@@ -292,6 +292,70 @@ def remake(context, spec, names, prepared_out=None, *, preparation=None):
     if edited:
         rep_.append(tx("edits in Edit Mode dropped (moves kept): {0}", ', '.join(edited)))
     return rep_
+
+
+def body_fingerprint(context):
+    """A short key of the body as a placement sees it (the evaluated mesh, world mm, to 0.01 mm): stamped on the
+    placed objects made on it (placed_view.BODY_PROP)."""
+    import hashlib
+    ob = context.scene.ac9_cloth_sim.body
+    if ob is None:
+        return "none"
+    co, tri = body_arrays(context, ob)
+    h = hashlib.sha1(np.round(co, 2).astype(np.float64).tobytes())
+    h.update(np.ascontiguousarray(tri).tobytes())
+    return f"{len(co)}:{h.hexdigest()[:12]}"
+
+
+def stale_unmoved(context, spec, fp=None):
+    """The pieces whose placed object was placed by the rule (not moved by hand, no fold, seam, lay or result) on
+    another body than the one now: made again so that what is seen is where they start (user 2026-11-13, DECISIONS
+    cloth-sim-start-from-screen-2026-11-13). A mirrored half follows its object. An object made before the body was
+    recorded (an older file) has the body now recorded, not made again: nothing says its body changed."""
+    obs = PLV.objects(spec)
+    own = [n for n, ob in obs.items() if ob.get(PLV.PROP) == n]
+    if not own:
+        return []
+    fp = fp or body_fingerprint(context)
+    for n in own:
+        if obs[n].get(PLV.BODY_PROP) is None:
+            obs[n][PLV.BODY_PROP] = fp
+    return sorted(n for n in own if obs[n].get(PLV.BODY_PROP) != fp and not PLV.is_moved(obs[n]))
+
+
+def refresh_unmoved(context, spec, names=None):
+    """The placed objects of the pieces not moved by hand made again from the placement (names: those; None: every
+    one stale_unmoved finds), the selection, the active one and the hidden ones kept. Returns (pieces made again,
+    report lines of the placement: a band widened, an overlap, a pair put to its mirror image)."""
+    names = stale_unmoved(context, spec) if names is None else sorted(names)
+    if not names:
+        return [], []
+    from . import dress as D
+    obs0 = PLV.objects(spec)
+    hidden = {n for n, ob in obs0.items() if ob.hide_get()}
+    picked = {n for n, ob in obs0.items() if ob.select_get()}
+    vl = context.view_layer
+    act = vl.objects.active if vl is not None else None
+    act_n = next((n for n, ob in obs0.items() if ob == act), None)
+    notes = []
+    try:
+        with PB.operation(context) as preparation:
+            r = show_start(context, spec, (), preparation=preparation)
+            if r is None:                               # a dressed garment: those alone
+                r = remake(context, spec, names, preparation=preparation)
+            notes = list(r or [])
+    except ValueError as exc:
+        return [], [str(exc)]
+    obs = PLV.objects(spec)
+    for n, ob in obs.items():
+        if n in hidden:
+            ob.hide_set(True)
+        if n in picked:
+            ob.select_set(True)
+    if act_n is not None and act_n in obs and vl is not None:
+        vl.objects.active = obs[act_n]
+    overlay.invalidate()
+    return names, notes
 
 
 @PB.prepared_consumer
@@ -1033,7 +1097,7 @@ def show_placed(context, *, placed_only=True, report=None, preparation=None):
 
 
 class AC9_OT_SimShowPlaced(bpy.types.Operator):
-    """Only to adjust the placement by hand before a Phase Sim (Phase Sim works without it): the start shape Phase Sim would make put in the scene as objects, to move, rotate, tilt or edit like any mesh; Phase Sim then starts those pieces from them. Pieces already moved by hand are kept"""
+    """Only to adjust the placement by hand before a simulation (it works without it): the start shape the simulation would make put in the scene as objects, to move, rotate, tilt or edit like any mesh; Live Sim then starts those pieces from them. Pieces already moved by hand are kept"""
     bl_idname = "ac9_cloth_sim.show_placed"
     bl_label = "Move by Hand"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1091,7 +1155,7 @@ class AC9_OT_SimMoveByHand(bpy.types.Operator):
             return False
         from . import dress as D
         if D.AC9_OT_SimDress.running():
-            cls.poll_message_set("Not while a Phase Sim or Live Sim runs")
+            cls.poll_message_set("Not while a simulation runs")
             return False
         if cls._dressed(spec) is not None and not selected_pieces(context):
             cls.poll_message_set("Click a piece on the pattern or the garment first")
@@ -1105,7 +1169,7 @@ class AC9_OT_SimMoveByHand(bpy.types.Operator):
             return tx("Select the chosen pieces in 3D and switch to the Move tool: a handle on the garment for a "
                       "piece on it, the placed shape for one put back or placed after it (made if missing)")
         return tx("Select the chosen pieces' placed shapes in 3D (made if missing) and switch to the Move tool: G / R "
-                  "them like any object; Phase Sim starts them from there")
+                  "them like any object; Live Sim starts them from there")
 
     def execute(self, context, *, preparation=None):
         # show_placed/give_shape can materialize shapes before control-side
@@ -1256,7 +1320,7 @@ class AC9_OT_SimMoveByHand(bpy.types.Operator):
         if took:
             msg.append(rpt("{0} on the garment (its pair stays)", ', '.join(took)))
         if reset:
-            msg.append(rpt("{0} as placed shapes (the next Phase Sim sews them on from there)", ', '.join(o[PLV.PROP] for o in reset)))
+            msg.append(rpt("{0} as placed shapes (the next simulation sews them on from there)", ', '.join(o[PLV.PROP] for o in reset)))
         self.report({'INFO'}, "; ".join(msg) + rpt(": G / R it"))
         return {'FINISHED'}
 
@@ -1448,8 +1512,8 @@ class AC9_OT_SimSetPose(bpy.types.Operator):
     bl_label = "Move Placed Piece"
     bl_options = {'REGISTER', 'UNDO'}
 
-    loc: FloatVectorProperty(name="Move", size=3, precision=1, subtype='TRANSLATION', unit='LENGTH')   # m
-    rot: FloatVectorProperty(name="Turn (deg)", size=3, precision=1, step=100)
+    loc: FloatVectorProperty(name="Move", size=3, precision=1, step=U.LEN_STEP, subtype='TRANSLATION', unit='LENGTH')   # m
+    rot: FloatVectorProperty(name="Turn (deg)", size=3, precision=1, step=50)
 
     @classmethod
     def poll(cls, context):
@@ -1566,7 +1630,7 @@ class AC9_OT_SimSwapSides(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a Phase Sim or Live Sim runs")
+            cls.poll_message_set("Not while a simulation runs")
             return False
         sel = selected_pieces(context)
         if not side_pairs(spec, sel):
@@ -1610,7 +1674,7 @@ class AC9_OT_SimPairPlane(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a Phase Sim or Live Sim runs")
+            cls.poll_message_set("Not while a simulation runs")
             return False
         sel = set(selected_pieces(context))
         if not any(a in sel or b in sel for a, b in S.twins(spec)):
@@ -1773,7 +1837,7 @@ class AC9_OT_SimFlipUpDown(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a Phase Sim or Live Sim runs")
+            cls.poll_message_set("Not while a simulation runs")
             return False
         if not any(n in spec.get('placement', {}) for n in selected_pieces(context)):
             cls.poll_message_set("Place the piece first")
@@ -1802,7 +1866,7 @@ class AC9_OT_SimTurnFlat90(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a Phase Sim or Live Sim runs")
+            cls.poll_message_set("Not while a simulation runs")
             return False
         pl = spec.get('placement', {})
         if not any(S.is_flat(pl.get(n)) for n in selected_pieces(context)):

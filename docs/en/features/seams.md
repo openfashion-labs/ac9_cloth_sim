@@ -17,6 +17,8 @@ One seam is a specification that sews "this section of piece A's outline (or int
 
 The **Seams** tab in **Lists** shows one seam per row. From the left: a colored square for the seam, the name (label), `length of side A / length of side B` (mm), and the difference (mm) if there is one. The icon on the left is a warning (please check), a pencil (added by you), a chain (read from the BOM), or an empty square (off, not sewn).
 
+![the Seams tab of Lists](../img/fg_lists_seams.png)
+
 - The top row shows "○ seams, ○ to check". BOM seams are kept per garment group and don't change when you turn pieces on or off (fixing the group rebuilds them, and seams you added or confirmed are kept).
 - The arrow button at the top right of the list narrows it to the seams of the selected pieces (off by default).
 - When you select a seam, **AC9 Seam** appears in the Tool tab at the lower right. Seams are also color-coded on the pattern (orange for ones to check, gray for off).
@@ -30,7 +32,7 @@ Hold it from **Edit Seams** in the **Pattern** panel (or from the tool column on
 - While you hold **Edit Seams**, the internal lines of all pieces also appear thin (a guide for lining up the ends of seams).
 - Drag the end (white dot) of a selected seam to change its section. It moves along outlines and internal lines and snaps to corners, notches, and the ends of other seams (Ctrl turns snapping off).
 - The two ends of the selected seam are joined with a dotted line, and the lengths of both sides and their difference are shown.
-- **M**: moves the side under the cursor to another place (click the destination; **F** flips the direction). A moved spot counts as newly sewn on the next **Phase Sim**.
+- **M**: moves the side under the cursor to another place (click the destination; **F** flips the direction). A moved spot counts as newly sewn on the next **Live Sim**.
 - **N**: places a notch and its partner. **Ctrl+N** places just one side. **X** or **Delete**: deletes the selected seam.
 - To undo: Ctrl+Z.
 
@@ -48,7 +50,7 @@ Hold it from **Edit Seams** in the **Pattern** panel (or from the tool column on
 - **Off** or **On**: don't sew / sew that seam.
 - **Confirm**: marks it as checked (the warning goes away). Only appears on seams that have a warning.
 - **Delete**: deletes the seam.
-- **Fold (deg)**: the angle the two pieces keep across the seam (+ is a mountain fold, 0 means none). When you change it, the placed shape folds right away. Choose the piece that turns with **Turns**. Seams that continue in a straight line get the same angle. When it can't fold, the reason and **Local Sim** appear.
+- **Fold (deg)**: the angle the two pieces keep across the seam (+ is a mountain fold, 0 means none). When you change it, the placed shape folds right away. Choose the piece that turns with **Turns**. Seams that continue in a straight line get the same angle. When it can't fold, the reason appears.
 - **Pull**: how the seam pulls the pieces together. **Straight**, or **Round** (passes around a body part; pick the part with **Part**).
 
 ## Seam lengths and notches (Lengths & Notches)

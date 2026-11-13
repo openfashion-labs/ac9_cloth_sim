@@ -453,6 +453,12 @@ class AC9_OT_SimSeamEdit(bpy.types.Operator):
         spec, _ = store.get(context)
         spec = bom_to_spec.S.loads(bom_to_spec.S.dumps(spec))
         act = store.active_seam(context, spec)
+        # pieces edited symmetrically (Symmetric Edit, left / right pairs): the mirror image of each seam changed
+        # gets the same change (user 2026-11-13: Flip on one shoulder left the other as it was)
+        from .core import seam_twin as ST
+        picked = [act['id']] if self.action in ('FLIP_A', 'FLIP_B', 'CONFIRM') else \
+            [sm['id'] for sm in store.selected_seams(context, spec)]
+        mirror = ST.partners(spec, picked)
         if self.action in ('FLIP_A', 'FLIP_B'):
             sd = act['a' if self.action == 'FLIP_A' else 'b']
             sd['from'], sd['to'] = sd['to'], sd['from']
@@ -471,10 +477,14 @@ class AC9_OT_SimSeamEdit(bpy.types.Operator):
                 if sm.get('source') == 'bom':
                     sm['source'] = 'user'
         elif self.action == 'DELETE':
-            gone = {sm['id'] for sm in store.selected_seams(context, spec)}
+            gone = {sm['id'] for sm in store.selected_seams(context, spec)} | set(mirror.values())
             spec['seams'] = [sm for sm in spec['seams'] if sm['id'] not in gone]
             store.seam_more.clear()
+        if self.action != 'DELETE':
+            ST.sync_partners(spec, mirror)
         store.put(context, spec)
+        if mirror:
+            self.report({'INFO'}, rpt("Its mirror image too: {0}", ', '.join(sorted(mirror.values()))))
         _tag_redraw(context)
         return {'FINISHED'}
 
@@ -511,6 +521,8 @@ class _SeamPathBase:
         spec, _ = store.get(context)
         spec = bom_to_spec.S.loads(bom_to_spec.S.dumps(spec))
         act = store.active_seam(context, spec)
+        from .core import seam_twin as ST          # the mirror image's pull too, left / right swapped
+        mirror = ST.partners(spec, [act['id']])
         if self.what == 'SIDE':
             if self.side == 'STRAIGHT':
                 act.pop('path', None)
@@ -525,6 +537,7 @@ class _SeamPathBase:
                 act['path']['guide'] = self.guide
         if act.get('source') == 'bom':
             act['source'] = 'user'               # a person changed it: keep it on "Seams from BOM"
+        ST.sync_partners(spec, mirror)
         store.put(context, spec)
         _tag_redraw(context)
         return {'FINISHED'}
@@ -655,7 +668,7 @@ class AC9_OT_SimSetFold(bpy.types.Operator):
 
 
 class AC9_OT_SimPiecesOnOff(bpy.types.Operator):
-    """Switch the selected pattern pieces on or off, leaving the others as they are (an off piece is not sewn: add an accessory later and Phase Sim)"""
+    """Switch the selected pattern pieces on or off, leaving the others as they are (an off piece is not sewn: add an accessory later and Live Sim)"""
     bl_idname = "ac9_cloth_sim.pieces_on_off"
     bl_label = "Pieces On / Off"
     bl_options = {'REGISTER', 'UNDO'}
@@ -964,7 +977,7 @@ class AC9_OT_SimPieceMesh(bpy.types.Operator):
 class AC9_OT_SimPieceElastic(bpy.types.Operator):
     """Make the selected pattern pieces elastic: the cloth's rest length along the piece's long axis becomes this
     share of the pattern's (a waistband, a cuff, a hem band); 100 % takes it off. A mirrored pair takes it together.
-    Used at the next Phase Sim (spec elastic, core/elastic.py)"""
+    Used at the next simulation (spec elastic, core/elastic.py)"""
     bl_idname = "ac9_cloth_sim.piece_elastic"
     bl_label = "Piece Elastic"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1196,7 +1209,7 @@ class AC9_OT_SimSetRole(bpy.types.Operator):
 
 
 class AC9_OT_SimSetStart(bpy.types.Operator):
-    """How the selected pattern pieces (and their mirrored twins) start against the pieces they are sewn to. As Placed: from where they were placed. On Edge: Phase Sim lays them on the sewn edge after the body is sewn (placed, they stay a ring)"""
+    """How the selected pattern pieces (and their mirrored twins) start against the pieces they are sewn to. As Placed: from where they were placed. On Edge: placed as a ring, Live Sim pulls them onto the sewn edge by their seams (Band on Edge lays them there first)"""
     bl_idname = "ac9_cloth_sim.set_start"
     bl_label = "Set Start"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1316,7 +1329,7 @@ def _bond_items(self, context):
 
 class AC9_OT_SimPieceFabric(bpy.types.Operator):
     """The fabric of the selected pattern pieces (a mirrored pair takes it together): one of this garment's fabrics,
-    a preset (added to the garment's list), or the garment's default. Used at the next Phase Sim"""
+    a preset (added to the garment's list), or the garment's default. Used at the next simulation"""
     bl_idname = "ac9_cloth_sim.piece_fabric"
     bl_label = "Piece Fabric"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1433,7 +1446,7 @@ def piece_fabric_item(spec, name):
 
 class AC9_OT_SimPieceInterlining(bpy.types.Operator):
     """The interlining of the selected pattern pieces (a collar, a stand, a cuff): its weight and bending are added
-    to the piece's fabric. A mirrored pair takes it together. Used at the next Phase Sim"""
+    to the piece's fabric. A mirrored pair takes it together. Used at the next simulation"""
     bl_idname = "ac9_cloth_sim.piece_interlining"
     bl_label = "Piece Interlining"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1541,7 +1554,7 @@ class AC9_OT_SimFabricRemove(bpy.types.Operator):
 
 class AC9_OT_SimFabricDefault(bpy.types.Operator):
     """Make this fabric the garment's default: every piece without a fabric of its own takes it at the next
-    Phase Sim"""
+    simulation"""
     bl_idname = "ac9_cloth_sim.fabric_default"
     bl_label = "Default Fabric"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1683,7 +1696,7 @@ def _preset_items(self, context):
 
 
 class AC9_OT_SimFabricPreset(bpy.types.Operator):
-    """This fabric takes a preset's name and numbers (every piece on it takes them at the next Phase Sim)"""
+    """This fabric takes a preset's name and numbers (every piece on it takes them at the next simulation)"""
     bl_idname = "ac9_cloth_sim.fabric_preset"
     bl_label = "Fabric Preset"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1710,7 +1723,7 @@ class AC9_OT_SimFabricPreset(bpy.types.Operator):
 
 
 class AC9_OT_SimFabricEdit(bpy.types.Operator):
-    """Change this fabric's numbers (every piece on it takes them at the next Phase Sim). An edited preset is
+    """Change this fabric's numbers (every piece on it takes them at the next simulation). An edited preset is
     no longer the preset: its name gets (edited)"""
     bl_idname = "ac9_cloth_sim.fabric_edit"
     bl_label = "Edit Fabric"
@@ -1806,7 +1819,7 @@ class AC9_OT_SimInterliningNew(bpy.types.Operator):
 
 
 class AC9_OT_SimInterliningPreset(bpy.types.Operator):
-    """This interlining takes a preset's name and numbers (every piece with it takes them at the next Phase Sim)"""
+    """This interlining takes a preset's name and numbers (every piece with it takes them at the next simulation)"""
     bl_idname = "ac9_cloth_sim.interlining_preset"
     bl_label = "Interlining Preset"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1831,7 +1844,7 @@ class AC9_OT_SimInterliningPreset(bpy.types.Operator):
 
 
 class AC9_OT_SimInterliningEdit(bpy.types.Operator):
-    """Change this interlining's numbers (every piece with it takes them at the next Phase Sim). An edited preset
+    """Change this interlining's numbers (every piece with it takes them at the next simulation). An edited preset
     is no longer the preset: its name gets (edited)"""
     bl_idname = "ac9_cloth_sim.interlining_edit"
     bl_label = "Edit Interlining"

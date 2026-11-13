@@ -234,6 +234,7 @@ def _draw_px():
     region, rv3d = context.region, context.region_data
     fid = 0
     blf.size(fid, 13)
+    items = []
     for p, ease, many in _cache['labels']:
         if not many:
             continue
@@ -242,9 +243,9 @@ def _draw_px():
             continue
         txt = f"{ease:+.1f}"
         w, _ = blf.dimensions(fid, txt)
-        blf.color(fid, *T.ease_color(ease))
-        blf.position(fid, xy[0] - w / 2, xy[1] + 6, 0)
-        blf.draw(fid, txt)
+        items.append((xy[0] - w / 2, xy[1] + 6, txt, tuple(T.ease_color(ease))))
+    from . import text_band
+    text_band.draw(fid, items)
 
 
 def invalidate():

@@ -174,7 +174,7 @@ jobs:
           echo "--- top-level entries"
           echo "$entries" | cut -d/ -f1 | sort -u
           # アドオンの入口と、配布に含める LLM/ と tests/ が入っているか（除外パターンの編集ミスで欠けるのを防ぐ）
-          for need in '__init__.py' 'blender_manifest.toml' 'LLM/manifest.toml' 'tests/' \
+          for need in '__init__.py' 'blender_manifest.toml' 'LLM/manifest.toml' 'tests/' 'workspace.blend' 'avatar.blend' \
                       'THIRD_PARTY_NOTICES.txt' 'licenses/' 'BUILD_INFO.txt'; do
             if ! echo "$entries" | grep -qE "^${need}"; then
               echo "::error::the ZIP lacks $need"

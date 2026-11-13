@@ -13,12 +13,12 @@ For how to assign roles (the panel and buttons), see "[Piece Roles and Folds](fo
 
 | What the role decides | Which roles | Where it takes effect |
 |---|---|---|
-| Sewing order (which step it is sewn in) | All (body -> collar -> sleeves -> accessories) | **Phase Sim** only |
-| Placed as a ring of its own length | Waistband, cuff, hem facing, collar stand, collar, collar rib | The placed shape (both Phase Sim and Live Sim start from here) |
+| Sewing order (which step it is sewn in) | All (body -> collar -> sleeves -> accessories) | **Phase Sim** only (experimental) |
+| Placed as a ring of its own length | Waistband, cuff, hem facing, collar stand, collar, collar rib | The placed shape (Live Sim starts from here) |
 | Placed side by side around the arm | Sleeve, sleeve panel | The placed shape |
-| Default of **Start Shape** | Collar rib = **On Edge**, others = **As Placed** | **Phase Sim** only |
-| Front closure (the placket overlap) | When there are two plackets that are sewn to each other | A step of Phase Sim (the front closure is kept open until the others are sewn) |
-| Collar stand (the reference for the collar's length) | Collar stand | The collar step of Phase Sim |
+| Default of **Start Shape** | Collar rib = **On Edge**, others = **As Placed** | The placed shape (On Edge is placed as a ring; Live Sim pulls it onto the sewn edge by its seams) |
+| Front closure (the placket overlap) | When there are two plackets that are sewn to each other | A step of Phase Sim (experimental; the front closure is kept open until the others are sewn) |
+| Collar stand (the reference for the collar's length) | Collar stand | The collar step of Phase Sim (experimental) |
 
 A piece with no role ("Other") gets its step from the guide it was placed on, as before, and is placed the same way as other pieces.
 
@@ -27,15 +27,17 @@ A piece with no role ("Other") gets its step from the guide it was placed on, as
 - **Which side of the overlap is on top** (over-lap and under-lap). A person decides this with the garment's **Front Over**, a seam's **Over**, or a buttonhole. There is no default.
 - **Anything where you chose the start shape or ring size yourself.** If you change **Start Shape** or **Ring Size** on the AC9 Piece yourself, it stays as you set it even if you change the role.
 
-## How Phase Sim and Live Sim differ
+## What takes effect in Live Sim
 
-- **Phase Sim** sews in steps. A role affects both the **sewing order** and the **placement**.
 - **Live Sim** has a single step and sews all seams of all pieces together from the start. **The sewing order has no effect.** Even so, Live Sim starts from the placed shape, so **a role does affect Live Sim**, through the band rings, the arrangement around the arm, and the placement carried to the seams.
-- On Edge works only in Phase Sim. In Live Sim, it starts from the placed shape (the ring). If you want to lay it on first, press **Band on Edge** in the Placement panel and then press Live Sim.
+- **Phase Sim**, an experimental feature, sews in steps, and a role affects the sewing order as well.
+- An On Edge piece is placed as a ring; Live Sim pulls it onto the sewn edge by its seams. If you want to lay it on first, press **Band on Edge** in the Placement panel and then press Live Sim.
 
 ## What "Propose Roles" looks at
 
 **Propose Roles** decides roles by adding up the following clues. It doesn't use AI. The same pattern gives the same result every time.
+
+![the Piece Roles panel](../img/d_roles_panel.png)
 
 1. **How the seams connect and their shape (the most important)**
    - A ring that sits side by side along vertical seams and goes around the torso -> body
@@ -61,7 +63,7 @@ For a pattern with no seams (a freshly loaded DXF or SVG, for example), clue 1 d
 1. Load the pattern and check the seams (add any that are missing).
 2. Press **Propose Roles** and review the pieces with a "please check" mark.
 3. Place (**Place**).
-4. Phase Sim or Live Sim.
+4. Live Sim.
 
 Roles are read when the placed shape is made. **If you change a role after placing, place that piece again.** That way the placed shape you see on screen and the shape the calculation starts from match. A start shape that carries a piece to its seam is applied at the moment of placing, so it doesn't take effect unless you place again.
 

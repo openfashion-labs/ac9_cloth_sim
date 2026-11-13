@@ -4,7 +4,7 @@
 
 Every piece has one fabric: its own, its twin's, else the garment's default -- one entry of the same list, never a
 second path (the Dress panel's Weight / Bending are gone). A new garment starts with the default preset (Cotton
-Poplin, user 2026-10-20); a garment saved before has its default made from the Dress panel's old values by migrate(),
+Jersey, user 2026-11-12; Cotton Poplin from 2026-10-20); a garment saved before has its default made from the Dress panel's old values by migrate(),
 so its solver input stays what it was. The spec holds the numbers, not the preset's name: editing the preset table
 (fabric_presets.json) never changes a saved garment.
 
@@ -39,7 +39,7 @@ from ._i18n import rpt
 from . import spec as S
 
 HELD = ('stretch_N_m', 'shear_N_m', 'thickness_mm')     # copied from a preset with the weight and bending
-DEFAULT_PRESET = 'poplin'                                 # a new garment's default fabric (user 2026-10-20)
+DEFAULT_PRESET = 'jersey'                                 # a new garment's default fabric (user 2026-11-12; poplin before)
 # what the solver used for every garment before 2026-10-20 where a fabric named nothing: the membrane of
 # core/recipe.py (BASE tri_ke / tri_ka 3000, physical() tri_ks 29) and the table's kappa_y (migrate() writes them in)
 OLD_STRETCH_N_M, OLD_SHEAR_N_M = 3000.0, 29.0

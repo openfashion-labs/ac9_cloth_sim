@@ -4,6 +4,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
                        PointerProperty, StringProperty)
 
 from .i18n import CTX
+from .units import LEN_STEP
 from bpy.types import PropertyGroup
 
 
@@ -446,8 +447,11 @@ class AC9ClothSimProps(PropertyGroup):
     # runs too (core/recipe.live_params)
     fast_live: BoolProperty(name="AC9 Fast Live (Experimental)", default=False, update=_fast_live_choice,
         description="Live Sim with 2 substeps and a correction in each (a test feature). Static body only, with lower contact damping. Native remains the default")
-    native_three: BoolProperty(name="AC9 Native 3", default=False, update=_native_three_choice,
-        description="Experimental faster Native Live. Keeps material and timestep settings. Static body, no Piece Layer recovery or full-state resume; mutually exclusive with Accurate")
+    # Native 3 is the default Live (user 2026-11-12, 0.2.0); its switch is drawn under Experimental Features only. A
+    # garment it does not take runs the usual Live (core/prepare_plan.resolve). Fast Live is hidden everywhere and
+    # not used by a run (core/presets.resolve); its name stays (kept in files)
+    native_three: BoolProperty(name="Native 3", default=True, update=_native_three_choice,
+        description="The faster Live Sim (on by default). Keeps the fabric and time step settings; the body does not move, and Live starts again from the shape on screen. A garment with a piece on a Layer above 0 runs the usual Live")
     # a floor at Z = 0 for every run (user 2026-11-10, DECISIONS cloth-sim-place-beyond-garments-2026-11-10): a
     # static box under Z = 0 added to the obstacles, no object in the scene. A box, not a plane: a one-sided plane
     # let all the cloth through when its normal faced down, a 20 mm box let none through (experiments/
@@ -462,7 +466,7 @@ class AC9ClothSimProps(PropertyGroup):
     stroke_radius: FloatProperty(name="Smooth Radius (mm)", default=40.0, min=5.0, max=150.0,
                                  description="Radius of the smooth brush (Ctrl+Shift+drag while Live Sim runs)")
     # the same in the scene's length unit (a length field over stroke_radius, which stays mm in the file)
-    stroke_radius_len: FloatProperty(name="Smooth Radius", min=0.005, max=0.15, precision=1, subtype='DISTANCE',
+    stroke_radius_len: FloatProperty(name="Smooth Radius", min=0.005, max=0.15, precision=1, step=LEN_STEP, subtype='DISTANCE',
                                      unit='LENGTH', get=lambda s: s.stroke_radius / 1000.0,
                                      set=lambda s, v: setattr(s, 'stroke_radius', v * 1000.0), options=set(),
                                      description="Radius of the smooth brush (Ctrl+Shift+drag while Live Sim runs)")
@@ -476,7 +480,9 @@ class AC9ClothSimProps(PropertyGroup):
     # a pattern edit carried to the dressed garment and the placed shapes at once (on), or left until Update 3D, the
     # switch back on or the next Phase / Live / Local Sim (off: the pattern edits return in 0.1 s instead of up to
     # 1.8 s). User 2026-10-27, DECISIONS cloth-sim-work-screen-layout-2026-10-27 (TASKS 85)
-    follow_edits: BoolProperty(name="3D Follows Edits", default=True,
+    # off by default (user 2026-11-13): a carry took 1-2 s per pattern edit and a small edit is hardly seen in the
+    # 3D before a run anyway; the edits wait for Update 3D or the next run
+    follow_edits: BoolProperty(name="3D Follows Edits", default=False,
                                update=lambda self, context: _follow_edits_on(context) if self.follow_edits else None,
                                description="Each pattern edit changes the dressed garment and the placed shapes at "
                                            "once. Off: they wait until Update 3D or the next simulation, and the "
@@ -502,8 +508,10 @@ class AC9ClothSimProps(PropertyGroup):
     # the settings set Dress / Continue / Live run with (core/presets.py): empty = 'default', what the screen runs.
     # Not on the panel: a test sets it (a set name, or JSON {"base": name, key: value}); the panel shows it when set
     preset: StringProperty(name="Settings", default="",
-                           description="Named settings set of Phase Sim (empty: the default set)")
+                           description="Named settings set of a simulation (empty: the default set)")
     # the selected pieces' settings as fields (the functions above)
+    # drag steps (2026-11-12, a value jumped under the mouse): degrees 50 (read as 0.5 deg a pixel), shares 1 (0.01);
+    # lengths units.LEN_STEP (1 mm a pixel, measured)
     piece_distance: FloatProperty(name="Particle Distance (mm)", min=2.0, max=30.0, precision=1, get=_get_dist,
                                   set=_set_dist, options=set(),
                                   description="Particle distance of the selected pieces in mm (finer for a small "
@@ -513,22 +521,22 @@ class AC9ClothSimProps(PropertyGroup):
                                   description="Draw the selected pieces with their fabric's thickness (display only). "
                                               "Off for a piece folded flat on itself, where the two layers' "
                                               "thickness runs into each other")
-    piece_around: FloatProperty(name="Around", translation_context=CTX, precision=1, step=100,
+    piece_around: FloatProperty(name="Around", translation_context=CTX, precision=1, step=50,
                                 get=_get_around, set=_set_around, options=set(),
                                 description="Where the selected placed pieces are round their guide, in degrees "
                                             "(their height kept). Several selected move by as much. Their pairs follow")
-    piece_turn: FloatProperty(name="Orientation", translation_context=CTX, min=-180.0, max=180.0, precision=0, step=500,
+    piece_turn: FloatProperty(name="Orientation", translation_context=CTX, min=-180.0, max=180.0, precision=0, step=50,
                               get=_get_turn, set=_set_turn, options=set(),
                               description="How far the selected pieces laid flat are turned on the face they lie on, "
                                           "in degrees: 0 = the pattern's top up the face (on the ground: toward +Y), "
                                           "90 = turned counter-clockwise. Where they lie stays. Their pairs follow")
-    piece_tilt: FloatProperty(name="Tilt", translation_context=CTX, min=-180.0, max=180.0, precision=0, step=500,
+    piece_tilt: FloatProperty(name="Tilt", translation_context=CTX, min=-180.0, max=180.0, precision=0, step=50,
                               get=_get_tilt, set=_set_tilt, options=set(),
                               description="How far the selected placed pieces are tilted about the line round their "
                                           "guide through their center, in degrees: 90 lays the top flat out, 180 "
                                           "turns them upside down (a collar's outer edge next to the neck). The part "
                                           "tilted out is stretched round. Their pairs follow")
-    piece_ring: FloatProperty(name="Ring Size", translation_context=CTX, min=0.5, max=3.0, precision=2, step=5,
+    piece_ring: FloatProperty(name="Ring Size", translation_context=CTX, min=0.5, max=3.0, precision=2, step=1,
                               get=_get_ring, set=_set_ring, options=set(),
                               description="The selected bands' ring as a share of their own length's (1.00: their "
                                           "own length, not stretched). Set by hand it is kept, what is in the body "
@@ -546,7 +554,7 @@ class AC9ClothSimProps(PropertyGroup):
                                   options=set(),
                                   description="Widen the selected bands until they clear the body where they are now "
                                               "(measured again when turned on and when placed)")
-    piece_height: FloatProperty(name="Height", translation_context=CTX, precision=1, subtype='DISTANCE', unit='LENGTH',
+    piece_height: FloatProperty(name="Height", translation_context=CTX, precision=1, step=LEN_STEP, subtype='DISTANCE', unit='LENGTH',
                                 get=_get_height, set=_set_height, options=set(),
                                 description="How high the selected placed pieces are along their guide (their "
                                             "angle kept). Several selected move by as much. Their pairs follow")
@@ -605,13 +613,32 @@ class AC9ClothSimProps(PropertyGroup):
 CLASSES = (AC9ClothSimSeamItem, AC9ClothSimProps)
 
 
+@bpy.app.handlers.persistent
+def _fast_live_off(*_args):
+    """Fast Live is hidden everywhere (user 2026-11-12): a file saved with it on opens with it off and with Native 3
+    on (the two were one or the other: the faster Live asked for). Not used by a run either way (core/presets)."""
+    for sc in bpy.data.scenes:
+        p = getattr(sc, 'ac9_cloth_sim', None)
+        if p is not None and p.fast_live:
+            p.fast_live = False
+            p.native_three = True
+
+
+def _drop_handler():
+    for h in [h for h in bpy.app.handlers.load_post if getattr(h, '__name__', '') == '_fast_live_off']:
+        bpy.app.handlers.load_post.remove(h)
+
+
 def register():
     for c in CLASSES:
         bpy.utils.register_class(c)
     bpy.types.Scene.ac9_cloth_sim = PointerProperty(type=AC9ClothSimProps)
+    _drop_handler()                     # by name: the one of an add-on reloaded with F3 too
+    bpy.app.handlers.load_post.append(_fast_live_off)
 
 
 def unregister():
+    _drop_handler()
     del bpy.types.Scene.ac9_cloth_sim
     for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)

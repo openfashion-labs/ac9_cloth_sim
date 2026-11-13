@@ -11,7 +11,7 @@ sidebar_position: 1
 
 上から次のパネルが並びます。
 
-<!-- screenshot: サイドバーの AC9 Cloth Sim のタブ（N で出す） -->
+![サイドバーの AC9 Cloth Sim のタブ（N で出す）](../img/d_layout_sidebar.png)
 
 - 「**セットアップ**」（Setup）: 型紙の読み込みと書き出し、作業画面の切り替え、服の切り替え。
 - 「**型紙**」（Pattern）: 型紙を直す・描く・縫い目を付ける道具とボタンの道具（「**留め具**」（Fasteners））のボタン。
@@ -25,11 +25,11 @@ sidebar_position: 1
 
 選んだものの設定が、右下の Properties エディタの Tool タブに出ます。出るパネルは、最後に触った物で切り替わります。
 
-<!-- screenshot: Tool タブ全体（AC9 実行と AC9 服） -->
+![Tool タブ全体（AC9 実行と AC9 服）](../img/d_tool_tab.png)
 
-- 「**AC9 実行**」（AC9 Run）: いちばん上に常に出ます。実行のボタン（「**フェーズシム**」（Phase Sim）、「**ライブシム**」（Live Sim）、「**ローカルシム**」（Local Sim）、「**手で直す**」（Fix by Hand））、型紙の直しを 3D に写すかどうか（「**編集を 3D に写す**」（3D Follows Edits）と「**3D を更新**」（Update 3D））、進み具合です。
+- 「**AC9 実行**」（AC9 Run）: いちばん上に常に出ます。実行のボタン（「**ライブシム**」（Live Sim）と「**重力**」（Gravity）、「**床（Z = 0）**」（Floor (Z = 0)）、「**手で直す**」（Fix by Hand））、型紙の直しを 3D に写すかどうか（「**編集を 3D に写す**」（3D Follows Edits）と「**3D を更新**」（Update 3D））、進み具合です。
 - 「**AC9 服**」（AC9 Garment）: 何も選んでいないとき。服の設定、生地、結果。
-- 「**AC9 ピース**」（AC9 Piece）: ピースを選んだとき。名前、状態、役割、生地、芯地、見た目、厚み、レイヤー、点の間隔など。
+- 「**AC9 ピース**」（AC9 Piece）: ピースを選んだとき。名前、状態、役割、生地、芯地、見た目、厚み、点の間隔など。
 - 「**AC9 縫い目**」（AC9 Seam）: 一覧か型紙で縫い目を選んだとき。下に「**長さと合印**」（Lengths & Notches）と「**ブレンド**」（Blend）。
 - 「**AC9 内部線**」（AC9 Internal Line）: 型紙の内部線をクリックして選んだとき。
 - 「**AC9 辺**」（AC9 Edges）: 型紙の外周の辺をクリックして選んだとき（長さと合計）。
@@ -43,7 +43,7 @@ Blender 標準の Options や Workspace のパネルが先に出ることがあ�
 
 オブジェクトモードの道具の列の末尾に、AC9 の道具が並びます。長押しで同じ仲間の道具が出ます（▾）。
 
-<!-- screenshot: 道具の列 -->
+![道具の列](../img/d_toolbar.png)
 
 `Whole Pieces ｜ Edit Pieces ｜ Draw Piece ▾ Rectangle Piece ▾ Ellipse Piece ｜ Internal Line ▾ Internal Rectangle ▾ Internal Ellipse ｜ Edit Seams ▾ Add Seam ▾ Add Seam (M:N) ── Edit Measure ▾ Tape Around ▾ Tape Along ▾ Tape Straight ｜ Place`
 
@@ -59,4 +59,4 @@ Blender 標準の Options や Workspace のパネルが先に出ることがあ�
 
 「**セットアップ**」（Setup）パネルの「**作業画面**」（Work Screen）を押すと、作業用のワークスペース（名前は AC9 Cloth Sim）が出ます。左に 3D、真ん中に型紙（真上から見る平行投影、回転は固定）、右に Properties の Tool タブが並びます（Outliner とタイムラインはありません）。2 回目からは同じ画面に切り替えるだけで、増えません。前の版のアドオンで作った作業画面は、押したときに新しいものへ置き換わります。型紙を直す作業は、この真ん中の 3D ビューで行います。
 
-<!-- screenshot: 作業画面の全体（番号つき） -->
+![作業画面の全体（番号つき）](../img/d_screen.png)

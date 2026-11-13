@@ -350,12 +350,24 @@ def _draw_px():
     props = getattr(context.scene, 'ac9_cloth_sim', None)
     stretch = overlay.shows(props, 'show_stretch') and _d.get('per')
     probs = overlay.shows(props, 'show_problems')
-    if not (stretch or probs):
+    from . import dress as D
+    prep = D.run_preparing()
+    if not (stretch or probs or prep):
         return
     spec, _o = store.get(context)
-    if not spec or PV.layout_empty(context) is None:
+    if not prep and (not spec or PV.layout_empty(context) is None):
         return
     lines = []                         # (text, rgb)
+    # a run that has not made its first frame yet: said where the person looks (user 2026-11-13: "準備中が一切出なかった")
+    if prep:
+        lines.append((tx("Preparing the simulation ({0:.0f} s elapsed)", prep[0]), (0.55, 0.8, 1.0)))
+        if D.run_kernels_built():
+            # building the compute programs: once on a PC, and once after each update of the add-on
+            lines.append((tx("First run on this PC: building the compute programs for its GPU."), (0.85, 0.85, 0.85)))
+            lines.append((tx("This can take a few minutes, once. Later runs start quickly."), (0.85, 0.85, 0.85)))
+        # an ordinary start (say after editing the pattern) is not a first run: no more lines (user 2026-11-13)
+        if not spec or PV.layout_empty(context) is None:
+            stretch = probs = False
     if stretch:
         lines.append((tx("Stretch: up to {0} ok, {1} yellow, {2} red, blue squashed", OK, WARN, BAD), (1.0, 1.0, 1.0)))
         for n, m, x in summary(_d['per'], PL._selected(context)):
@@ -364,17 +376,13 @@ def _draw_px():
                           tuple(c[:3]) if x > OK else (0.85, 0.95, 0.85)))
     if probs:
         lines += [(t, (1.0, 0.45, 0.4)) for t in problem_lines(spec)]
-    region = context.region
     fid = 0
     blf.size(fid, 13)
-    for i, (txt, rgb) in enumerate(lines):
-        x, y = 70, region.height - 120 - i * 18
-        blf.color(fid, 0.0, 0.0, 0.0, 0.9)
-        blf.position(fid, x + 1, y - 1, 0)
-        blf.draw(fid, txt)
-        blf.color(fid, *rgb, 1.0)
-        blf.position(fid, x, y, 0)
-        blf.draw(fid, txt)
+    # clear of the toolbar whatever its width (it was x = 70, under a toolbar with two columns or names; 2026-11-12)
+    from . import ui as U
+    x0, y0 = U.view_text_origin(context, 120)
+    from . import text_band
+    text_band.draw(fid, [(x0, y0 - i * 20, txt, (*rgb, 1.0)) for i, (txt, rgb) in enumerate(lines)])
 
 
 def invalidate():

@@ -204,7 +204,7 @@ class AC9_OT_SimLayOnEdge(bpy.types.Operator):
         from . import dress as D
         from . import placement as PL
         if D.AC9_OT_SimDress.running():
-            cls.poll_message_set("Not while a Phase Sim or Live Sim runs")
+            cls.poll_message_set("Not while a simulation runs")
             return False
         # why it is grey, on the button's tooltip (user 2026-10-22: could not tell why it could not be pressed)
         sel = PL.selected_pieces(context)

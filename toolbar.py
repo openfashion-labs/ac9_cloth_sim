@@ -282,12 +282,8 @@ def _draw_hint():
     x, y = _hint['xy']
     fid = 0
     blf.size(fid, 13)
-    blf.color(fid, 1.0, 0.85, 0.35, 1.0)
-    blf.enable(fid, blf.SHADOW)
-    blf.shadow(fid, 3, 0.0, 0.0, 0.0, 0.9)
-    blf.position(fid, x + 16, y - 22, 0)
-    blf.draw(fid, _hint['text'])
-    blf.disable(fid, blf.SHADOW)
+    from . import text_band
+    text_band.draw(fid, [(x + 16, y - 22, _hint['text'], (1.0, 0.85, 0.35, 1.0))])
 
 
 # ---------------------------------------------------------------- starting a modal operator on the click

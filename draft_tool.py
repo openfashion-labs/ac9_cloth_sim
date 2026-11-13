@@ -183,6 +183,22 @@ def picked_lines(spec):
     return out
 
 
+def in_picked(spec, me, sel):
+    """Whether the thing grabbed (a picked_lines item) is part of the picked set sel: in it, or an edge whose two
+    corners are both in it (a box picks corners, not edges: grabbing an edge between picked corners then moves
+    everything picked, as grabbing one of the corners does)."""
+    if me in sel:
+        return True
+    if me[0] != 'edge':
+        return False
+    pc = next((x for x in spec['pieces'] if x['name'] == me[1]), None)
+    if pc is None:
+        return False
+    k = D.edge_index(pc, me[2])
+    n = len(pc['edges'])
+    return all(('corner', me[1], pc['edges'][j]['id']) in sel for j in (k, (k + 1) % n))
+
+
 def picked_pieces(context, spec):
     """The names of the pattern pieces selected (their objects), in the spec."""
     have = {p['name'] for p in spec['pieces']} if spec else set()
@@ -1049,7 +1065,7 @@ def refresh_placed(context, spec, names):
     pat, _ = DR._build_cached(spec, context.scene.ac9_cloth_sim.mesh_size)
     tris, bad = DR.triangulate(pat)
     nm = [str(x) for x in pat['names']]
-    kept = []
+    kept, by_rule = [], []
     for n in todo:
         ob = obs[n]
         if n not in nm or n in bad or PLV.has_edits(ob):
@@ -1058,8 +1074,19 @@ def refresh_placed(context, spec, names):
         i = nm.index(n)
         V = np.asarray(pat[f"V{i}"], float)
         if ob.get(PLV.KEY_PROP) != PLV.layout_key(V):
+            if not PLV.is_moved(ob):
+                # placed by the rule, not by hand: placed again on the new pattern, where the run will start it
+                # (user 2026-11-13, DECISIONS cloth-sim-start-from-screen-2026-11-13), not its old shape carried
+                by_rule.append(n)
+                continue
             PLV.remesh(ob, V, tris[i], extend=True)
-    return tx("placed shape of {0} kept (edited vertex by vertex: Back to Guide, then Place)", ', '.join(kept)) if kept else ''
+    notes_ = []
+    if by_rule:
+        from . import placement as PL_
+        _made, notes_ = PL_.refresh_unmoved(context, spec, by_rule)
+    out = ([tx("placed shape of {0} kept (edited vertex by vertex: Back to Guide, then Place)", ', '.join(kept))]
+           if kept else []) + [x for x in notes_ if x]
+    return "; ".join(out)
 
 
 def _last_result(job, shown=None):
@@ -1223,7 +1250,7 @@ def carry_to_3d(context, old_spec, new_spec, rigid=None, sources=None):
     DR.refresh_thickness(context, ob, new_spec)
     if reset:                                       # the next Simulate still sews them on from their placed shapes
         DR.set_shown_as_placed(ob, new_spec, reset)   # still shown as placed objects: hidden here
-    return tx("3D carried over in {0:.1f} s (Phase Sim to settle it)", secs)
+    return tx("3D carried over in {0:.1f} s (Live Sim to settle it)", secs)
 
 
 # ---------------------------------------------------------------- drawing (one handler for the tool)
@@ -2235,7 +2262,7 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         sel = (picked_lines(self.spec) if g[0] in ('edge', 'iline', 'corner') and not event.shift
                and self.mode != 'TRANSFORM' else [])
         me = ('corner', g[1], corner_eid(self.spec, g[1], g[2])) if g[0] == 'corner' else tuple(g[:3])
-        self.group = sel if len(sel) > 1 and me in sel else []
+        self.group = sel if len(sel) > 1 and in_picked(self.spec, me, sel) else []
         # Whole Pieces: a picked piece or line grabbed while more are picked: they all move (user 2026-10-28)
         self.tgroup = None
         if self.mode == 'TRANSFORM' and not event.shift:
@@ -2322,6 +2349,8 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
             if abs(x1 - x0) + abs(y1 - y0) < BOX_PX:          # a click on nothing: nothing selected
                 if self.box_mode == 'SET':
                     SEL.deselect_all(context)
+                    if not getattr(self, 'box_piece', None):    # on nothing at all: the picked seam goes too
+                        SEL._drop_seam(context)
                 if getattr(self, 'box_piece', None):            # Edit Pieces, a click inside a piece: the piece
                     TB.select_piece(context, self.box_piece, extend=self.box_mode == 'ADD')
                 return {'FINISHED'}
@@ -2522,6 +2551,57 @@ class AC9_OT_SimPatternEdit(bpy.types.Operator):
             self.report({'INFO'}, walk_text(sp, h[1]))
         _state['hover'] = None
         return {'FINISHED'}
+
+
+class AC9_OT_SimCornerSmooth(bpy.types.Operator):
+    """Make the corner smooth (the curve handles either side of it stay on one line, so the outline does not kink there) or sharp again"""
+    bl_idname = "ac9_cloth_sim.corner_smooth"
+    bl_label = "Smooth Corner"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    piece: bpy.props.StringProperty(options={'SKIP_SAVE'})
+    corner: bpy.props.IntProperty(options={'SKIP_SAVE'})
+    smooth: bpy.props.BoolProperty(default=True, options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return ("Make the corner smooth: the curve handles either side of it stay on one line (their lengths free), so the outline does not kink there"
+                if props.smooth else "Make the corner sharp again: each handle moves on its own")
+
+    @classmethod
+    def poll(cls, context):
+        return AC9_OT_SimPatternDrag.poll(context)
+
+    def execute(self, context):
+        spec, _ = store.get(context)
+        old = S.loads(S.dumps(spec))
+        sp = S.loads(S.dumps(spec))
+        try:
+            ch = D.set_smooth(sp, self.piece, self.corner, self.smooth)
+        except (StopIteration, IndexError, ValueError):
+            self.report({'WARNING'}, rpt("That corner is no longer there"))
+            return {'CANCELLED'}
+        bad = D.problems(sp, ch)
+        if bad:
+            self.report({'WARNING'}, bad[0])
+            return {'CANCELLED'}
+        msg = commit(context, sp, ch, old_spec=old)
+        if msg:
+            self.report({'INFO'}, msg)
+        _state['hover'] = None
+        return {'FINISHED'}
+
+
+def _corner_rows(spec, hit):
+    """Smooth Corner / Sharp Corner for a corner or a handle under the cursor (the corner the handle sits by)."""
+    try:
+        pc = D.piece(spec, hit[1])
+        k = hit[2] if hit[0] == 'corner' else D.corner_of_handle(pc, hit[2], hit[3])
+    except (StopIteration, IndexError):
+        return []
+    on = D.is_smooth(pc, k)
+    return [("Sharp Corner" if on else "Smooth Corner", "ac9_cloth_sim.corner_smooth", "",
+             {'piece': hit[1], 'corner': k, 'smooth': not on})]
 
 
 class AC9_OT_SimPatternRotate(bpy.types.Operator):
@@ -3373,7 +3453,7 @@ class AC9_OT_SimMatchLength(bpy.types.Operator):
 
     side: bpy.props.EnumProperty(name="Change", items=[('a', "A", "Change side A to fit side B"),
                                                        ('b', "B", "Change side B to fit side A")])
-    ease: bpy.props.FloatProperty(name="Ease-in", default=0.0, min=-0.2, max=0.2, precision=1, subtype='DISTANCE', unit='LENGTH', 
+    ease: bpy.props.FloatProperty(name="Ease-in", default=0.0, min=-0.2, max=0.2, precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP, 
                                   description="How much longer the changed side ends up than the other: the "
                                               "fullness eased in when the two are sewn (0 = the same length)")
     end: bpy.props.EnumProperty(name="At", translation_context=CTX, items=[('to', "End", "Change the side at its end"),
@@ -4107,11 +4187,11 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
     piece: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     kind: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})        # 'ILINE' / 'EDGE'
     thing: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})       # the line id / the edge id
-    move_x: bpy.props.FloatProperty(name="X", precision=1, subtype='DISTANCE', unit='LENGTH',      # m
+    move_x: bpy.props.FloatProperty(name="X", precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP,      # m
                                     description="How far to move it to the right (left: below 0)")
-    move_y: bpy.props.FloatProperty(name="Y", precision=1, subtype='DISTANCE', unit='LENGTH',
+    move_y: bpy.props.FloatProperty(name="Y", precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP,
                                     description="How far to move it up (down: below 0)")
-    gaps: bpy.props.FloatVectorProperty(size=GAP_MAX, min=0.0, precision=1, subtype='NONE', unit='LENGTH')    # m
+    gaps: bpy.props.FloatVectorProperty(size=GAP_MAX, min=0.0, precision=1, subtype='NONE', unit='LENGTH', step=U.LEN_STEP)    # m
     gaps0: bpy.props.FloatVectorProperty(size=GAP_MAX, options={'HIDDEN'})
     rays: bpy.props.IntVectorProperty(size=GAP_MAX, default=[-1] * GAP_MAX, options={'HIDDEN'})
 
@@ -4437,7 +4517,7 @@ class AC9_OT_SimParallelLine(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     distance: bpy.props.FloatProperty(name="Distance", default=0.02, min=0.0005, soft_max=0.2, precision=1,
-                                      subtype='DISTANCE', unit='LENGTH',
+                                      subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP,
                                       description="How far from the edge or line (each next line as far again)")
     count: bpy.props.IntProperty(name="Lines", translation_context=CTX, default=1, min=1, max=20,
                                  description="How many lines, evenly spaced")
@@ -4836,7 +4916,7 @@ def pending_refused(exc):
     from . import dress as DR
     if isinstance(exc, DR.MeshMismatch):
         return tx("Not simulated: {0}", exc)
-    return (tx("Not simulated: {0}{1}. Ctrl+Z takes the edit back. Or select the piece, press Reset, then Phase Sim: it is placed and sewn on again", exc, where))
+    return (tx("Not simulated: {0}{1}. Ctrl+Z takes the edit back. Or select the piece, press Reset, then Live Sim: it is placed and sewn on again", exc, where))
 
 
 _handles = []
@@ -5047,7 +5127,8 @@ def menu_items(spec, hit, tool=None):
         cur = S.piece_state(pc) if pc is not None else 'active'
         st = [(lab, "ac9_cloth_sim.piece_state", 'state=' + k) for k, lab in
               (('active', "Active"), ('freeze', "Freeze"), ('off_all', "Off (All)")) if k != cur]
-        return [r if r is None else r + ({},) for r in _MENU_ITEMS[kind] + [None] + st]
+        rows = [r for r in _MENU_ITEMS[kind] if _experimental() or 'mode=LOCAL' not in r[2]]   # Local Sim: experimental
+        return [r if r is None else r + ({},) for r in rows + [None] + st]
     if kind == 'seam':
         sm = next((x for x in spec.get('seams', []) if x['id'] == hit[1]), None)
         rows = list(_MENU_ITEMS['seam'])
@@ -5059,7 +5140,21 @@ def menu_items(spec, hit, tool=None):
     rows = list(_MENU_ITEMS.get(kind, []))
     if kind in ('edge', 'corner') and _dart_hit(spec, hit):   # a dart's leg or apex: moving it (no key now)
         rows = [("Move Dart", "ac9_cloth_sim.move_dart", "")] + ([None] if rows else []) + rows
-    return [r if r is None else r + ({},) for r in rows]
+    out = [r if r is None else r + ({},) for r in rows]
+    if kind in ('corner', 'handle'):              # the corner's smoothness (no key: the menu only, user 2026-11-13)
+        cr = _corner_rows(spec, hit)
+        out = cr + ([None] if cr and out else []) + out
+    return out
+
+
+def _experimental():
+    """Whether the experimental features are on (Preferences): Local Sim and Phase Sim are shown only then; off
+    while the switch is not there."""
+    try:
+        from . import dress as DR
+        return bool(getattr(DR, 'experimental', lambda c=None: False)(bpy.context))
+    except Exception:
+        return False
 
 
 def _dart_hit(spec, hit):
@@ -5152,7 +5247,7 @@ class AC9_OT_SimSelectAllPieces(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (AC9_OT_SimSync3D, AC9_OT_SimPatternHover, AC9_OT_SimPatternDrag, AC9_OT_SimSetGap, AC9_OT_SimPatternEdit, AC9_OT_SimPatternRotate,
+CLASSES = (AC9_OT_SimSync3D, AC9_OT_SimPatternHover, AC9_OT_SimPatternDrag, AC9_OT_SimSetGap, AC9_OT_SimPatternEdit, AC9_OT_SimCornerSmooth, AC9_OT_SimPatternRotate,
            AC9_OT_SimPatternScale, AC9_OT_SimDuplicatePieces, AC9_OT_SimSymmetrize, AC9_OT_SimParallelLine,
            AC9_OT_SimEditPatternTool,
            AC9_OT_SimMatchLength, AC9_OT_SimExportDXF, AC9_OT_SimImportDXF, AC9_OT_SimImportSVG, AC9_OT_SimDrawPiece, AC9_OT_SimDrawLine, AC9_OT_SimNewPattern, AC9_OT_SimDeletePiece, AC9_OT_SimMirrorCopy,
@@ -5205,7 +5300,7 @@ def register():
         set=_fangle_set, options=set(),
         description="How far the picked internal line folds, 0 = no fold (Mountain / Valley and the side that turns below it)")
     bpy.types.Scene.ac9_iline_end_taper = bpy.props.FloatProperty(
-        name="End Taper",translation_context=CTX,min=0.,max=1.,precision=1,subtype='DISTANCE',unit='LENGTH',
+        name="End Taper",translation_context=CTX,min=0.,max=1.,precision=1,subtype='DISTANCE',unit='LENGTH', step=U.LEN_STEP,
         get=_ftaper_get,set=_ftaper_set,options=set(),
         description="Distance over which the fold angle fades to zero at an internal endpoint; 0 keeps a constant angle. Simulation only")
     # seen from the pattern's face, as the solver folds it; the placed shape too since 2026-10-25 (user: mountain and

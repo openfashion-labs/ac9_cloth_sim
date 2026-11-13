@@ -14,6 +14,8 @@ What you do in this panel: specify the body and decide where each piece goes aro
 - **Edit Guides**: Adjust the cylinders by hand. When you press it, each cylinder becomes its own object, and you adjust them with G (move), R (tilt), and S (thickness; scaling only along the axis direction changes the length). The **L/R together** button appears only while you are editing; when it is on, moving one arm or leg guide makes the other follow to the mirrored position across the body's center. Press **Done** when you finish.
 - When guides are found, you'll see `○ guides; 20 / 20 pieces placed` (number of guides, number of pieces placed / number of pieces that are on).
 
+![the Placement panel](../img/fg_placement.png)
+
 ## Place and Back to Flat
 
 - **Place** (a tool in the tool column on the left; the button in the panel switches to this tool):
@@ -38,13 +40,15 @@ What you do in this panel: specify the body and decide where each piece goes aro
   - **Orientation (deg)** in the Tool tab's "AC9 Piece": how far the piece is turned on the face it lies on. 0 = the pattern's top up the face (on the ground: toward +Y), 90 = turned counter-clockwise. The ↻ beside it adds 90. Where it lies stays; a pair follows as a mirror image.
   - A pair follows as a mirror image once placed (moving one moves the other). Its state and buttons are in the Pair box of "AC9 Piece" (see "Pairs" below). A front / back pair snaps to X = 0 only, not Y = 0.
   - Its location and rotation can be typed in the Tool tab under "AC9 Piece", **Location & Rotation** (once its placed shape is made: **Move by Hand**).
-- With pieces laid flat, **Phase Sim** and **Live Sim** run without a body.
+- With pieces laid flat, **Live Sim** runs without a body.
 - **Floor (Z = 0)**: the switch under Gravity in Run. On, it puts a floor at Z = 0 the cloth lands on (nothing is added to the scene). With no body, Collision object or floor, a run sews without gravity and stops there, and says so.
 - What keeps the shape is mostly the fabric's stiffness. For bags, the fabrics **Canvas**, **Leather** and **Synthetic Leather** suit (Canvas's bending is an estimate).
 
 ## Tools for tidying the placed shape (no physics calculation)
 
 Select the pieces first, then press any of these. They are tools for tidying the starting shape before the simulation.
+
+![right after placing around the body](../img/fg_placed.png)
 
 - **Part to Seam**: Reflects the fold settings, and puts the sewing points of the selected pieces **on top of their sewing points on the targets you choose for this operation**. After that, it keeps the sewing points as they are, moves the piece out of the body, places it 2 mm on its own side of its partner, and restores the edge lengths (the same as "Settle"). The partner can be in its placed shape or its dressed shape. The shape may stretch. Stretching is shown by the colors of "Overlays > Stretch" and the one-line result; places that go into the body or through other cloth are shown in red. It refuses only when a triangle would collapse (a shape the simulation cannot start from). If moving the points on top would make the stretch exceed red (1.5 times), for example when the partners are placed far apart, it does not put them on top; it keeps the shape and moves it near the chosen targets, and tells you about the gap in one line. That seam is closed by the simulation. Press the button, then click a target. Shift-click adds or removes targets, A chooses all targets, Enter applies, and Esc cancels. This scope lasts for this operation only; other enabled seams remain enabled for the next simulation. If you want to float the piece further outward, press **Move Outside** separately. Hand placement, vertex edits, and folds from before the move are kept separately, so repeating the operation does not overwrite the prepared shape. If you change Fold Angle, press it again to redo the move from the new fold.
 - **Band on Edge**: Lays a thin band (such as a neck rib) along the chosen targets' sewn edge and extends its width from that edge. Choose targets the same way as Part to Seam. Both tools show the moving pieces and any following pair, and keep the original selection and active object while you pick targets.
@@ -55,12 +59,12 @@ Select the pieces first, then press any of these. They are tools for tidying the
 ## Fixing the placed shape by hand: Move by Hand and Back to Guide
 
 - **Move by Hand**: Makes the selected pieces movable by hand in 3D and switches to the move tool.
-  - Before dressing: The placed shapes can be selected as one object per piece. You can fix them with G, R, or Edit Mode, and **Phase Sim** starts from that shape.
+  - Before dressing: The placed shapes can be selected as one object per piece. You can fix them with G, R, or Edit Mode, and **Live Sim** starts from that shape.
   - After dressing: A handle is attached to that piece of the dressed garment (see "Operations after dressing" below).
 - **Back to Guide**: Discards the hand edits of the selected pieces (all pieces if none is selected; a confirmation appears) and returns them to the placement on the guides (the cylinders around the body). For a piece of a dressed garment, first return it to its placed shape (go through Back to Placed) and then do this.
 - There are three "back" buttons, in order from nearest to farthest: **Back to Placed** (dressed garment or the shape moved to the seam, back to the prepared shape before the move; hand placement, vertex edits, and folds remain), **Back to Guide** (back onto the guides, discarding hand edits too), and **Back to Flat** (flat where it is, discarding hand edits too).
 - If an old file does not have the shape from before the move, or if the pattern's mesh or pairs changed after the move, it shows the reason instead of guessing at a restoration. Undo the change, or place again with "Back to Guide".
-- When you select one placed shape, the movement from the guide (Move and Turn) is shown. **Type Move** moves it by numbers.
+- When you select one placed shape, the movement from the guide (Move and Turn) is shown. To move it by numbers, use **Location & Rotation** in the Tool tab's AC9 Piece.
 - **Move by Hand** on a linked pair says in one line that the partner moves too, as its mirror image. To move one side only, unlink it in the Pair box below.
 
 ## Pairs (the Pair box in Tool tab > AC9 Piece)
@@ -81,7 +85,7 @@ When you select a piece, the **Pair** box in Tool tab > "AC9 Piece" shows its pa
 After dressing, you work on the one dressed garment.
 
 - When you click a piece of the dressed garment with the **Place** tool or the **Edit Pieces** tool, a handle (an arrow Empty) appears at the center of that piece and it is selected. Shift+click adds more. The same happens if you select pieces in the pattern and then press **Move by Hand**.
-- A piece newly placed after dressing appears in its placed shape (it is sewn on by the next **Phase Sim**).
-- If you move the handle with G or R, that piece follows inside the dressed garment. Fix any places where it sinks in, and then run **Phase Sim**. If you move a piece far while it is sewn, it is pulled back at the start of **Phase Sim**.
+- A piece newly placed after dressing appears in its placed shape (it is sewn on by the next **Live Sim**).
+- If you move the handle with G or R, that piece follows inside the dressed garment. Fix any places where it sinks in, and then run **Live Sim**. If you move a piece far while it is sewn, it is pulled back at the start of **Live Sim**.
 - If you press **Back to Placed** with the handle selected, that piece returns to its placed shape.
 - A spot where you clicked the dressed garment also appears as a red dot at the same position on the pattern (it follows even when you move through frames).

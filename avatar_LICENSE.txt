@@ -1,0 +1,12 @@
+avatar.blend -- the avatar added with "Add Avatar"
+
+The avatar in avatar.blend (the body mesh, its rig and the eyes) is dedicated to the public domain
+under CC0 1.0 Universal. You may copy, modify and distribute it, also commercially, without asking
+permission.
+
+https://creativecommons.org/publicdomain/zero/1.0/
+
+Made with MPFB 2.0 (the MakeHuman plugin for Blender). The body follows its rig through an Armature
+modifier, so it can be posed (for example a wider A pose, or a T pose) before dressing.
+
+It holds no textures and no materials. The rest of AC9 Cloth Sim is under GPL-3.0-or-later (LICENSE).

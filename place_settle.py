@@ -333,7 +333,7 @@ class AC9_OT_SimSettle(bpy.types.Operator):
         from . import dress as D
         from . import placement as PL
         if D.AC9_OT_SimDress.running():
-            cls.poll_message_set("Not while a Phase Sim or Live Sim runs")
+            cls.poll_message_set("Not while a simulation runs")
             return False
         sel = PL.selected_pieces(context)
         if not sel:

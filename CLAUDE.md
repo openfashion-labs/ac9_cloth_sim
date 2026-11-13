@@ -7,7 +7,7 @@
 型紙（BOM.xml・DXF・UV シーム付きメッシュ、またはゼロから描いた型紙）を縫い合わせ、Blender の中でアバターに着せる。
 計算は NVIDIA Newton（VBD）を別プロセスの Python で回す（`solver/`）。`solver/newton_patch/` と
 `solver/native_experimental_*.py`（`coloring` を除く）は Newton 1.6.0 から作った改変コピーで Apache-2.0（`solver/newton_patch/` の
-`LICENSE`・`NOTICE`、各ファイルの先頭に改変した旨）。それ以外は GPL-3.0-or-later。
+`LICENSE`・`NOTICE`、各ファイルの先頭に改変した旨）。`avatar.blend`（「Add Avatar」で足すアバター）は CC0 1.0（`avatar_LICENSE.txt`）。それ以外は GPL-3.0-or-later。
 
 ## 命名
 - クラスは `AC9_OT_*`／`AC9_PT_*`、オペレーターの bl_idname は `ac9_cloth_sim.*`、シーンのプロパティは `scene.ac9_cloth_sim`。
@@ -36,6 +36,7 @@
 - 配布 ZIP に入らないもの: `docs/`・`website/`・`.github/`・`CLAUDE.md`・`CHANGELOG.md`（`blender_manifest.toml` の `paths_exclude_pattern`）。`wheels/`（`release.yml` が PyPI から落とす）・`THIRD_PARTY_NOTICES.txt`・`licenses/`・`BUILD_INFO.txt`（`release.yml` が書く）は ZIP に入る。`LLM/` と `tests/` は ZIP に入る（LLM/ は AICompanion が読む説明書で、その封印がアドオンの .py 全部の一覧を見るため）。
 - 秘密情報の検査（gitleaks）は `.github/workflows/gitleaks.yml` が PR と main への push で回す。コミットに社内の名前が入っていないかは機械では検査しないので、上の「公開に向けて守ること」を自分で確かめる。
 - 公開の流れ: 手元のブランチは push せず細かくコミットしてよい。版を出すときに main へ 1 コミットにまとめて入れ、変更点は `CHANGELOG.md` に書く（`## [X.Y.Z] - 日付` の節。`[Unreleased]` に溜めて版を出すときに付け替える）。
+- 版の番号: 機能を足した版ごとに 2 桁目を上げる（0.2.0 → 0.3.0。0.10.0 の次は 0.11.0）。直しだけの版は 3 桁目（0.2.1）。1.0.0 が正式版。段階（α・β）は Release と CHANGELOG に書く。
 - リリース: `blender_manifest.toml` の `version` と `CHANGELOG.md` の節を更新した PR をマージしたあと、admin が `vX.Y.Z` タグを push する。`.github/workflows/release.yml` が Blender を落として ZIP をビルドし、draft の Release に添付する（本文は CHANGELOG の該当節）。本文を確かめて Release を公開する。
 - 計算に使う wheel（newton・warp-lang の Windows 用）はリポジトリに置かない（warp-lang が約 150 MB）。`release.yml` が PyPI から `blender_manifest.toml` の `wheels` と同じ版を落とし、sha256 を確かめてから ZIP に入れる。版を変えるときは manifest・`release.yml` の sha256・`THIRD_PARTY_NOTICES.txt`・`licenses/` を一緒に直す。newton を上げるときは `solver/newton_patch/` と `solver/newton_vbd.py` の `NEWTON_BASE_SHA256` も。
 - 版のコミットには、`LLM/` の封印（`LLM/manifest.toml` の `build_id` と `__init__.py` の `AC9_GUIDANCE_BUILD`）を開発元が入れておく。封印はアドオンの .py 全部のハッシュを持つので、.py を変えたコミットでは古くなる（AI アシスタントがその説明書を使わなくなるだけで、アドオンの動きには関係しない）。

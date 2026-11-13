@@ -159,11 +159,12 @@ def _new_id(spec, base):
     return k
 
 
-def _mirror_seam(spec, sm, name, tw, outlines, made=None):
-    """The seam sm mirrored (a new seam dict, added to nothing), or (None, why)."""
+def _mirror_seam(spec, sm, name, tw, outlines, made=None, skip=()):
+    """The seam sm mirrored (a new seam dict, added to nothing), or (None, why). skip: seams whose place the mirror
+    image may land on (its own partner, when an edit is carried over)."""
     sides = {}
     for k in ('a', 'b'):
-        sides[k], why = mirror_side(spec, sm[k], name, tw, outlines, skip={sm['id']}, made=made)
+        sides[k], why = mirror_side(spec, sm[k], name, tw, outlines, skip={sm['id']} | set(skip), made=made)
         if sides[k] is None:
             return None, why
     nm = {kk: v for kk, v in sm.items() if kk not in ('id', 'a', 'b', 'bom')}
@@ -327,3 +328,102 @@ def mirror_seams(spec, name):
     if 'folds' in spec:
         spec['folds'] = folds
     return tw, made, removed, notes
+
+
+# ---------------------------------------------------------------- edits follow the mirror image
+
+def _same_side(spec, outlines, o, m, tol=1.0):
+    """o and m are the same place: one piece, the same internal line or overlapping stretches of the outline."""
+    if o['piece'] != m['piece'] or ('line' in o) != ('line' in m):
+        return False
+    if 'line' in o:
+        return o['line'] == m['line'] and abs(min(o['from'], o['to']) - min(m['from'], m['to'])) < 0.02
+    ol = outlines[o['piece']]
+    a0, a1 = _interval(ol, o)
+    b0, b1 = _interval(ol, m)
+    return any(min(a1, b1 + sh) - max(a0, b0 + sh) > min(tol, 0.5 * (a1 - a0)) for sh in (-ol.L, 0.0, ol.L))
+
+
+def _mirror_ways(spec, sm):
+    """The ways sm has a mirror image while its pieces are edited symmetrically ((name, tw, made) for _mirror_seam):
+    both pieces in Symmetric Edit (each onto itself, as mirror_within), or both in pairs mirroring in one plane, not
+    a seam between a pair's two halves (as mirror_onto_twins)."""
+    ps = {sm['a']['piece'], sm['b']['piece']}
+    ways = []
+    if all(D.symmetric_edit(D.piece(spec, p)) is not None for p in ps):
+        ways.append({p: p for p in ps})
+    tw = {p: D.twin_of(spec, p) for p in ps}
+    if (all(t is not None for t in tw.values()) and len({S.pair_plane(spec, p) for p in ps}) == 1
+            and not any(tw[p] in ps for p in ps)):
+        ways.append(tw)
+    return ways
+
+
+def mirror_partner(spec, sid):
+    """The id of the seam that is seam sid's mirror image (Symmetric Edit / a left-right pair), else None."""
+    sm = next((x for x in spec['seams'] if x['id'] == sid), None)
+    if sm is None:
+        return None
+    outlines = {pc['name']: S.Outline(pc) for pc in spec['pieces']}
+    every = {x['id'] for x in spec['seams']}
+    for made in _mirror_ways(spec, sm):
+        nm, _ = _mirror_seam(spec, sm, None, None, outlines, made, skip=every)
+        if nm is None:
+            continue
+        for x in spec['seams']:
+            if x['id'] == sid:
+                continue
+            if ((_same_side(spec, outlines, x['a'], nm['a']) and _same_side(spec, outlines, x['b'], nm['b']))
+                    or (_same_side(spec, outlines, x['a'], nm['b']) and _same_side(spec, outlines, x['b'], nm['a']))):
+                return x['id']
+    return None
+
+
+def partners(spec, ids):
+    """{seam id: its mirror image's id} for the seams ids that have one (read before an edit)."""
+    out = {}
+    for i in ids:
+        p = mirror_partner(spec, i)
+        if p is not None and p not in ids:
+            out[i] = p
+    return out
+
+
+SYNC_KEYS = ('enabled', 'check', 'path', 'source')
+
+
+def sync_partners(spec, pairs):
+    """After seams were edited: each partner (pairs = partners() read before the edit) made the mirror image of its
+    seam again -- its sides (moved ends, a flipped direction), On / Off, check and pull (left / right swapped).
+    Its id, group and folds stay. Returns the partner ids rewritten."""
+    outlines = {pc['name']: S.Outline(pc) for pc in spec['pieces']}
+    by = {x['id']: x for x in spec['seams']}
+    done = []
+    for sid, pid in pairs.items():
+        sm, x = by.get(sid), by.get(pid)
+        if sm is None or x is None:
+            continue
+        for made in _mirror_ways(spec, sm):
+            nm, _ = _mirror_seam(spec, sm, None, None, outlines, made, skip={pid})
+            if nm is None:
+                continue
+            # keep the partner's own a / b order (side A stays on the same piece)
+            if x['a']['piece'] == nm['b']['piece'] and x['b']['piece'] == nm['a']['piece'] \
+                    and x['a']['piece'] != x['b']['piece']:
+                nm['a'], nm['b'] = nm['b'], nm['a']
+            elif x['a']['piece'] == x['b']['piece'] and _same_side(spec, outlines, x['a'], nm['b']):
+                nm['a'], nm['b'] = nm['b'], nm['a']
+            x['a'], x['b'] = nm['a'], nm['b']
+            for k in SYNC_KEYS:
+                if k in nm:
+                    x[k] = nm[k]
+                else:
+                    x.pop(k, None)
+            done.append(pid)
+            break
+    return done
+
+
+def delete_with_partners(spec, ids):
+    """ids and their mirror images (to remove together)."""
+    return set(ids) | set(partners(spec, ids).values())

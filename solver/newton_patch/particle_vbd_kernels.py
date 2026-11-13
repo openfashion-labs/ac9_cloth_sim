@@ -1906,7 +1906,11 @@ def ac9_layer_segment_hit(p: wp.vec3, q: wp.vec3, a: wp.vec3, b: wp.vec3, c: wp.
     return u >= 0.0 and v >= 0.0 and u + v <= 1.0 and t > eps and t < 1.0 - eps
 
 
-@wp.kernel
+AC9_LAYER_RECOVERY_BLOCK_DIM = 128
+
+
+@wp.kernel(module="unique", enable_backward=False,
+           module_options={"enable_backward": False, "block_dim": AC9_LAYER_RECOVERY_BLOCK_DIM})
 def ac9_layer_recovery_candidates(
     pos: wp.array[wp.vec3],
     tri_indices: wp.array2d[int],

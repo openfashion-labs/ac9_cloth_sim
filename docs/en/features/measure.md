@@ -12,7 +12,9 @@ What this panel is for: measuring the body, and seeing how much ease a dressed g
 - **Body**: the body to measure (the same field as in Placement).
 - **Measure Body**: measures the body. Height, circumferences (one full loop around the bust, waist, hips, neck, arm, and leg), and back length. The places measured are drawn as lines around the body. It assumes the body is standing straight and facing -Y. The eye icon next to it shows or hides the lines.
 - The table (**Body**, **Cloth**, **Ease**) has one item per row, in the scene's unit (**Units** on the Setup panel). **Cloth** is the garment's circumference at the same height (after **Measure Garment**). If the garment doesn't cover that spot, it shows "open". **Ease** is the ease. Press an item name and the place measured on the body lights up. The reset icon at the lower right of the table returns all lines to where they were first found.
-- **Measure Garment**: measures the dressed garment at the same heights as the body's lines. When **Phase Sim** or **Live Sim** finishes, it measures that result (the last frame) automatically.
+- **Measure Garment**: measures the dressed garment at the same heights as the body's lines. When **Live Sim** finishes, it measures that result (the last frame) automatically.
+
+![the Measure panel](../img/d_measure_panel.png)
 
 ## Measuring tools
 

@@ -52,6 +52,15 @@ def resolve(spec, panel, *, environ=None, local=None):
     placed = {p['name'] for p in effective['pieces'] if p.get('enabled', True)}
     if not placed or (local is not None and not placed.intersection(local)):
         raise ValueError(rpt('No placed pieces to simulate'))
+    if settings.get('native_three'):
+        # Native 3 is the default Live (user 2026-11-12); a garment it does not take (a piece on a Layer above 0,
+        # kept in an older file) runs the usual Live instead of stopping, the reason said by the caller
+        from ..solver.native_three_contract import preflight as n3_preflight
+        try:
+            n3_preflight(effective, settings)
+        except ValueError as exc:
+            settings['native_three'] = False
+            settings['native_three_off'] = str(exc)
     return Inputs(effective, settings, migrated, notes, twins, center_x)
 
 
