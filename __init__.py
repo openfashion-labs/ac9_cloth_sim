@@ -30,4 +30,4 @@ if bpy is not None:
 
     def unregister():
         _addon.unregister()
-AC9_GUIDANCE_BUILD = "cae6731ab6696753b87412c7a81a8d9de84c388d884e0df5b9c8776c3aaafb11"
+AC9_GUIDANCE_BUILD = "3dac2a6ffa8b78fa9adbc22e363c60c8a7f56dfc461d33acdd76cf86f42431a3"

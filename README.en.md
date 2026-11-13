@@ -55,13 +55,13 @@ To check that it is installed, press **N** in the 3D viewport and look for the "
 The button names are the ones shown in the English interface. The detailed steps are in the [user guide](#user-guide).
 
 1. **Save the .blend first.** The run's frames are written to a folder next to the saved .blend (without saving, they go to a temporary folder and cannot be played back later).
-2. Import the avatar (the body). It is expected to stand straight, facing −Y.
+2. Import the avatar (the body). It is expected to stand straight, facing −Y. If you have none, **Add Avatar** under **Setup** adds the bundled avatar (CC0).
 3. In the sidebar's "AC9 Cloth Sim" tab, press **Work Screen** under **Setup** to switch to a screen laid out for the work.
 4. Import the pattern: **Import BOM**, **Import DXF**, **Import SVG**, or **From Mesh** for a 3D mesh. DXF and SVG files carry no seams, so add them with **Add Seam** after importing.
 5. Under **Placement**, pick the body mesh as **Body** and press **Detect Guides**. Guides for placing the pieces appear round the body's torso, neck, arms and legs.
 6. With the **Place** tool, select pattern pieces, press on a guide, drag to set the position and release.
-7. In the **Tool** tab of the Properties editor at the bottom right (AC9 Run, at the top), press **Phase Sim**. The pieces are sewn together in stages and the garment settles on the body. Press **Esc** to stop.
-8. Where you don't like the result, fix the pattern and press Phase Sim again (it goes on from the current shape). To dress the avatar again from the start, press **Back to Placed** with nothing selected, then Phase Sim.
+7. In the **Tool** tab of the Properties editor at the bottom right (AC9 Run, at the top), press **Live Sim**. The seams pull together and the garment settles on the body. It does not stop by itself: press **Esc** once it has settled.
+8. Where you don't like the result, fix the pattern and press Live Sim again (it goes on from the current shape). While it runs, **Ctrl+drag** the cloth to pull it into place. To dress the avatar again from the start, press **Back to Placed** with nothing selected, then Live Sim.
 9. The dressed garment is saved in the .blend (**Ctrl+S**).
 
 <!-- screenshot: the whole Work Screen (sidebar, pattern view, Tool tab) -->
@@ -70,7 +70,7 @@ The button names are the ones shown in the English interface. The detailed steps
 
 - **The run buttons are not in the sidebar but in the Tool tab of the Properties editor at the bottom right.** If the Properties editor shows another tab (Render and so on), you won't find them.
 - **Patterns cannot be fixed with Blender's usual editing (Edit Mode, G/R/S).** Use the **Whole Pieces** tool to move whole pieces and the **Edit Pieces** tool to fix corners and edges.
-- **A piece's role** (front, placket, collar stand, sleeve, cuff ...) decides the order it is sewn in, how it is placed (bands as a ring, sleeve panels side by side round the arm) and its start shape. After checking the seams and before placing, press **Propose Roles** in the **Piece Roles** panel and look again at the pieces marked for checking. See [Piece Roles and What Gets Decided Automatically](docs/en/features/roles.md) in the user guide.
+- **A piece's role** (front, placket, collar stand, sleeve, cuff ...) decides the order it is sewn in, how it is placed (bands as a ring, sleeve panels side by side round the arm) and its start shape. After checking the seams and before placing, press **Propose Roles** in the **Piece Roles** panel and look again at the pieces marked for checking. See [Piece Roles and What Gets Decided Automatically](https://openfashion-labs.github.io/ac9_cloth_sim/features/roles/) in the user guide.
 - **Hover over a button that cannot be pressed (gray) to see why.**
 - On a **laptop** without a middle button or numpad, turning on "Emulate 3 Button Mouse" and "Emulate Numpad" under Preferences → Input makes moving the view easier.
 - **Keyboard shortcuts don't work while a Japanese (or other) input method (IME) is on.**
@@ -85,13 +85,13 @@ The button names are the ones shown in the English interface. The detailed steps
 | The screen differs from the guide, or "cannot import name …" appears | Did you restart Blender after installing a new version? |
 | The result differs a little every time | In the alpha the result varies even with the same settings. Run it a few times and compare. |
 
-For other symptoms, see [Troubleshooting](docs/en/troubleshooting.md) in the user guide.
+For other symptoms, see [Troubleshooting](https://openfashion-labs.github.io/ac9_cloth_sim/troubleshooting/) in the user guide.
 
 ## User guide
 
-- [User guide (English)](docs/en/index.md): getting started, Blender basics, your first garment, concepts, each feature, troubleshooting, glossary. The same content as the documentation site.
-- [User guide (Japanese)](docs/ja/index.md)
-- Documentation site: in preparation.
+- [User guide (English)](https://openfashion-labs.github.io/ac9_cloth_sim/): getting started, Blender basics, your first garment, concepts, each feature, troubleshooting, glossary.
+- [User guide (Japanese)](https://openfashion-labs.github.io/ac9_cloth_sim/ja/)
+- The source of the user guide is in `docs/en` and `docs/ja` in this repository.
 
 Notes for AI assistants (operation IDs, how to read the state) are in [LLM/procedures.md](LLM/procedures.md) (`LLM/README.md` is a copy of part of the user guide).
 
@@ -109,3 +109,5 @@ Please post them in [Issues](https://github.com/openfashion-labs/ac9_cloth_sim/i
 [GPL-3.0-or-later](LICENSE). The simulation uses NVIDIA Newton.
 
 Copyright (C) 2026 OpenFashion. This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. `solver/newton_patch/` is a modified copy of NVIDIA Newton under Apache-2.0 (its `LICENSE` and `NOTICE` in the same folder).
+
+The bundled avatar (`avatar.blend`, added with **Add Avatar**) was made with MPFB 2.0 and is CC0 1.0 (public domain); see `avatar_LICENSE.txt`.

@@ -59,9 +59,9 @@ class AC9_OT_SimAddDart(bpy.types.Operator):
     bl_label = "Add Dart"
     bl_options = {'REGISTER', 'UNDO'}
 
-    width: bpy.props.FloatProperty(name="Width", default=0.02, min=0.002, max=0.2, precision=1, subtype='DISTANCE', unit='LENGTH', 
+    width: bpy.props.FloatProperty(name="Width", default=0.02, min=0.002, max=0.2, precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP, 
                                    description="Width of the dart's mouth along the outline")
-    length: bpy.props.FloatProperty(name="Length", default=0.08, min=0.005, max=0.6, precision=1, subtype='DISTANCE', unit='LENGTH', 
+    length: bpy.props.FloatProperty(name="Length", default=0.08, min=0.005, max=0.6, precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP, 
                                     description="From the middle of the mouth to the apex")
     true_mouth: bpy.props.BoolProperty(name="True the Mouth", default=True,
                                        description="Shape the outline across the mouth so that, sewn, it runs on smoothly")

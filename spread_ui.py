@@ -23,7 +23,7 @@ class AC9_OT_SimSpread(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     amount: bpy.props.FloatProperty(name="Spread", default=0.03, translation_context=CTX, min=0.0025, max=0.5, precision=1,
-                                    subtype='DISTANCE', unit='LENGTH',      # m
+                                    subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP,      # m
                                     description="How far the cut opens (at the far end for a flare)")
     mode: bpy.props.EnumProperty(name="Open", items=[
         ('hinge', "Flare", "Turn one side about an end of the line: open at the other end only"),

@@ -51,6 +51,8 @@ GARMENT_PROP = "ac9_placed_garment"   # ... and the garment (spec name) it belon
 KEY_PROP = "ac9_placed_key"     # ... and the piece's layout mesh when made (vertex count, a hash of the points): a
                                 # pattern edited or re-meshed since is reported (mapped through the layout)
 NV_PROP = "ac9_placed_nv"       # ... and its vertex count when made: vertices added or deleted by hand -> numbers
+BODY_PROP = "ac9_placed_body"   # ... and the body it was made on (placement.body_fingerprint): the body changed since
+                                # -> a piece not moved by hand is made again (user 2026-11-13, the shape seen is the start)
 ORG_PROP = "ac9_placed_org"     # ... and the world point (mm) it was made round: its location then, the pose's pivot
 ORIGIN_SHIFT_PROP = "ac9_origin_shift"  # local meters: display origin shift from the original pose frame
 MOVED_TOL = 1e-5                # m: a vertex this far from where it was made has been moved
@@ -1338,6 +1340,8 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
                 if md.type == 'MIRROR' and md.name == "AC9 Pair":
                     md.mirror_object = center_empty(context, spec, names[s_])      # ... or its plane's place
     made = []
+    from . import placement as PL_
+    body_fp = PL_.body_fingerprint(context)
     for i, n in enumerate(names):
         if i in tgts or n in kept or (only is not None and n not in only):
             continue
@@ -1348,6 +1352,7 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
         # (a Reset after the Dress removed the objects, dress.write_placed) came out moved by -org
         ob.matrix_world = Matrix.Translation(tuple(org * MM))
         _tag(ob, spec, n, pat[f"V{i}"])
+        ob[BODY_PROP] = body_fp
         from . import look_apply as LA
         LA.apply_piece(ob, spec, n)
         # the pieces' generated positions were written in world coordinates; the object's matrix is a translation, so

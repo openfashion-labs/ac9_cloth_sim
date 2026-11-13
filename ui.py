@@ -57,6 +57,30 @@ class AC9_UL_SimSeams(bpy.types.UIList):
         return flt, []
 
 
+def view_text_origin(context, top=150):
+    """(x, y) for lines of text drawn at a 3D view's upper left, clear of its toolbar and of the view's own text.
+    With Region Overlap (Blender's default) the toolbar lies over the view: its width is added (1, 2 columns or
+    with names); without it the view starts after the toolbar. The statistics overlay, when shown, pushes the text
+    down below it. top: px from the region's top at UI scale 1."""
+    area, region = context.area, context.region
+    scale = context.preferences.system.ui_scale
+    x = 0
+    if area is not None and context.preferences.system.use_region_overlap:
+        for r in area.regions:
+            if r.type == 'TOOLS' and r.width > 1:    # a hidden toolbar keeps a width of 1
+                x = r.width
+    y = region.height - top * scale
+    ov = getattr(context.space_data, 'overlay', None)
+    if ov is not None and ov.show_overlays and ov.show_stats:
+        y -= 110 * scale
+    return int(x + 24 * scale), int(y)
+
+
+# the steps of a run's own preparation, as the bar names them
+PREP_PHASES = {'imports': "Loading the solver", 'device': "Starting the GPU", 'model': "Building the cloth",
+               'kernels': "Preparing the compute programs"}
+
+
 def draw_solver_preload(layout, context):
     """A cached preload snapshot; the timer owns all I/O and compatibility checks. One line at most: a bar while
     it loads, a line when it failed or waits for the GPU, nothing once ready (the usual state is not news)."""
@@ -83,49 +107,48 @@ def draw_run(layout, context, status=True):
     from . import dress as D
     run = D.AC9_OT_SimDress.running()
     btn = D.AC9_OT_SimDress.running_button()
-    sub = layout.row(align=True)
-    sub.enabled = run is None or btn == 'SIMULATE'
-    # the running one drawn pressed, as the tool buttons (user 2026-10-21)
-    sub.operator("ac9_cloth_sim.update_3d", text="Stop" if btn == 'SIMULATE' else "Phase Sim",
-                 icon='PAUSE' if btn == 'SIMULATE' else 'PLAY', depress=btn == 'SIMULATE')
+    p = context.scene.ac9_cloth_sim
+    # Phase Sim, Local Sim and the Native 3 choice only with Experimental Features on (user 2026-11-12, 0.2.0:
+    # Live Sim at the center for a first user); a run started elsewhere still shows its Stop
+    exp = D.experimental(context)
+    if exp or btn == 'SIMULATE':
+        sub = layout.row(align=True)
+        sub.enabled = run is None or btn == 'SIMULATE'
+        # the running one drawn pressed, as the tool buttons (user 2026-10-21)
+        sub.operator("ac9_cloth_sim.update_3d", text="Stop" if btn == 'SIMULATE' else "Phase Sim",
+                     icon='PAUSE' if btn == 'SIMULATE' else 'PLAY', depress=btn == 'SIMULATE')
     # Live Sim and Local Sim side by side, each with its own Gravity under it (user 2026-10-23: Local starts
     # without it)
+    modes = [('LIVE', "Live Sim", 'HAND')]
+    if exp or btn == 'LOCAL':
+        modes.append(('LOCAL', "Local Sim", 'PIVOT_INDIVIDUAL'))
     col = layout.column(align=True)
     row = col.row(align=True)
-    for mode, text, icon in (('LIVE', "Live Sim", 'HAND'), ('LOCAL', "Local Sim", 'PIVOT_INDIVIDUAL')):
+    for mode, text, icon in modes:
         sub = row.row(align=True)
         sub.enabled = run is None or btn == mode
         op = sub.operator("ac9_cloth_sim.dress", text="Stop" if btn == mode else text,
                           icon='PAUSE' if btn == mode else icon, depress=btn == mode)
         op.mode, op.button = mode, mode
     row = col.row(align=True)
-    row.prop(context.scene.ac9_cloth_sim, "live_gravity", text="Gravity")
-    row.prop(context.scene.ac9_cloth_sim, "local_gravity", text="Gravity")
+    row.prop(p, "live_gravity", text="Gravity")
+    if len(modes) > 1:
+        row.prop(p, "local_gravity", text="Gravity")
     # the floor at Z = 0 for every run (user 2026-11-10): beside the runs it changes, off while one runs (read at
     # its start)
     row = layout.row()
     row.enabled = run is None
-    row.prop(context.scene.ac9_cloth_sim, "floor", text="Floor (Z = 0)")
-    fast = layout.column(align=True)
-    fast.enabled = run is None
-    choice = fast.row()
-    choice.enabled = not context.scene.ac9_cloth_sim.native_three or context.scene.ac9_cloth_sim.fast_live
-    choice.prop(context.scene.ac9_cloth_sim, "fast_live", text="AC9 Fast Live (Test)")
-    choice = fast.row()
-    choice.enabled = not context.scene.ac9_cloth_sim.fast_live or context.scene.ac9_cloth_sim.native_three
-    choice.prop(context.scene.ac9_cloth_sim, "native_three", text="AC9 Native 3 (Test)")
-    if context.scene.ac9_cloth_sim.native_three:
-        fast.label(text="Static body; no Piece Layer")
-        fast.label(text="Restarts from shown shape")
-    if context.scene.ac9_cloth_sim.fast_live:
-        fast.label(text="2 substeps + a correction")
-        fast.label(text="Static body")
-        fast.label(text="Lower contact damping")
+    row.prop(p, "floor", text="Floor (Z = 0)")
+    # Native 3 (on by default, user 2026-11-12) can be turned off under Experimental Features; Fast Live is not
+    # drawn anywhere (a value saved on in a file is not used, core/presets.resolve)
+    if exp:
+        n3 = layout.column(align=True)
+        n3.enabled = run is None
+        n3.prop(p, "native_three", text="Native 3")
     # pattern edits to the 3D at once, or when asked (user 2026-10-27, TASKS 85): under the run buttons, where the
     # runs that take the waiting edits are
     # always both, side by side (user 2026-10-28: no button that shows up only now and then): the switch as a button
     # held down while on, Update 3D gray until it is off and edits wait (its poll), then red (a run takes them too)
-    p = context.scene.ac9_cloth_sim
     row = layout.row(align=True)
     row.prop(p, "follow_edits", toggle=True, icon='LINKED' if p.follow_edits else 'UNLINKED')
     sub = row.row(align=True)
@@ -139,8 +162,11 @@ def draw_run(layout, context, status=True):
     n = len(D.reset_pieces(g))
     if n and run is None:
         layout.label(text=tx("Next: {0} piece(s) from placed", n), icon='INFO')
-    # the solver's preload: a bar while it loads, nothing once ready (2026-11-04: three lines at rest were too many)
-    draw_solver_preload(layout, context)
+    # the solver's preload: a bar while it loads, nothing once ready (2026-11-04: three lines at rest were too many).
+    # Not while a run goes: the preload's progress is not updated then and its last share stayed on screen ("25 %"
+    # through a whole Sim); the run's own state is under the buttons
+    if run is None:
+        draw_solver_preload(layout, context)
     # the stroke brush (Ctrl+Shift+drag while Live runs, user 2026-11-02): set once before a run, so folded; always
     # there (no button that shows up only now and then, 10/28)
     head, body = layout.panel("ac9_cloth_sim_run_live", default_closed=True)
@@ -204,6 +230,19 @@ def draw_run_status(layout, context, spec):
     run = D.AC9_OT_SimDress.running()
     # P1 #7: the run's share done as a bar (the status below says the stage and frame)
     shown = D.AC9_OT_SimDress._shown if run else {}
+    # while it starts: a bar only from the run's own preparation, fresh (dress.run_preparing); words otherwise
+    prep = D.run_preparing() if run else None
+    built = D.run_kernels_built() if prep is not None else 0
+    if built:
+        # a first run on this PC (or after an update): the modules built so far move the bar, which otherwise held
+        # at one step for the whole wait
+        from .core import kernel_cache as KC
+        layout.progress(factor=min(built / KC.EXPECTED_MODULES, 0.97), type='BAR',
+                        text=tx("Building the compute programs for this PC ({0})", built))
+    elif prep is not None and prep[1] is not None:
+        done, total, phase = prep[1]
+        layout.progress(factor=done / total, type='BAR',
+                        text=tx("{0} {1:.0f} %", tx(PREP_PHASES.get(phase, PREP_PHASES['imports'])), done * 100 / total))
     if shown.get('frac') is not None and not shown.get('starting'):
         layout.progress(factor=shown['frac'], type='BAR', text=tx("{0:.0f} % of the run", shown['frac'] * 100))
     n = _wrap_width(context)
@@ -230,7 +269,8 @@ def draw_run_status(layout, context, spec):
 
 class AC9_PT_SimMissing(bpy.types.Panel):
     """The deleted piece objects, above every panel of the tab and only while there are some: no header to fold it
-    away (Setup is often folded, user 2026-10-27)."""
+    away (Setup is often folded)."""
+    # user 2026-10-27
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "AC9 Cloth Sim"
@@ -274,6 +314,7 @@ class AC9_PT_SimMain(bpy.types.Panel):
         # The two BOM actions have full-width labels: a truncated "new" concealed the destructive import.
         layout.operator("ac9_cloth_sim.import_bom", icon='IMPORT')
         layout.operator("ac9_cloth_sim.from_mesh", icon='MESH_DATA')
+        layout.operator("ac9_cloth_sim.add_avatar", icon='OUTLINER_OB_ARMATURE')   # the bundled CC0 avatar (work_screen.py)
         spec, _ = store.get(context)
         if store.text(context) is not None and spec is None:
             box = layout.box()
@@ -524,7 +565,10 @@ def draw_seam_attrs(layout, context, spec, act, viewport=True):
         f.row(align=True).prop(context.scene, "ac9_seam_fold_turn", expand=True)
         from . import place_fold as PF
         PF.draw_why(f, context, PF.seam_turn(spec, act), PF.SEAM_KEY + act['id'])
-    _seam_path_rows(layout, spec, act)
+    # how the seam is pulled (a test feature, the no-gravity stage of Phase Sim only): Experimental Features
+    from . import dress as _D
+    if _D.experimental(context):
+        _seam_path_rows(layout, spec, act)
     from .core import attach as _AT
     if not _AT.ON_HOLD:
         _seam_attach_rows(layout, spec, act)
@@ -764,7 +808,7 @@ class AC9_PT_SimPlacement(bpy.types.Panel):
             col.label(text=tx("A: all targets; Esc: cancel"), icon='BLANK1')
         # the piece on top of the ones it overlaps, only when asked (user 2026-10-25)
         layout.operator("ac9_cloth_sim.move_outside", text="Move Outside", icon='SELECT_EXTEND')
-        draw_hint(layout, context, tx("Pick pieces, press on a guide, drag, release, then Phase Sim"))
+        draw_hint(layout, context, tx("Pick pieces, press on a guide, drag, release, then Live Sim"))
         # the placed shapes as objects: move / rotate / edit them freely (the guide is only a start, user 2026-10-10)
         from . import placed_view as PLV
         nob = len({ob.name for ob in PLV.objects(spec).values()})
@@ -795,7 +839,7 @@ class AC9_PT_SimPlacement(bpy.types.Panel):
             col.label(text=ob[PLV.PROP] + (tx(" + {0}", ob[PLV.TWIN_PROP]) if ob.get(PLV.TWIN_PROP) else ""))
             col.label(text=tx("Move ") + "  ".join(U.num(context, v, signed=True) for v in p['loc']) + " " + U.unit(context)[1])
             col.label(text=tx("Turn ") + "  ".join(tx("{0:+.1f}", v) for v in p['rot']) + tx(" deg"))
-            layout.operator("ac9_cloth_sim.set_pose", text="Type Move", icon='OBJECT_ORIGIN')
+            # Type Move (set_pose) is not drawn here (user 2026-11-12): Tool tab > AC9 Piece > Location & Rotation
         # the pair's state and buttons: Tool tab > AC9 Piece > Pair (user 2026-11-11, REVIEW_fable_pair_ui b-1)
 
 
@@ -1155,8 +1199,9 @@ def draw_result(layout, spec, box=False):
 
 
 class AC9_PT_SimLists(bpy.types.Panel):
-    """The lists in one panel with tabs (user 2026-10-13, b-3): Seams, Pieces, Obstacles,
-    Tapes. A row picked here shows its settings in the Properties editor's Tool tab (tool_tab.py)."""
+    """The lists in one panel with tabs: Seams, Pieces, Obstacles, Tapes. A row picked here shows its settings in
+    the Properties editor's Tool tab."""
+    # user 2026-10-13, b-3
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "AC9 Cloth Sim"

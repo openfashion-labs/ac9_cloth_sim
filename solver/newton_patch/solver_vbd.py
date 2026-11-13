@@ -48,6 +48,7 @@ from .particle_vbd_kernels import (
     # Topological filtering helper functions
     ac9_layer_mark_wrong,
     ac9_layer_recovery_candidates,
+    AC9_LAYER_RECOVERY_BLOCK_DIM,
     AC9LayerPairs,
     accumulate_particle_body_contact_force_and_hessian,
     accumulate_self_contact_force_and_hessian,
@@ -744,6 +745,13 @@ class SolverVBD(SolverBase, CouplingInterface):
                     "deterministic_max_records": particle_deterministic_max_records,
                 },
                 module=solve_elasticity_tile.module,
+            )
+            self._set_module_options(
+                {
+                    "deterministic": effective_deterministic,
+                    "deterministic_max_records": particle_deterministic_max_records,
+                },
+                module=ac9_layer_recovery_candidates.module,
             )
         self._set_module_options(
             {
@@ -4044,7 +4052,8 @@ class SolverVBD(SolverBase, CouplingInterface):
                             lay, sgn, pairs, self.ac9_layer_recovery_stats,
                             self.ac9_layer_recovery_distances, self.ac9_layer_recovery_triangles,
                             self.ac9_layer_recovery_mesh_ids, self.ac9_layer_recovery_tri_map,
-                            self.ac9_layer_recovery_tri_offsets], device=self.device)
+                            self.ac9_layer_recovery_tri_offsets], device=self.device,
+                        block_dim=AC9_LAYER_RECOVERY_BLOCK_DIM)
                 if hasattr(self, 'ac9_layer_crossings'):
                     crossing = self.ac9_layer_crossings
                     crossing['count'].zero_()

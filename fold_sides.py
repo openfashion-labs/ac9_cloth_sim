@@ -383,14 +383,13 @@ def draw_px(context, spec, piece, line):
         if len(sp) == 2 and (sp[0][2] - sp[1][2]).length < LETTER_GAP_PX:
             # one side folded over the other (the placed shape at 149 degrees): side by side, not on top
             sp = [(ab, k, p + Vector(((k - 0.5) * LETTER_GAP_PX, 0.0))) for ab, k, p in sp]
+        items = []
         for ab, k, p in sp:
             w, h = blf.dimensions(fid, ab)
-            blf.color(fid, 1.0, 1.0, 1.0, 1.0 if (al_a, al_b)[k] == MOVE_ALPHA else 0.75)
-            blf.enable(fid, blf.SHADOW)
-            blf.shadow(fid, 3, 0.0, 0.0, 0.0, 0.8)
-            blf.position(fid, p.x - w / 2.0, p.y - h / 2.0, 0)
-            blf.draw(fid, ab)
-            blf.disable(fid, blf.SHADOW)
+            items.append((p.x - w / 2.0, p.y - h / 2.0, ab,
+                          (1.0, 1.0, 1.0, 1.0 if (al_a, al_b)[k] == MOVE_ALPHA else 0.75)))
+        from . import text_band
+        text_band.draw(fid, items)
 
 
 def invalidate():

@@ -932,7 +932,7 @@ class AC9_OT_MeasureSetTarget(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     key: StringProperty()
-    value: FloatProperty(name="Target", min=0.0, max=10.0, precision=1, subtype='DISTANCE', unit='LENGTH')   # m
+    value: FloatProperty(name="Target", min=0.0, max=10.0, precision=1, subtype='DISTANCE', unit='LENGTH', step=units.LEN_STEP)   # m
 
     @classmethod
     def description(cls, context, props):
@@ -1390,13 +1390,14 @@ def _draw_px():
     region, rv3d = context.region, context.region_data
     fid = 0
     blf.size(fid, 12)
+    items = []
     for p, txt, _domain, _source in labels:
         xy = location_3d_to_region_2d(region, rv3d, Vector(p))
         if xy is None:
             continue
-        blf.position(fid, xy[0] + 6, xy[1] + 4, 0)
-        blf.color(fid, 1, 1, 1, 0.95)
-        blf.draw(fid, txt)
+        items.append((xy[0] + 6, xy[1] + 4, txt, (1, 1, 1, 0.95)))
+    from . import text_band
+    text_band.draw(fid, items)
 
 
 def _redraw(context):

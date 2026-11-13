@@ -14,6 +14,12 @@ _IMPERIAL = {'INCHES': (25.4, "in", 3), 'FEET': (304.8, "ft", 4), 'THOU': (0.025
              'MILES': (1609344.0, "mi", 7), 'ADAPTIVE': (25.4, "in", 3)}
 _MM = _METRIC['MILLIMETERS']
 
+# The step of a length field typed in a dialog or the Tool tab (Blender's 'step', in 1/100 of a meter). Blender
+# turns a length field's step into the unit nearest it: the default step (3) drags 10 mm per pixel (1 in per pixel in
+# inches), so a value jumped by centimeters. Below 0.1 the step is a millimeter: 1 mm per pixel (measured in Blender
+# 5.2 with simulated drags; inches then drag 0.001 in per pixel, there is no step between that and 1 in).
+LEN_STEP = 0.05
+
 # the Setup row: (key, label, unit system, Length unit)
 CHOICES = (('MM', "mm", 'METRIC', 'MILLIMETERS'), ('CM', "cm", 'METRIC', 'CENTIMETERS'),
            ('M', "m", 'METRIC', 'METERS'), ('IN', "in", 'IMPERIAL', 'INCHES'))

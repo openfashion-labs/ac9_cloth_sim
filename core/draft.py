@@ -11,6 +11,7 @@ are made from them. Seams hold (edge id, t) with t a fraction of the edge's leng
 Twins (a piece and its mirrored copy, spec.twins) are edited together: the other one gets the mirror-image edit.
 """
 import copy
+import re
 from ._i18n import rpt, length as len_text
 
 import numpy as np
@@ -179,6 +180,15 @@ def mirror_fn(pa, pb):
         q[:, k] *= -1.0
         return q + cb
     return M
+
+
+def twin_vec(pa, pb, d):
+    """A move d (mm) of piece a as its twin b gets it: mirrored in x for a left / right pair, in y for a front / back
+    pair (mirror_plane 'y', as mirror_fn)."""
+    k = 1 if 'y' in (pa.get('mirror_plane'), pb.get('mirror_plane')) else 0
+    v = [float(d[0]), float(d[1])]
+    v[k] = -v[k]
+    return tuple(v)
 
 
 TWIN_LINE_MM = 3.0     # a twin's internal line: the mirrored line within this (median), as pattern_build.mirror_into
@@ -402,6 +412,8 @@ def _move_corners_one(pc, deltas):
         e['pts'] = _r(P)
         if e.get('ctrl'):
             e['ctrl'] = _r(f(e['ctrl']))
+    # a smooth corner with an edge next to it carried another way: its handles back on one line
+    _settle_corners(pc, [j for k in deltas for j in (k - 1, k, k + 1)])
 
 
 SEAM_SNAP = 2.0       # mm: a seam end this close to an edge's end goes with that end when the edge changes length
@@ -465,7 +477,7 @@ def move_corners(spec, name, deltas, twins=True, merge=False):
     out = [name]
     if cmap:
         ptw = piece(spec, tw)
-        dtw = {cmap[k]: (-float(d[0]), float(d[1])) for k, d in deltas.items()}
+        dtw = {cmap[k]: twin_vec(pc, ptw, d) for k, d in deltas.items()}
         keep = _keep_seam_ends(spec, ptw, dtw)
         _move_corners_one(ptw, dtw)
         keep()
@@ -520,26 +532,50 @@ def set_handle(spec, name, eid, which, pos, twins=True):
         raise ValueError(rpt("edge {0} is not curved", eid))
     smap = symmetric_edit(pc)
     Ms = self_reflect(pc) if smap else None          # before the edit: the center line while symmetric
+    n = len(pc['edges'])
+    c = k if which == 0 else (k + 1) % n
+    pos = np.asarray(pos, float)
+    on_line = bool(smap) and smap[c] == c and is_smooth(pc, c)
+    if on_line:
+        # a smooth corner on the center line: its two handles are each other's mirror image and on one line, so
+        # they run straight across the line (the move along it is dropped); the other handle is then this one's
+        # mirror image, set below (turning it here kept its own length and broke the symmetry by up to 1.5 mm)
+        q = np.asarray(pc['edges'][c]['pts'][0], float)
+        _, u = self_axis(pc)
+        v = pos - q
+        pos = q + v - (v @ u) * u
     e['ctrl'][which] = _r([pos])[0]
     refresh_curve(e)
+    touched = [(k, which)]
+    if is_smooth(pc, c) and not on_line:             # the handle across the corner turns to stay on its line
+        align_corner(pc, c, 'out' if which == 0 else 'in')
+        o = (c - 1) % n if which == 0 else c
+        if pc['edges'][o].get('ctrl'):
+            touched.append((o, 1 if which == 0 else 0))
     if smap:
-        # edited symmetrically: the mirror image of the handle across the center line (on the same edge when the
-        # edge runs across the line)
-        ks, rs = _twin_edge(pc, pc, smap, k)
-        if ks is not None and pc['edges'][ks].get('ctrl'):
-            w2 = (1 - which) if rs else which
-            if (ks, w2) != (k, which):
-                pc['edges'][ks]['ctrl'][w2] = _r(Ms([pos]))[0]
-                refresh_curve(pc['edges'][ks])
+        # edited symmetrically: the mirror image of each handle changed across the center line (on the same edge
+        # when the edge runs across the line)
+        for kk, ww in touched:
+            ks, rs = _twin_edge(pc, pc, smap, kk)
+            if ks is not None and pc['edges'][ks].get('ctrl'):
+                w2 = (1 - ww) if rs else ww
+                if (ks, w2) not in touched:
+                    pc['edges'][ks]['ctrl'][w2] = _r(Ms([pc['edges'][kk]['ctrl'][ww]]))[0]
+                    refresh_curve(pc['edges'][ks])
     out = [name]
     if cmap:
         pb = piece(spec, tw)
-        kb, rev = _twin_edge(pc, pb, cmap, k)
-        if kb is not None and pb['edges'][kb].get('ctrl'):
-            eb = pb['edges'][kb]
-            eb['ctrl'][(1 - which) if rev else which] = _r(M([pos]))[0]
-            refresh_curve(eb)
-            out.append(tw)
+        changed = touched + ([] if not smap else
+                             [(ks, (1 - ww) if rs else ww) for kk, ww in touched
+                              for ks, rs in [_twin_edge(pc, pc, smap, kk)] if ks is not None])
+        for kk, ww in dict.fromkeys(changed):
+            kb, rev = _twin_edge(pc, pb, cmap, kk)
+            if kb is not None and pb['edges'][kb].get('ctrl') and pc['edges'][kk].get('ctrl'):
+                eb = pb['edges'][kb]
+                eb['ctrl'][(1 - ww) if rev else ww] = _r(M([pc['edges'][kk]['ctrl'][ww]]))[0]
+                refresh_curve(eb)
+                if tw not in out:
+                    out.append(tw)
     return out
 
 
@@ -554,12 +590,17 @@ def make_curve(spec, name, eid, twins=True):
     ctrl, err = fit_bezier(e['pts'])
     e['ctrl'] = ctrl
     refresh_curve(e)
+    n = len(pc['edges'])
+    # a smooth end: the new handle turns to the edge beside it (that one keeps its direction)
+    settle = lambda p, i: _settle_corners(p, (i, (i + 1) % n), {i: 'in', (i + 1) % n: 'out'})
+    settle(pc, k)
     if smap:                                    # edited symmetrically: the mirror edge curved alike
         ks, rs = _twin_edge(pc, pc, smap, k)
         if ks is not None and ks != k:
             h = _r(Ms(ctrl))
             pc['edges'][ks]['ctrl'] = h[::-1] if rs else h
             refresh_curve(pc['edges'][ks])
+            settle(pc, ks)
     out = [name]
     if cmap:
         pb = piece(spec, tw)
@@ -569,6 +610,7 @@ def make_curve(spec, name, eid, twins=True):
             h = _r(M(ctrl))
             eb['ctrl'] = h[::-1] if rev else h
             refresh_curve(eb)
+            settle(pb, kb)
             out.append(tw)
     return out, err
 
@@ -593,7 +635,131 @@ def make_straight(spec, name, eid, twins=True):
         e = p['edges'][i]
         e.pop('ctrl', None)
         e['pts'] = [e['pts'][0], e['pts'][-1]]
+        n = len(p['edges'])
+        _settle_corners(p, (i, (i + 1) % n))      # a smooth end: the curve beside it turns along the new line
     return list(dict.fromkeys(p['name'] for p, _ in targets))
+
+
+# ---------------------------------------------------------------- smooth corners
+# A corner may be smooth ('smooth' on the edge it starts, user 2026-11-13): the curve handles either side of it stay
+# on one line (their lengths free), so the outline does not kink there when a handle, the corner or an edge next to it
+# is moved. An edge without handles keeps its own direction and the curve beside it turns to it. Sharp by default:
+# no corner is made smooth by itself.
+
+SMOOTH_MIN = 0.5      # mm: shortest handle a smooth corner leaves
+
+
+def _unit(v):
+    v = np.asarray(v, float)
+    L = float(np.linalg.norm(v))
+    return v / L if L > 1e-9 else None
+
+
+def is_smooth(pc, k):
+    return bool(pc['edges'][k % len(pc['edges'])].get('smooth'))
+
+
+def corner_of_handle(pc, eid, which):
+    """Index of the corner handle `which` of edge eid sits by."""
+    k = edge_index(pc, eid)
+    return k if which == 0 else (k + 1) % len(pc['edges'])
+
+
+def _tangents(pc, k):
+    """(edge before, edge after, direction into corner k along the outline, direction out of it); a direction is the
+    handle's (from the handle to the corner / the corner to the handle) on a curved edge, else the edge's own last /
+    first segment's; None for no length."""
+    n = len(pc['edges'])
+    ea, eb = pc['edges'][(k - 1) % n], pc['edges'][k]
+    C = np.asarray(eb['pts'][0], float)
+    ta = C - np.asarray(ea['ctrl'][1] if ea.get('ctrl') else ea['pts'][-2], float)
+    tb = np.asarray(eb['ctrl'][0] if eb.get('ctrl') else eb['pts'][1], float) - C
+    return ea, eb, ta, tb
+
+
+def align_corner(pc, k, keep=None):
+    """Put the handles at smooth corner k on one line. keep 'in' / 'out': the handle before / after the corner keeps
+    its direction and the other one turns to it; None: both turn to the mean of the two. A side without handles always
+    keeps its direction (the handle on the other side runs along it; with keep naming that handle, it keeps only its
+    length along the line). Returns whether a handle changed."""
+    n = len(pc['edges'])
+    k %= n
+    ea, eb, ta, tb = _tangents(pc, k)
+    ca, cb = bool(ea.get('ctrl')), bool(eb.get('ctrl'))
+    if not (ca or cb):
+        return False
+    C = np.asarray(eb['pts'][0], float)
+    ua, ub = _unit(ta), _unit(tb)
+    if not ca:
+        d = ua
+    elif not cb:
+        d = ub
+    elif keep == 'in':
+        d = ua if ua is not None else ub
+    elif keep == 'out':
+        d = ub if ub is not None else ua
+    else:
+        d = _unit(ua + ub) if ua is not None and ub is not None else (ua if ua is not None else ub)
+        if d is None:                              # the handles point exactly back on each other
+            d = ub
+    if d is None:
+        return False
+    la, lb = float(np.linalg.norm(ta)), float(np.linalg.norm(tb))
+    if ca and not cb and keep == 'in':             # dragged along the line: its length is how far along it
+        la = float(ta @ d)
+    if cb and not ca and keep == 'out':
+        lb = float(tb @ d)
+    if ca:
+        ea['ctrl'][1] = _r([C - d * max(la, SMOOTH_MIN)])[0]
+        refresh_curve(ea)
+    if cb:
+        eb['ctrl'][0] = _r([C + d * max(lb, SMOOTH_MIN)])[0]
+        refresh_curve(eb)
+    return True
+
+
+def _settle_corners(pc, ks, keep=None):
+    """align_corner on the smooth ones of corners ks (keep: {k: 'in' | 'out'} or None)."""
+    for k in dict.fromkeys(int(x) % len(pc['edges']) for x in ks):
+        if is_smooth(pc, k):
+            align_corner(pc, k, (keep or {}).get(k))
+
+
+def set_smooth(spec, name, k, on=True, twins=True):
+    """Make corner k of piece `name` smooth (its handles turned onto one line at once: the mean of their directions,
+    lengths kept) or sharp again. Its mirror corners (a piece edited symmetrically, the twin) alike. Returns the
+    pieces changed."""
+    pc = piece(spec, name)
+    tw, cmap, _ = twin_corner_map(spec, name) if twins else (None, None, None)
+    smap = symmetric_edit(pc)
+    targets = [(pc, k)] + ([(pc, smap[k])] if smap and smap[k] != k else [])
+    if cmap:
+        pb = piece(spec, tw)
+        targets += [(pb, cmap[x]) for _, x in list(targets)]
+    for p, x in targets:
+        e = p['edges'][x]
+        if on:
+            e['smooth'] = True
+            align_corner(p, x)
+        else:
+            e.pop('smooth', None)
+    return list(dict.fromkeys(p['name'] for p, _ in targets))
+
+
+def mirrored_edges(edges, M):
+    """The outline `edges` mapped by the mirror M and run backwards (a mirror turns it clockwise), ids kept: new edge
+    j is old edge n-1-j reversed, so the corner it starts is the old edge's end, and that corner's smoothness goes
+    with it."""
+    out, n = [], len(edges)
+    for i in range(n - 1, -1, -1):
+        e = edges[i]
+        ne = {'id': e['id'], 'pts': _r(M(e['pts'])[::-1])}
+        if e.get('ctrl'):
+            ne['ctrl'] = _r(M(e['ctrl'])[::-1])
+        if edges[(i + 1) % n].get('smooth'):
+            ne['smooth'] = True
+        out.append(ne)
+    return out
 
 
 # ---------------------------------------------------------------- splitting and joining
@@ -676,7 +842,7 @@ def _split_one(spec, pc, k, u, new_id):
     if e.get('ctrl'):
         tau = _tau_at_fraction(P[0], e['ctrl'][0], e['ctrl'][1], P[-1], u)
         (a0, a1, a2, a3), (b0, b1, b2, b3) = _split_bezier(P[0], e['ctrl'][0], e['ctrl'][1], P[-1], tau)
-        e1 = {'id': e['id'], 'pts': _r([a0, a3]), 'ctrl': _r([a1, a2])}
+        e1 = dict(e, pts=_r([a0, a3]), ctrl=_r([a1, a2]))     # its own keys kept (the corner it starts: smooth)
         e2 = {'id': new_id, 'pts': _r([b0, b3]), 'ctrl': _r([b1, b2])}
         refresh_curve(e1)
         refresh_curve(e2)
@@ -826,14 +992,31 @@ def join_at_corner(spec, name, k, twins=True):
 
 # ---------------------------------------------------------------- new pieces
 
-def unique_name(spec, base):
-    names = {p['name'] for p in spec['pieces']}
-    if base not in names:
+_NUM_SUFFIX = re.compile(r'\.\d{3}$')
+
+
+def _next_free(base, taken):
+    """base, or base.001, .002 ... (Blender's numbering): a copy of "Front.001" is "Front.002", not "Front.001.001"."""
+    if base not in taken:
         return base
-    k = 2
-    while f"{base}.{k:03d}" in names:
+    stem = _NUM_SUFFIX.sub('', base)
+    k = 1
+    while f"{stem}.{k:03d}" in taken:
         k += 1
-    return f"{base}.{k:03d}"
+    return f"{stem}.{k:03d}"
+
+
+def unique_name(spec, base):
+    return _next_free(base, {p['name'] for p in spec['pieces']})
+
+
+def unique_label(spec, pc):
+    """The name shown for a copy of piece pc (its label, else its name) made apart from every shown name, so the
+    copy and the original read differently on screen (user 2026-11-13: a Duplicate / Mirror Copy kept the label
+    and nobody could tell which was the original). None when pc has no label (the copy's own name is shown)."""
+    if not pc.get('label'):
+        return None
+    return _next_free(pc['label'], {p.get('label') or p['name'] for p in spec['pieces']})
 
 
 def add_polygon(spec, P, name="Piece", fabric=""):
@@ -1008,18 +1191,16 @@ def mirror_copy(spec, name, gap=50.0, x_axis=None, plane='x'):
         q = np.array(q, float).reshape(-1, 2)
         q[:, k] = 2 * x_axis - q[:, k]
         return q
-    edges = []
-    for e in reversed(pc['edges']):                  # mirroring turns the outline clockwise: run it backwards
-        ne = {'id': e['id'], 'pts': _r(M(e['pts'])[::-1])}
-        if e.get('ctrl'):
-            ne['ctrl'] = _r(M(e['ctrl'])[::-1])
-        edges.append(ne)
-    fam = pc.get('family') or pc.get('bom', {}).get('family') or pc['name']
+    edges = mirrored_edges(pc['edges'], M)            # mirroring turns the outline clockwise: run it backwards
+    fam =pc.get('family') or pc.get('bom', {}).get('family') or pc['name']
     pc['family'] = fam
     cp = {k: v for k, v in pc.items() if k not in ('edges', 'internals', 'name', 'bom', 'mirrored', 'closes_onto')}
     cp.update(name=unique_name(spec, name + "_R" if not pc.get('mirrored') else name + "_L"), edges=edges,
               internals=[xform_internal(copy.deepcopy(it), M) for it in pc.get('internals', [])],
               family=fam, mirrored=not pc.get('mirrored', False))
+    lab = unique_label(spec, pc)
+    if lab:
+        cp['label'] = lab
     if pc.get('notches'):                            # the edges run backwards: a fraction t is 1 - t
         cp['notches'] = [dict(n, t=round(1.0 - float(n['t']), 6)) for n in pc['notches']]
     if pc.get('mirror_axis'):                        # a turned center line turns the other way on the copy
@@ -1259,7 +1440,7 @@ def duplicate_group(spec, names, gap=50.0):
     laid together right of every piece. A copy keeps the outline, internal lines, notches, fabric, look and role; it
     is not placed. The seams between two of the copied pieces go between the copies (a dart, a center seam; Fable b-2,
     user OK 2026-10-26), a seam to a piece outside is not copied; so do folds on the copied lines. Names are
-    unique_name's ("Front.002"). Returns ({original: copy}, seam ids made)."""
+    unique_name's ("Front.001"), and a labeled piece's copy shows its label numbered the same way. Returns ({original: copy}, seam ids made)."""
     order = [p['name'] for p in spec['pieces'] if p['name'] in set(names)]
     if not order:
         return {}, []
@@ -1271,6 +1452,9 @@ def duplicate_group(spec, names, gap=50.0):
         pc = piece(spec, n)
         cp = copy.deepcopy({k: v for k, v in pc.items() if k not in DUP_SKIP})
         cp['name'] = unique_name(spec, n)
+        lab = unique_label(spec, pc)
+        if lab:
+            cp['label'] = lab
 
         def f(P):
             return _r(np.asarray(P, float).reshape(-1, 2) + [dx, 0.0])
@@ -1420,13 +1604,17 @@ def _symmetrize_upright(spec, pc, xc, keep):
     edges = [copy.deepcopy(pc['edges'][i]) for i in kept]
     used = {e['id'] for e in edges}
     j = 1
-    for e in reversed(edges[:]):
+    n0 = len(pc['edges'])
+    for i in reversed(kept):
+        e = pc['edges'][i]
         while f"E{j}" in used:
             j += 1
         ne = {'id': f"E{j}", 'pts': _r(M(e['pts'])[::-1])}
         used.add(ne['id'])
         if e.get('ctrl'):
             ne['ctrl'] = _r(M(e['ctrl'])[::-1])
+        if pc['edges'][(i + 1) % n0].get('smooth'):  # it starts at the mirror image of the edge's end
+            ne['smooth'] = True
         edges.append(ne)
     pc['edges'] = edges
     # seam ends, measure points: the nearest point of the new outline
@@ -1663,7 +1851,8 @@ def move_internal(spec, name, lid, which, d, twins=True):
     out = [name]
     if tw is not None:
         w = which if not rev or which == 'all' else ('end' if which == 'start' else 'start')
-        _move_internal_one(internal(piece(spec, tw), tlid), w, (-float(d[0]), float(d[1])))
+        ptw = piece(spec, tw)
+        _move_internal_one(internal(ptw, tlid), w, twin_vec(pc, ptw, d))
         out.append(tw)
     return out
 
@@ -1979,12 +2168,7 @@ def match_twin(spec, name):
     ol0 = S.Outline(pb)
     refs = [(put, ol0.at(ol0.s_of(*get()))) for get, put in point_refs(spec, tw)]   # where each point was
     M = mirror_fn(pa, pb)
-    pb['edges'] = []
-    for e in reversed(pa['edges']):
-        ne = {'id': e['id'], 'pts': _r(M(e['pts'])[::-1])}
-        if e.get('ctrl'):
-            ne['ctrl'] = _r(M(e['ctrl'])[::-1])
-        pb['edges'].append(ne)
+    pb['edges'] = mirrored_edges(pa['edges'], M)
     ol = S.Outline(pb)
     B = np.vstack([ol.B, ol.B[:1]])
     A, Dd = B[:-1], np.diff(B, axis=0)

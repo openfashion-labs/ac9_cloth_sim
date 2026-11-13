@@ -36,7 +36,7 @@ Each piece has three shapes.
 |---|---|---|
 | **Flat pattern** | On the floor (the middle view of the Work Screen) | Right after loading or drawing |
 | **Placed shape** | On the cylinders (guides) around the body | After placing with **Place**. The simulation starts from this shape |
-| **Dressed garment** | On the body | After dressing it with **Phase Sim** or similar |
+| **Dressed garment** | On the body | After dressing it with **Live Sim** or similar |
 
 There are three buttons for going back to an earlier shape, and they differ in how far back they go (they are lined up in the **Placement** panel, nearest first).
 
@@ -51,7 +51,7 @@ Linked mirrored pieces go back together. Even with Back to Flat, the dressed sha
 
 <!-- figure: Figure 3: a piece's three forms and the three "go back" buttons -->
 
-When you fix a pattern, the fixed shape is **carried over to the placed shape and the dressed garment right away** (no physics is calculated, so the cloth hasn't settled yet). Press **Phase Sim** next and it calculates from the current shape and settles. If you turn off **3D Follows Edits** under **AC9 Run** in the Tool tab, the carrying over is postponed and you can keep fixing only the patterns (**Update 3D** carries everything over at once).
+When you fix a pattern, by default the placed shape and the dressed garment do not change right away (so that you don't wait at each fix). The next time you press **Live Sim** or another run, the fixes are **carried over to the placed shape and the dressed garment together** (no physics is calculated for that) and the run settles them. To see the 3D shape after every fix, turn on **3D Follows Edits** under **AC9 Run** in the Tool tab (each fix then takes a moment). **Update 3D** carries everything over at once.
 
 ## Garments and pieces
 
@@ -73,24 +73,20 @@ When you fix a pattern, the fixed shape is **carried over to the placed shape an
 
 <!-- figure: Figure 4: a piece's four states -->
 
-## The three run buttons
+## The run button
 
 | Button | What it does | History frames | How to stop |
 |---|---|---|---|
-| **Phase Sim** | Sews step by step and stops once all the set steps are done. From the second run on, it continues from the frame on screen | Kept | Stops when the steps finish (**Esc** also stops it) |
-| **Live Sim** | Keeps running until you stop it. You can pinch the cloth with **Ctrl+drag** | Not kept (last shape only) | **Esc** |
-| **Local Sim** | Moves only the selected pieces. The other pieces are treated like **Off All**. Gravity is off by default | Not kept | **Esc** |
+| **Live Sim** | Sews from the placed shape (from the current shape once dressed) and keeps running until you stop it. You can pinch the cloth with **Ctrl+drag** | Not kept (last shape only) | Press the button again or **Esc** |
 
-**Phase Sim** alone is enough for everyday use. Use **Live Sim** when you want to fix things by hand, and **Local Sim** when you want to see the shape of a small part.
+**Live Sim** is both how you dress the garment and how you settle it after fixing. It doesn't stop by itself, so stop it once the garment has settled. **Gravity** can be switched while it runs. To close the seams first, turn gravity off and run, then turn gravity on once they are closed.
 
-### Sewing in steps
+**Phase Sim**, which sews step by step and stops by itself, and **Local Sim**, which moves only the selected pieces, appear only when **Experimental Features** is turned on in the add-on preferences (see "Dress (run)").
 
-**Phase Sim** doesn't sew everything at once. It goes step by step: in the first step it turns gravity off and closes the seams, and in the next it turns gravity on and lets the cloth hang. The current step and frame appear below the button.
+### Continuing from the current shape
 
-### The frame shown on screen
-
-- The second and later **Phase Sim** runs, "Send to AC9 Cloth Retopo", and measuring the garment all use **the frame shown on screen**. Before you press, check that it is the last frame (**Shift+Right Arrow** jumps to the last frame).
-- To fix the shape of a middle frame by hand, press **Fix by Hand** on that frame. That frame becomes the garment's shape itself, and you can fix it in Edit Mode or Sculpt Mode. After fixing, press **Phase Sim** or **Live Sim** and it continues from the fixed shape.
+- The second and later **Live Sim** runs, "Send to AC9 Cloth Retopo", and measuring the garment all use the garment's current shape. While the history frames are being played back, they use **the frame shown on screen**. Before you press, check that it is the last frame (**Shift+Right Arrow** jumps to the last frame).
+- To fix the shape of a middle frame by hand, press **Fix by Hand** on that frame. That frame becomes the garment's shape itself, and you can fix it in Edit Mode or Sculpt Mode. After fixing, press **Live Sim** and it continues from the fixed shape.
 
 <!-- figure: Figure 6: the flow of the calculation -->
 
@@ -110,4 +106,4 @@ When you fix a pattern, the fixed shape is **carried over to the placed shape an
 
 - **Even with the same settings, the result changes a little each time you calculate.** Don't judge good or bad from a single result.
 - Red paint marks "candidates for a problem" (places inside the body, places where cloth crosses itself, places that haven't settled, and so on). It doesn't automatically mean the result is bad.
-- The setting that watches for problems (**Watch for Anomalies**) is off by default. Turn it on before **Phase Sim**.
+- The setting that watches for problems (**Watch for Anomalies**) is off by default. Turn it on before **Live Sim**.

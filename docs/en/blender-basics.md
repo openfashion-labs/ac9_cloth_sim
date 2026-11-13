@@ -13,7 +13,7 @@ Blender's menus and buttons appear in Japanese if you switch Blender to Japanese
 
 ## Reading the screen
 
-<!-- screenshot: the whole work screen, with numbers marking the 4 places below -->
+![the sidebar on the AC9 Cloth Sim tab](img/d_layout_sidebar.png)
 
 AC9 Cloth Sim is operated from these 4 places.
 
@@ -24,7 +24,7 @@ AC9 Cloth Sim is operated from these 4 places.
 | **Toolbar (tool column)** | The left edge of the 3D Viewport. Show or hide it with the **T** key | Where you switch "tools" for fixing the pattern, adding seams, placing, and so on |
 | **Tool tab of the Properties editor** | Lower right of the screen. Among the vertical icons, the tab shaped like a screwdriver and wrench | Shows the **run buttons** (AC9 Run) and the settings of the selected item |
 
-- **The run buttons (such as "Phase Sim") are in the Tool tab, not in the sidebar.** You won't find them if the Properties editor is on another tab (Render, Object, and so on).
+- **The run buttons (such as "Live Sim") are in the Tool tab, not in the sidebar.** You won't find them if the Properties editor is on another tab (Render, Object, and so on).
 - The tabs lined up at the top of the screen (Layout, Modeling, and so on) are "workspaces", which switch how the screen is arranged. Pressing **Work Screen** in the sidebar creates a workspace for AC9 Cloth Sim.
 
 ### Work Screen
@@ -34,6 +34,8 @@ AC9 Cloth Sim is operated from these 4 places.
 | Left | 3D Viewport (see the body and garment in 3D) |
 | Middle | Pattern view (the flat pattern seen from directly above. **It cannot be rotated**) |
 | Right | Tool tab of the Properties editor |
+
+![the whole Work Screen](img/d_screen_plain.png)
 
 The work screen has no Outliner (the list of things in the scene) and no Timeline (the strip of frames). To move through frames, see "Frames and the Timeline" below.
 
@@ -112,7 +114,7 @@ The progress of the simulation is kept as an animation, frame by frame.
 
 - **Space** plays and stops.
 - **←** / **→** move one frame at a time, and **Shift+←** / **Shift+→** jump to the first and last frame.
-- **Some operations depend on which frame is shown.** The second and later **Phase Sim** continues from the frame shown on screen. When you send to Cloth Retopo or measure the garment, the frame shown on screen is used too. Before pressing, check that you are on the last frame.
+- **Some operations depend on which frame is shown.** The second and later **Live Sim** continues from the frame shown on screen. When you send to Cloth Retopo or measure the garment, the frame shown on screen is used too. Before pressing, check that you are on the last frame.
 - To show the Timeline (the strip of frames), choose "Timeline" from the editor type menu at the upper left of the area.
 
 ## Saving files

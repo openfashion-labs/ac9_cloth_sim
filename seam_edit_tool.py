@@ -360,6 +360,13 @@ class AC9_OT_SimSeamClick(bpy.types.Operator):
 def commit_seams(context, sp, old, changed):
     """Write the seams; on a dressed garment carry the edit as a pattern edit (draft_tool.commit). Returns its line."""
     from . import draft_tool as T
+    # pieces edited symmetrically: the mirror image of each moved seam moves too (user 2026-11-13)
+    from .core import seam_twin as ST
+    mirror = ST.partners(old, list(changed))
+    if mirror:
+        sp = S.loads(S.dumps(sp))
+        ST.sync_partners(sp, mirror)
+        changed = list(changed) + list(mirror.values())
     names = sorted({x[k]['piece'] for x in sp['seams'] if x['id'] in changed for k in ('a', 'b')}
                    | {x[k]['piece'] for x in old['seams'] if x['id'] in changed for k in ('a', 'b')})
     sid = None
@@ -808,6 +815,14 @@ class AC9_OT_SimSeamListPick(bpy.types.Operator):
         return self.execute(context)
 
     def execute(self, context):
+        props = context.scene.ac9_cloth_sim
+        ids = [it.seam_id for it in props.seams]
+        if (not self.extend and not store.seam_more and 0 <= props.seam_index < len(ids)
+                and ids[props.seam_index] == self.seam):
+            # a click on the row already picked takes it out: the list had no way to pick nothing, and the picked
+            # seam's lengths stayed drawn in every tool (user 2026-11-13)
+            unselect_seam(context)
+            return {'FINISHED'}
         return {'FINISHED'} if select_seam(context, self.seam, extend=self.extend) else {'CANCELLED'}
 
 

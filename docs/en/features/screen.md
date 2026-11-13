@@ -11,6 +11,8 @@ The controls are split across three places.
 
 These panels line up from the top.
 
+![the sidebar on the AC9 Cloth Sim tab](../img/d_layout_sidebar.png)
+
 - **Setup**: loading and exporting patterns, switching the work screen, and switching garments.
 - **Pattern**: the tools for fixing and drawing patterns and attaching seams, and the buttons for the button tools (**Fasteners**).
 - **Lists**: where you view and pick from lists. There are six tabs (**Seams**, **Pieces**, **Fabrics**, **Collision**, **Tapes**, **Fasteners**). Lists are only for viewing and picking; the settings for what you pick appear in the Tool tab. In every list, click a row name to pick one, and Shift+click to add or remove.
@@ -23,9 +25,11 @@ These panels line up from the top.
 
 The settings for whatever you picked appear in the Tool tab of the Properties editor at the lower right. Which panels appear changes depending on what you touched last.
 
-- **AC9 Run**: always at the very top. The run buttons (**Phase Sim**, **Live Sim**, **Local Sim**, **Fix by Hand**), whether pattern fixes are carried over to 3D (**3D Follows Edits** and **Update 3D**), and the progress.
+![the whole Tool tab (AC9 Run and AC9 Garment)](../img/d_tool_tab.png)
+
+- **AC9 Run**: always at the very top. The run buttons (**Live Sim** and **Gravity**, **Floor (Z = 0)**, **Fix by Hand**), whether pattern fixes are carried over to 3D (**3D Follows Edits** and **Update 3D**), and the progress.
 - **AC9 Garment**: when nothing is selected. Garment settings, fabrics, and results.
-- **AC9 Piece**: when you've selected a piece. Name, state, role, fabric, interlining, look, thickness, layer, point spacing, and so on.
+- **AC9 Piece**: when you've selected a piece. Name, state, role, fabric, interlining, look, thickness, point spacing, and so on.
 - **AC9 Seam**: when you've picked a seam from the list or the pattern. Below it are **Lengths & Notches** and **Blend**.
 - **AC9 Internal Line**: when you've clicked an internal line on the pattern.
 - **AC9 Edges**: when you've clicked an outline edge on the pattern (the lengths and the total).
@@ -38,6 +42,8 @@ Blender's standard Options or Workspace panels may appear first. Collapse them a
 ## The tool column on the left (the toolbar)
 
 AC9's tools line up at the end of the Object Mode tool column. Long-press to show the other tools in the same family (▾).
+
+![the tool column](../img/d_toolbar.png)
 
 `Whole Pieces ｜ Edit Pieces ｜ Draw Piece ▾ Rectangle Piece ▾ Ellipse Piece ｜ Internal Line ▾ Internal Rectangle ▾ Internal Ellipse ｜ Edit Seams ▾ Add Seam ▾ Add Seam (M:N) ── Edit Measure ▾ Tape Around ▾ Tape Along ▾ Tape Straight ｜ Place`
 
@@ -52,3 +58,5 @@ AC9's tools line up at the end of the Object Mode tool column. Long-press to sho
 ## The Work Screen
 
 Press **Work Screen** in the **Setup** panel and a workspace for working (named AC9 Cloth Sim) appears. It has 3D on the left, the pattern in the middle (a top-down orthographic view with the rotation locked), and the Tool tab of Properties on the right (there is no Outliner or Timeline). From the second time on, it just switches to the same screen and doesn't add another. A work screen made by an earlier version of the add-on is replaced with a new one when you press it. Pattern fixing is done in this middle 3D Viewport.
+
+![the whole Work Screen](../img/d_screen_plain.png)

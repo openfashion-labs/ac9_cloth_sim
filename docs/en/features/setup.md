@@ -23,6 +23,8 @@ What you do in this panel: bring a pattern into Blender, split garments apart an
 - Hole shapes in the BOM (such as the diamond of a dart) are cut out of the piece (there is no cloth there).
 - False seams that sew a piece to itself using a shared line are not imported. Seams that close the two ends of a band into a ring are kept.
 
+![the Setup panel (Work Screen and Import BOM numbered)](../img/d_setup_panel.png)
+
 ## Update BOM Seams
 
 Use this when you want to re-read the seams while keeping the dressed shape. Press **Update BOM Seams** under the **Garment** field. It updates the seams and automatic classification from the BOM that was loaded.
@@ -30,7 +32,7 @@ Use this when you want to re-read the seams while keeping the dressed shape. Pre
 - Kept: the dressed shape, placement, piece On/Off and Freeze, fabrics, roles, folds, and manually made seams, garment classification, and names.
 - It updates only when the shapes and references of all pieces match. A parallel shift of the BOM's 2D layout is tolerated, and the current pattern arrangement is kept.
 - If the IDs of pieces, shapes, edges, or internal lines changed, or if a seam that you set by hand or that has references would disappear, nothing is changed and the reason is shown.
-- To settle the updated seams, run Phase Sim next.
+- To settle the updated seams, run Live Sim next.
 - With a fresh import, other versions of settings that shared the old 3D are also retired under the name "previous". Even if you choose an old version, the old placement and results do not come back.
 
 ## Import DXF and Export DXF
@@ -61,8 +63,16 @@ Use this when you want to re-read the seams while keeping the dressed shape. Pre
   - Make the garment mesh active (an object separate from the body).
 - Steps: Select the garment mesh and press **From Mesh**.
 - Expected result: Flat patterns are laid out on the floor and a dressed garment `AC9_Garment_<name>` is created, starting dressed on the body in the shape you modeled. The original mesh is hidden. The screen shows "○ pieces, ○ seams" and the number of points that are inside the body. The places that are inside are painted red.
-- Then press **Phase Sim** and the cloth drapes and settles.
+- Then press **Live Sim** and the cloth drapes and settles.
 - Limitations: This is the "as built" state; the cloth has not settled. If the UVs have not been unwrapped, it stops with an error saying there are no UVs.
+
+## Add Avatar
+
+- Purpose: use the add-on's bundled avatar (CC0) when you don't have a body to dress.
+- Steps: press **Add Avatar**. The collection "AC9 Avatar" (body, rig, eyes) is added to the current scene. It does not reopen the file, so everything else in the scene stays as it is.
+- Expected result: the body is selected, and if **Body** in the **Placement** panel is empty, this body is set there. You can go on to **Detect Guides**.
+- If you press it twice, a second avatar is added (with .001 after the name).
+- The body follows its rig (AC9 Avatar Rig). To open the A pose wider or make a T pose, move the rig in Pose Mode before dressing (an avatar that moves while the garment is simulated, that is animation, is not supported yet).
 
 ## New Garment
 

@@ -87,7 +87,7 @@ def write_job(context, spec, job):
 
 
 class AC9_OT_SimFromMesh(bpy.types.Operator):
-    """Make the pattern from the active mesh: each UV island is a piece, edges shared by two islands are seams. The garment starts as modeled (Phase Sim settles it). Model it single-layered and open, as shown (modifiers applied); pick the body first"""
+    """Make the pattern from the active mesh: each UV island is a piece, edges shared by two islands are seams. The garment starts as modeled (Live Sim settles it). Model it single-layered and open, as shown (modifiers applied); pick the body first"""
     bl_idname = "ac9_cloth_sim.from_mesh"
     bl_label = "From Mesh"
     bl_options = {'REGISTER', 'UNDO'}
@@ -134,7 +134,7 @@ class AC9_OT_SimFromMesh(bpy.types.Operator):
             DR.log(context, d, 'from_mesh', line)
         msg = (tx("From Mesh: {0} pieces, {1} seams in {2} s; ", len(spec['pieces']), len(spec['seams']), secs)
                + (tx("{0} points start inside the body (red)", len(inside)) if inside else tx("none inside the body"))
-               + tx(". Phase Sim to settle it"))
+               + tx(". Live Sim to settle it"))
         DR.log(context, d, 'from_mesh', msg, inside=len(inside), seconds=secs)
         props.dress_status = msg
         from . import units

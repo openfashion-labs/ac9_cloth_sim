@@ -253,11 +253,11 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     count: bpy.props.IntProperty(name="Count", default=6, min=1, max=40)
-    top: bpy.props.FloatProperty(name="From Top", default=0.03, min=0.0, max=1.0, precision=1, subtype='DISTANCE', unit='LENGTH', 
+    top: bpy.props.FloatProperty(name="From Top", default=0.03, min=0.0, max=1.0, precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP, 
                                  description="The first button this far down the line")
-    bottom: bpy.props.FloatProperty(name="From Bottom", default=0.05, min=0.0, max=1.0, precision=1, subtype='DISTANCE', unit='LENGTH', 
+    bottom: bpy.props.FloatProperty(name="From Bottom", default=0.05, min=0.0, max=1.0, precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP, 
                                     description="The last button this far above the line's end (Spacing 0)")
-    spacing: bpy.props.FloatProperty(name="Spacing", default=0.0, min=0.0, max=0.5, precision=1, subtype='DISTANCE', unit='LENGTH', 
+    spacing: bpy.props.FloatProperty(name="Spacing", default=0.0, min=0.0, max=0.5, precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP, 
                                      description="Between buttons; 0: spread from the top to the bottom")
     along: bpy.props.StringProperty(name="Along Line", default="",
                                     description="An internal line of the piece to line up on (the one picked in Edit "
@@ -265,7 +265,7 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
     edge: bpy.props.StringProperty(name="Edge", default="",
                                    description="An edge id of the piece to line up along instead of the closure line",
                                    options={'SKIP_SAVE'})     # not remembered: another piece has other edges
-    inset: bpy.props.FloatProperty(name="Inset", default=0.015, min=0.0, max=0.2, precision=1, subtype='DISTANCE', unit='LENGTH', 
+    inset: bpy.props.FloatProperty(name="Inset", default=0.015, min=0.0, max=0.2, precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP, 
                                    description="Along an edge: this far inside it")
     replace: bpy.props.BoolProperty(name="Replace", default=True,
                                     description="Remove the piece's buttons first")
@@ -393,7 +393,7 @@ class AC9_OT_SimButtonFromStitches(bpy.types.Operator):
 
 
 class AC9_OT_SimButtonFasten(bpy.types.Operator):
-    """Fasten or unfasten the button (or the picked ones): Phase Sim then closes or opens the garment there"""
+    """Fasten or unfasten the button (or the picked ones): Live Sim then closes or opens the garment there"""
     bl_idname = "ac9_cloth_sim.button_fasten"
     bl_label = "Fasten"
     bl_options = {'REGISTER', 'UNDO'}
@@ -416,8 +416,8 @@ class AC9_OT_SimButtonFasten(bpy.types.Operator):
                 n += b.get('fastened', True) != self.state
                 b['fastened'] = self.state
         commit(context, sp)
-        self.report({'INFO'}, rpt("{0} button(s) fastened: Phase Sim to close the garment there" if self.state else
-                              "{0} button(s) unfastened: Phase Sim to open the garment there", n))
+        self.report({'INFO'}, rpt("{0} button(s) fastened: Live Sim to close the garment there" if self.state else
+                              "{0} button(s) unfastened: Live Sim to open the garment there", n))
         return {'FINISHED'}
 
 
@@ -715,7 +715,7 @@ def draw_list(layout, context, spec):
     if bts:
         n_open = sum(1 for b in bts if b.get('hole') and not b.get('fastened', True))
         if n_open:
-            layout.label(text=tx("{0} unfastened: Phase Sim opens the garment there", n_open), icon='UNLOCKED')
+            layout.label(text=tx("{0} unfastened: Live Sim opens the garment there", n_open), icon='UNLOCKED')
     for z in zps:
         layout.label(text=tx("{0}: {1} / {2}, closed {3:.0f}%", z.get('id', ''), z['a']['piece'], z['b']['piece'],
                              100.0 * float(z.get('closed', 1.0))), icon='TRIA_UP_BAR')

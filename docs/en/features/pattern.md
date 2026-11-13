@@ -11,6 +11,8 @@ What you do in this panel: fix the shape of a pattern, draw a new one, and make 
 
 From the top: the snapping settings; **Whole Pieces** and **Edit Pieces** (the two tools for fixing patterns); **Piece** (**Draw**, **Rectangle**, **Ellipse**); **Internal** (**Line**, **Rectangle**, **Ellipse**); **Seams** (**Edit Seams**, **Add Seam**, **Add M:N**); **Fasteners** (buttons; see "Buttons (Fasteners)" below); a divider line; **Selected Pieces** (**Mirror Copy**, **Duplicate**, **Delete**); and at the very bottom a collapsed **Keys** (all the keys for **Whole Pieces** and **Edit Pieces**).
 
+![the Pattern panel](../img/d_pattern_panel.png)
+
 - The length unit is chosen in **Units** on the Setup panel.
 - The three buttons at the top are snapping while dragging (magnet), snapping to the grid, and showing the grid.
 - Name a piece in the top field of **AC9 Piece** on the Tool tab (or with F2).
@@ -79,10 +81,10 @@ Symmetric pieces are connected as a "left/right pair", and fixing one side also 
 
 ## Reflecting an edited pattern on the dressed garment
 
-When you edit a pattern, the edited shape is carried onto the current garment right away. But it is only carried over; the cloth has not settled. Pressing **Phase Sim** continues the calculation from the current shape of the garment, and the whole garment settles into the edited pattern (see the "Run" section). If the shape cannot be carried over (the cloth flips over, the area becomes 0), it stops and shows the reason.
+When you edit a pattern, the edited shape is carried onto the current garment right away. But it is only carried over; the cloth has not settled. Pressing **Live Sim** continues the calculation from the current shape of the garment, and the whole garment settles into the edited pattern (see the "Run" section). If the shape cannot be carried over (the cloth flips over, the area becomes 0), it stops and shows the reason.
 
-- **3D Follows Edits** (in **AC9 Run** on the Tool tab, below the run buttons): while pressed (the default), each edit is carried to 3D as described above. If you press it to turn it off, pattern edits go only into the pattern, and the dressed garment and the placed shape wait as they are (you can keep editing the pattern without waiting for 3D).
-- If there are edits waiting, **Update 3D** next to it turns red and "3D not updated" appears in the tool's options row. Press **Update 3D**, press **3D Follows Edits** again, or run the next **Phase Sim**, **Live Sim**, or **Local Sim**, and they are all carried to 3D together (no physics calculation).
+- **3D Follows Edits** (in **AC9 Run** on the Tool tab, below the run buttons): off by default. While it is off, pattern edits go only into the pattern, and the dressed garment and the placed shape wait as they are until the next run (you can keep editing the pattern without waiting for 3D). Press it to carry each edit to 3D as described above (each edit then takes a moment).
+- If there are edits waiting, **Update 3D** next to it turns red and "3D not updated" appears in the tool's options row. Press **Update 3D**, press **3D Follows Edits** again, or run the next **Live Sim**, and they are all carried to 3D together (no physics calculation).
 
 ## Notches, darts, and slash and spread
 
@@ -92,7 +94,7 @@ When you edit a pattern, the edited shape is carried onto the current garment ri
 
 ## Buttons (Fasteners)
 
-A button is not a seam. It pulls the button and the buttonhole together only during the simulation to fasten them. Remove it and run **Phase Sim**, and it opens.
+A button is not a seam. It pulls the button and the buttonhole together only during the simulation to fasten them. Remove it and run **Live Sim**, and it opens.
 
 - Partner: select a piece and click the partner piece with the eyedropper of **Closes Onto** in **AC9 Piece**, and the buttonhole attaches to the partner. A button on a piece with no partner is decorative.
 - **Fasteners** in the **Pattern** panel: choose a style, then **Add Button** (one per click, Esc to finish), **Line Up** (lines them up along an internal line; set the count and spacing in F9), **From BOM** (places them at the button-attaching seams in the BOM), **Use Object** (makes the selected mesh a style).

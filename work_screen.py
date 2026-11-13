@@ -105,6 +105,39 @@ def pattern_view(win, area):
         vl.objects.active = act
 
 
+LOOK_MARK = 'ac9_view_look'      # set on the screen once its views were given view_look
+
+
+def view_look(sh, pattern=False):
+    """The lighting of one of the workspace's 3D views (a tester new to Blender found the all-gray screen hard to
+    start with). Only this view's own shading: the background stays the theme's, as in every other workspace (a light
+    one washed out the add-on's white selection and seam lines); no Preferences, no scene, World or view transform
+    setting. Set once per screen (LOOK_MARK): a view the user changed afterwards is left as it is. A failure here never
+    stops the Work Screen's layout.
+
+    Solid: the built-in studio light 'paint' lights the front evenly; 'Default' left the body's front and legs dark
+    gray (a mid-gray body's thigh 125 / shin 73 of 255 against 196 / 174 with 'paint', GUI 2026-11-13; the view
+    transform was not involved: Standard gave the same pixels in Solid). No cavity (it made the cloth and the body
+    look dirty, user 2026-11-13). No Solid shadows: their direction is the scene's (scene.display), which stays the
+    user's.
+    Material Preview: the built-in 'city' HDRI, a neutral light (the default 'forest' read brownish).
+    studio_light names what the view's current mode uses, so each is set in its mode, the view's own mode put back."""
+    old = sh.type
+    try:
+        for mode, light in (('SOLID', 'paint.sl'), ('MATERIAL', 'city.exr')):
+            try:
+                sh.type = mode
+                if mode != 'SOLID' or sh.light == 'STUDIO':      # a Solid view on MatCap / Flat is left so
+                    sh.studio_light = light
+            except (TypeError, ValueError):     # a mode or built-in light this Blender lacks: that one left as it was
+                pass
+    finally:
+        try:
+            sh.type = old
+        except (TypeError, ValueError):
+            pass
+
+
 def _configure(view=None, win=None):
     """The two 3D views (the left one: the view carried over, no sidebar; the right one: looking at the pattern, its
     rotation locked, the sidebar on the add-on's tab beside it, user 2026-10-21) and the Properties editor's Tool tab,
@@ -140,6 +173,10 @@ def _configure_window(win, view):
     for a in scr.areas:
         if a.type == 'PROPERTIES':
             a.spaces.active.context = 'TOOL'
+    if not scr.get(LOOK_MARK):
+        for i, a in enumerate(vs):
+            view_look(a.spaces.active.shading, pattern=len(vs) >= 2 and i == len(vs) - 1)
+        scr[LOOK_MARK] = True
     if len(vs) >= 2:
         pattern_view(win, vs[-1])
         from . import view_setup
@@ -190,7 +227,49 @@ class AC9_OT_SimWorkScreen(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (AC9_OT_SimWorkScreen,)
+AVATAR_FILE = os.path.join(os.path.dirname(__file__), "avatar.blend")
+AVATAR_COLLECTION = "AC9 Avatar"        # the collection in avatar.blend: the body mesh, its rig and the eyes
+AVATAR_BODY = "AC9 Avatar"              # the body mesh in it
+
+
+class AC9_OT_SimAddAvatar(bpy.types.Operator):
+    """Add the add-on's avatar (CC0) to this scene, to dress. It is set as the Body when none is set"""
+    bl_idname = "ac9_cloth_sim.add_avatar"
+    bl_label = "Add Avatar"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        if not os.path.exists(AVATAR_FILE):
+            self.report({'ERROR'}, rpt("The avatar file is missing: {0}", AVATAR_FILE))
+            return {'CANCELLED'}
+        if context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        # appended, not linked and not opened: the scene stays the user's; the Library entry the load leaves goes
+        with bpy.data.libraries.load(AVATAR_FILE, link=False) as (_src, dst):
+            dst.collections = [AVATAR_COLLECTION]
+        same = os.path.normcase(os.path.abspath(AVATAR_FILE))
+        for lib in [lib for lib in bpy.data.libraries
+                    if os.path.normcase(os.path.abspath(bpy.path.abspath(lib.filepath))) == same]:
+            bpy.data.libraries.remove(lib)
+        coll = dst.collections[0]
+        if coll is None:
+            self.report({'ERROR'}, rpt("The avatar file has no collection {0}", AVATAR_COLLECTION))
+            return {'CANCELLED'}
+        context.scene.collection.children.link(coll)
+        body = next((o for o in coll.objects if o.type == 'MESH' and o.name.startswith(AVATAR_BODY)
+                     and not o.name.startswith(AVATAR_BODY + " ")), None)
+        for o in context.view_layer.objects:
+            o.select_set(False)
+        if body is not None:
+            body.select_set(True)
+            context.view_layer.objects.active = body
+            props = getattr(context.scene, 'ac9_cloth_sim', None)
+            if props is not None and props.body is None:
+                props.body = body
+        return {'FINISHED'}
+
+
+CLASSES = (AC9_OT_SimWorkScreen, AC9_OT_SimAddAvatar)
 
 
 def register():

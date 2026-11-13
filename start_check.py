@@ -9,9 +9,11 @@ import numpy as np
 from .core import start_check as CS
 
 
-def read_screen(context, spec, g, mode):
+def read_screen(context, spec, g, mode, sources=None):
     """{piece: (source, shape, note)} as core.start_check.compare reads it. mode: the run's ('START' starts every
-    piece from its placement, so the garment shown is not its start)."""
+    piece from its placement, so the garment shown is not its start). sources: a dict filled with what
+    core.start_plan needs of each placed piece ({'moved', 'vertex_count', 'made_vertex_count', 'vertex_identity'};
+    a mirrored half has its leading object's)."""
     from . import display_state as DS
     from . import placed_view as PLV
     from . import dress as DR
@@ -25,6 +27,10 @@ def read_screen(context, spec, g, mode):
         if src == 'placed':
             ob = obs.get(n)
             hs = PLV.hand_shape(ob) if ob is not None else None
+            if sources is not None and ob is not None and hs is not None:
+                sources[n] = {'moved': PLV.is_moved(ob), 'vertex_count': len(hs[0]),
+                              'made_vertex_count': ob.get(PLV.NV_PROP),
+                              'vertex_identity': ob.get(PLV.PROP) == n and bool(ob.get(PLV.KK_PROP))}
             if hs is None:
                 out[n] = ('placed', None, "its placed object has no layout")
             elif ob.get(PLV.PROP) == n:

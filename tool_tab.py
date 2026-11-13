@@ -328,8 +328,8 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
             r.label(text="Start Shape (mixed)" if row.alert else "Start Shape")
             st_ = RO.start_of(pc)
             sp.operator_menu_enum("ac9_cloth_sim.set_start", "start", text=tx(RO.START_EN[st_]))
-            note = {'edge': ("Phase Sim lays it on the sewn edge after the body is sewn.",
-                             "Live Sim starts from this shape (Band on Edge lays it now)."),}.get(st_)
+            note = {'edge': ("Live Sim pulls it from this ring onto the sewn edge by its seams.",
+                             "Band on Edge lays it there now."),}.get(st_)
             for ln in note or ():
                 for w_ in wrap(tx(ln), U._wrap_width(context)):
                     col.label(text=w_)
@@ -374,8 +374,12 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
         field("piece_thickness", "Thickness", lambda n: pcs[n].get('thickness', True) is not False)
         # the layer (user 2026-10-25): higher = kept outside the lower while they differ; a person sets
         # them back to 0 (the arrow: every piece's)
-        field("piece_layer", "Layer", lambda n: S.piece_layer(pcs[n]),
-              lambda row: row.operator("ac9_cloth_sim.layers_to_zero", text="", icon='LOOP_BACK'))
+        # under Experimental Features (user 2026-11-12); still drawn while a piece of the garment has one, so a
+        # layer kept in an older file can be seen and set back
+        from . import dress as _D
+        if _D.experimental(context) or any(S.piece_layer(x) for x in spec.get('pieces', [])):
+            field("piece_layer", "Layer", lambda n: S.piece_layer(pcs[n]),
+                  lambda row: row.operator("ac9_cloth_sim.layers_to_zero", text="", icon='LOOP_BACK'))
         col.separator()
 
         def back(row):                                # its own distance: the arrow gives it back the garment's
@@ -521,8 +525,9 @@ def fabric_lines(f):
 
 
 class AC9_PT_ToolFabric(_ToolTab, bpy.types.Panel):
-    """The fabric picked in Lists > Fabrics (user 2026-10-25, REVIEW_fable_lists_ui_2026-10-25 §3.1): its preset,
-    numbers, pieces; Edit... (the same dialog as the pencil of AC9 Piece), Make Default, Select Pieces, Delete."""
+    """The fabric picked in Lists > Fabrics: its preset, numbers, pieces; Edit... (the same dialog as the pencil of
+    AC9 Piece), Make Default, Select Pieces, Delete."""
+    # user 2026-10-25, REVIEW_fable_lists_ui_2026-10-25 §3.1
     bl_label = "AC9 Fabric"
 
     @classmethod
@@ -582,8 +587,9 @@ class AC9_PT_ToolFabric(_ToolTab, bpy.types.Panel):
 
 
 class AC9_PT_ToolInterlining(_ToolTab, bpy.types.Panel):
-    """The interlining picked in Lists > Fabrics (user 2026-10-25): its preset, what it adds, its pieces; Edit...
-    (the same dialog as the pencil of AC9 Piece's Interlining field), Select Pieces, Delete."""
+    """The interlining picked in Lists > Fabrics: its preset, what it adds, its pieces; Edit... (the same dialog as
+    the pencil of AC9 Piece's Interlining field), Select Pieces, Delete."""
+    # user 2026-10-25
     bl_label = "AC9 Interlining"
 
     @classmethod

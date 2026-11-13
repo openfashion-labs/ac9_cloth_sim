@@ -129,7 +129,8 @@ def invoke(op, context, event):
     op._pick_state = dict(movers=movers, followers=followers, available=available,
                           candidates=sorted({p for row in available.values() for p in row}), targets=set(),
                           spec_text=store.text(context).as_string(), frame=context.scene.frame_current,
-                          window=context.window.as_pointer(), note='', hover=None, handles=[], batches={})
+                          window=context.window.as_pointer(), note='', hover=None, handles=[], batches={},
+                          area=context.area.as_pointer() if context.area else 0)
     _build_geometry(op, context, got)
     op._pick_state['handles'] = [
         bpy.types.SpaceView3D.draw_handler_add(_draw_lines, (op,), 'WINDOW', 'POST_VIEW'),
@@ -213,6 +214,9 @@ def _draw_text(op):
     state = getattr(op, '_pick_state', None)
     if not state or context.window.as_pointer() != state['window']:
         return
+    # only in the 3D view it was started in (the others in the window showed it too)
+    if state.get('area') and (context.area is None or context.area.as_pointer() != state['area']):
+        return
     lines = [tx("Moving: {0}", ', '.join(state['movers']))]
     if state['followers']:
         lines.append(tx("Pair follows: {0}", ', '.join(state['followers'])))
@@ -221,16 +225,16 @@ def _draw_text(op):
     if state['note']:
         lines.append(state['note'])
     blf.size(0, 13)
-    blf.color(0, 1., 1., 1., 1.)
-    blf.enable(0, blf.SHADOW)
-    blf.shadow(0, 5, 0., 0., 0., 1.)
-    y = context.region.height - 150
+    # clear of the toolbar (it was drawn at x = 24 under it; 2026-11-12)
+    from . import ui as U
+    from . import text_band
+    x, y = U.view_text_origin(context, 150)
+    items = []
     for line in lines:
-        for text in wrap(line, max(24, int(context.region.width / 7) - 6)):
-            blf.position(0, 24, y, 0)
-            blf.draw(0, text)
-            y -= 19
-    blf.disable(0, blf.SHADOW)
+        for text in wrap(line, max(24, int((context.region.width - x) / 7) - 6)):
+            items.append((x, y, text, (1., 1., 1., 1.)))
+            y -= 20
+    text_band.draw(0, items)
 
 
 def finish(op, context):

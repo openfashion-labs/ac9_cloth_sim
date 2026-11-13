@@ -34,7 +34,7 @@ These are the terms used in this guide and on screen. Each term is listed under 
 | Placed shape (**Place**, 配置) | Pieces placed on the guides. The simulation starts from this shape. |
 | Dressed garment (結果の「**AC9 Garment**」, AC9 服) | The garment after dressing (the object `AC9_Garment_<garment name>`). It appears in the result of **AC9 Garment**. |
 | Simulation (シミュレーション) | The physics calculation of cloth motion. It is computed with NVIDIA's Newton. |
-| Phase (段) | One section within **Phase Sim**. It goes through the phases in order, such as a phase that closes the seams and a phase that applies gravity to drape the cloth. |
+| Phase (段) | One section within **Live Sim**. It goes through the phases in order, such as a phase that closes the seams and a phase that applies gravity to drape the cloth. |
 | Frame (コマ) | One image of the progress. You can play them back in the Timeline. |
 | Progress (cache) (経過、**Delete Cache**) | The record of the simulation's frames. It is stored in a folder next to the saved .blend. |
 | Piece state (ピースの状態) | **Active**, **Freeze**, **Off Pattern**, **Off All**. They decide whether a piece moves, whether it collides with other cloth, and whether its seams are used. |

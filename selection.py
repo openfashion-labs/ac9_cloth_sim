@@ -137,7 +137,19 @@ def watch(scene, depsgraph):
     _seen['sig'] = sig
     if _replaced(ctx.window_manager):
         drop_other_view(ctx)
+        if not any(ob.select_get() for ob in objects(ctx)):
+            _drop_seam(ctx)                         # a click on nothing in any view: the picked seam goes too
     to_leader(ctx)
+
+
+def _drop_seam(context):
+    """No seam picked (user 2026-11-13: a click on nothing in any tool drops it; the picked seam's lengths and A / B
+    stayed drawn after the seam tool was left, with no way to take them away)."""
+    try:
+        from . import seam_edit_tool as SET
+        SET.unselect_seam(context)
+    except Exception:                               # noqa: BLE001 -- a selection watcher must not fail
+        pass
 
 
 LEAD_PROP = "ac9_placed_lead"       # placed_view.LEAD_PROP (not imported: this module loads before it)
