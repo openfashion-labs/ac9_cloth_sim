@@ -14,6 +14,7 @@ import os
 
 import bpy
 import numpy as np
+from . import result_reference as RR
 from mathutils.bvhtree import BVHTree
 
 from . import button_view as BV
@@ -168,7 +169,7 @@ def sync(context, spec, g, job=None, X_mm=None):
     """Make the zippers' strip object of garment `g` match the spec (remove it when there are none)."""
     pname = points_name(g.name) if g is not None else None
     old = bpy.data.objects.get(pname) if pname else None
-    if g is None or not spec.get('zippers') or not job or not os.path.exists(os.path.join(job, 'scene.idx.npz')):
+    if g is None or not spec.get('zippers') or not job or not os.path.exists(os.path.join(job, RR.INDEX)):
         if old is not None:
             me = old.data
             bpy.data.objects.remove(old)
@@ -176,13 +177,13 @@ def sync(context, spec, g, job=None, X_mm=None):
                 bpy.data.meshes.remove(me)
         return None
     import json
-    idx = np.load(os.path.join(job, 'scene.idx.npz'))
-    names = [str(n) for n in json.load(open(os.path.join(job, 'job.json'), encoding='utf-8'))['names']]
+    idx = np.load(os.path.join(job, RR.INDEX))
+    names = [str(n) for n in json.load(open(os.path.join(job, RR.JOB), encoding='utf-8'))['names']]
     if X_mm is None:
         from . import dress as DR
         X_mm = DR.job_last_frame(job) * 1000.0
     bvh = None
-    av_p = os.path.join(job, 'avatar.npz')
+    av_p = os.path.join(job, RR.AVATAR)
     if os.path.exists(av_p):
         av = np.load(av_p)
         bvh = BVHTree.FromPolygons(av['body_co'].tolist(), av['body_tri'].tolist(), all_triangles=True)

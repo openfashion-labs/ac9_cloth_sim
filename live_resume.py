@@ -49,8 +49,11 @@ def prepare(context, h, previous, shown, folder, gate, last_frame):
         old_gate = json.load(source)
     if gate != old_gate:
         return None, 'Inputs changed; Live rebuilds from the shown shape'
-    with open(os.path.join(previous, 'job.json'), encoding='utf8') as source:
-        info = json.load(source)
+    from . import result_reference as RR
+    try:
+        info = dict(RR.open_result(previous).info)
+    except ValueError:
+        return None, 'The saved result cannot be read; Live rebuilds from the shown shape'
     if info.get('kind') != 'live' or len(info.get('stages', [])) != 1:
         return None, 'This result has no full Live checkpoint; Live rebuilds from the shown shape'
     checkpoint = os.path.join(previous, 's1', 'live_checkpoint.npz')
@@ -85,8 +88,13 @@ def prepare(context, h, previous, shown, folder, gate, last_frame):
             raise ValueError('Live checkpoint does not match the stopped garment; previous result kept')
     if os.path.normcase(os.path.abspath(folder)) == os.path.normcase(os.path.abspath(previous)):
         raise ValueError('Live resume needs a new job folder; previous result kept')
+    # the files the resumed folder is made of, all there before anything is copied (a folder partly cleaned away
+    # gave a FileNotFoundError half way through the copy)
+    need = [RR.INDEX, RR.AVATAR, RR.PATTERN, RR.SPEC, os.path.join('s1', 'config.json')]
+    if not all(os.path.isfile(os.path.join(previous, n)) for n in need):
+        return None, 'Some saved files are missing; Live rebuilds from the shown shape'
     os.makedirs(folder, exist_ok=True)
-    for name in ('scene.idx.npz', 'avatar.npz', 'pattern.npz', 'ac9_spec.json'):
+    for name in (RR.INDEX, RR.AVATAR, RR.PATTERN, RR.SPEC):
         shutil.copy2(os.path.join(previous,name),os.path.join(folder,name))
     stage = os.path.join(folder, 's1');os.makedirs(stage,exist_ok=True)
     with open(os.path.join(previous,'s1','config.json'),encoding='utf8')as source:cfg=json.load(source)
@@ -94,7 +102,7 @@ def prepare(context, h, previous, shown, folder, gate, last_frame):
         if key not in ('pattern','params_file','grab_file','checkpoint_in','checkpoint_out') and isinstance(value,str) and os.path.isfile(value):
             target=os.path.join(folder,key+'_'+os.path.basename(value))
             shutil.copy2(value,target);cfg[key]=target
-    cfg['pattern']=os.path.join(folder,'pattern.npz')
+    cfg['pattern']=os.path.join(folder,RR.PATTERN)
     cfg['checkpoint_in']=os.path.join(folder,'source_checkpoint.npz')
     cfg['checkpoint_out']=os.path.join(stage,'live_checkpoint.npz')
     cfg['params_file']=os.path.join(folder,'params.json');cfg['grab_file']=os.path.join(folder,'grab.json')
@@ -103,7 +111,7 @@ def prepare(context, h, previous, shown, folder, gate, last_frame):
     info.update(dir=folder,kind='live',stages=['Live: resume saved simulation state'],prep_s=0.,
                 state_resume={'status':'prepared','frame':manifest['frame'],'from':previous},
                 report=['Live resumes the saved simulation state'])
-    with open(os.path.join(folder,'job.json'),'w',encoding='utf8')as output:json.dump(info,output,ensure_ascii=False,indent=1)
+    with open(os.path.join(folder,RR.JOB),'w',encoding='utf8')as output:json.dump(info,output,ensure_ascii=False,indent=1)
     write_gate(folder,gate)
-    d=np.load(os.path.join(folder,'scene.idx.npz'))
+    d=np.load(os.path.join(folder,RR.INDEX))
     return (info,(d['flat'],d['F'],d['fp'],shown.copy(),d['E_st'])),None

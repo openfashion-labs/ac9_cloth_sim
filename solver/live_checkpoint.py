@@ -6,7 +6,9 @@ import importlib.metadata
 import numpy as np
 
 VERSION = 1
-AUDITED_KEYS = frozenset('fps substeps density tri_ke tri_ka tri_kd edge_ke edge_kd stitch_kd particle_radius body_gap filter_rings rest_from_flat internal_filter_rings seam_bend pattern crop iterations stitch_ke self_margin self_gap body_mu fold_deg frames live active_pieces frozen_pieces stitch_ramp_frames live_every init_xv mi friction_epsilon membrane tri_ks bw_hess_reg fric_anchor bend_fric2 fold_ke_scale grab_file params_file fabric_pieces guard jitter layers stitch_edge_filter checkpoint_in checkpoint_out start_check gravity_z stitch_rest_mm temp_stitches strengthen_pieces'.split())
+AUDITED_KEYS = frozenset('fps substeps density tri_ke tri_ka tri_kd edge_ke edge_kd stitch_kd particle_radius body_gap filter_rings rest_from_flat internal_filter_rings seam_bend pattern crop iterations stitch_ke self_margin self_gap body_mu fold_deg frames live active_pieces frozen_pieces stitch_ramp_frames stitch_ramp_shape live_every init_xv mi friction_epsilon membrane tri_ks bw_hess_reg fric_anchor bend_fric2 fold_ke_scale grab_file params_file fabric_pieces guard jitter layers stitch_edge_filter checkpoint_in checkpoint_out start_check gravity_z stitch_rest_mm temp_stitches strengthen_pieces sew_first stitch_cap_N air_damp'.split())
+# sew_first (Live sews without gravity first): its table, and the stitch cap / damping it lays into cfg. Its progress
+# (SEWS) is not saved: a checkpoint after the sewing restores LIVEP['sewing'] False and the resume sets the gravity again
 GLOBAL_FIELDS = ('BF2', 'FANCH', 'FOLD_RAMP', 'FOLD_CARRY', 'ELASTIC', 'ELASTIC_FROM',
                  'STRENGTHEN', 'DELAY', 'KE0', 'RL', 'DL0', 'L0s', 'LIVEP', 'TERMINAL_FIELD_STATE')
 

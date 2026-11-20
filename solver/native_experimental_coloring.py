@@ -4,9 +4,11 @@ import heapq
 import time
 import numpy as np
 import warp as wp
+from job_cancel import check as _cancel_check
 
 
-def compact(neighbors,initial,depth=2,budget=20000):
+def compact(neighbors,initial,depth=2,budget=20000,stop_at_budget=False):
+    _cancel_check()
     colors=initial.copy();attempts=[]
     while colors.max()>=1:
         last=int(colors.max());palette=range(last);steps=0
@@ -15,23 +17,30 @@ def compact(neighbors,initial,depth=2,budget=20000):
         if rare!=last:
             low=colors==rare;high=colors==last;colors[low]=last;colors[high]=rare
         before=colors.copy()
+        changes=[]
         def assign(v,target,remaining,blocked):
             nonlocal steps,colors
             steps+=1
+            if steps % 256 == 0:_cancel_check()
             if steps>budget or v in blocked:return False
             conflicts=[u for u in neighbors[v]if colors[u]==target]
             if conflicts and remaining==0:return False
-            saved=colors.copy();colors[v]=target;blocked=blocked|{v}
+            saved=len(changes);changes.append((v,int(colors[v])));colors[v]=target;blocked=blocked|{v}
             for u in conflicts:
                 if colors[u]!=target:continue
                 alternatives=sorted((c for c in palette if c!=target),key=lambda c:sum(colors[w]==c for w in neighbors[u]))
                 moved=False
                 for alternative in alternatives:
                     if assign(u,alternative,remaining-1,blocked):moved=True;break
-                if not moved:colors=saved;return False
+                if not moved:
+                    for changed,old in reversed(changes[saved:]):colors[changed]=old
+                    del changes[saved:]
+                    return False
             return True
         unresolved=[]
         for v in sorted(np.flatnonzero(colors==last),key=lambda v:-len(neighbors[v])):
+            if stop_at_budget and steps>=budget:
+                unresolved.append(int(v));break
             options=sorted(palette,key=lambda c:sum(colors[w]==c for w in neighbors[v]))
             if not any(assign(int(v),target,depth,set())for target in options):unresolved.append(int(v))
         attempts.append(dict(from_colors=last+1,to_colors=int(colors.max()+1),steps=steps,unresolved=len(unresolved)))
@@ -41,18 +50,30 @@ def compact(neighbors,initial,depth=2,budget=20000):
     return colors,attempts
 
 
-def reduce_colors(neighbors,initial,steps=20000,seed=2121):
+def reduce_colors(neighbors,initial,steps=20000,seed=2121,array_counts=False):
+    _cancel_check()
     rng=np.random.default_rng(seed);active=np.flatnonzero(initial>=0);target=int(initial.max())
     if target<1:return initial.copy(),dict(target=target,steps=0,best_conflicts=0,final_conflicts=0,success=False)
     colors=initial.copy();counts=np.zeros((len(colors),target),np.int32)
     for v in active:
         if colors[v]==target:colors[v]=int(rng.integers(target))
-    for v in active:
-        if neighbors[v]:counts[v]=np.bincount(colors[list(neighbors[v])],minlength=target)
-    bad={int(v)for v in active if counts[v,colors[v]]}
-    conflicts=sum(int(counts[v,colors[v]])for v in active)//2
+    if array_counts:
+        if hasattr(neighbors,'src'):
+            src,dst=neighbors.src,neighbors.dst
+        else:
+            src=np.repeat(np.arange(len(colors)),[len(row)for row in neighbors])
+            dst=np.fromiter((u for row in neighbors for u in row),dtype=np.int32,count=len(src))
+        counts=np.bincount(src.astype(np.int64,copy=False)*target+colors[dst],minlength=len(colors)*target).reshape(-1,target).astype(np.int32)
+        occupied=counts[active,colors[active]]
+        bad=set(map(int,active[occupied!=0]));conflicts=int(occupied.sum())//2
+    else:
+        for v in active:
+            if neighbors[v]:counts[v]=np.bincount(colors[list(neighbors[v])],minlength=target)
+        bad={int(v)for v in active if counts[v,colors[v]]}
+        conflicts=sum(int(counts[v,colors[v]])for v in active)//2
     best=conflicts;tabu=np.zeros_like(counts);result=initial.copy();used=0
     for iteration in range(steps):
+        if iteration % 256 == 0:_cancel_check()
         used=iteration+1
         if conflicts==0:result=colors.copy();break
         vertices=np.array(sorted(bad),np.int32)
@@ -60,9 +81,9 @@ def reduce_colors(neighbors,initial,steps=20000,seed=2121):
         allowed=(tabu[vertices]<=iteration)|(delta+conflicts<best)
         allowed[np.arange(len(vertices)),colors[vertices]]=False
         scores=np.where(allowed,delta,1000000)
-        score=int(scores.min());choices=np.argwhere(scores==score)
+        score=int(scores.min());choices=np.flatnonzero(scores.reshape(-1)==score)
         if score==1000000:break
-        row,new=choices[int(rng.integers(len(choices)))];v=int(vertices[row]);new=int(new);old=int(colors[v])
+        choice=int(choices[int(rng.integers(len(choices)))]);row,new=divmod(choice,target);v=int(vertices[row]);old=int(colors[v])
         conflicts+=score;colors[v]=new
         tabu[v,old]=iteration+int(.6*len(bad))+int(rng.integers(1,11))
         for u in neighbors[v]:
@@ -76,7 +97,8 @@ def reduce_colors(neighbors,initial,steps=20000,seed=2121):
     return result,dict(target=target,steps=used,best_conflicts=best,final_conflicts=conflicts,success=conflicts==0)
 
 class ColoringPlan:
-    def __init__(self, model, bound=None):
+    def __init__(self, model, bound=None, *, reduce_steps=20000, array_neighbors=False,
+                 compact_budget=20000, compact_stop_at_budget=False):
         started=time.perf_counter()
         self.model=model;self.bound=bound
         self.old_groups=list(model.particle_color_groups or [])
@@ -93,37 +115,49 @@ class ColoringPlan:
         triangles=bound.triangles.numpy()if bound is not None else np.empty((0,3),np.int32)
         if np.isin(self.active,followers).any():raise ValueError('Follower included in independent colors')
         support={int(v):list(map(int,t))for v,t in zip(followers,triangles)}
-        active_set=set(map(int,self.active));neighbors=[set()for _ in range(count)]
+        active_set=set(map(int,self.active))
         def read_rows(value,width):return value.numpy().reshape(-1,width)if value is not None else np.empty((0,width),np.int32)
         rows_tri=read_rows(model.tri_indices,3);rows_edge=read_rows(model.edge_indices,4)
         self.excluded_tri=np.isin(rows_tri,followers).any(axis=1)
         self.excluded_edge=np.isin(rows_edge,followers).any(axis=1)
         rows=[rows_tri[~self.excluded_tri],rows_edge[~self.excluded_edge],read_rows(model.spring_indices,2)[:model.spring_count]]
         if getattr(model,'tet_count',0):rows.append(model.tet_indices.numpy())
-        for elements in rows:
-            for row in elements:
-                ids=set()
-                for v in row:
-                    if v>=0:ids.update(support.get(int(v),[int(v)]))
-                ids.intersection_update(active_set)
-                for v in ids:neighbors[v].update(ids-{v})
+        # compact traverses these sets. Equal memberships are insufficient:
+        # retain the original insertion operations and row order (Fable M2).
+        # The legacy array_neighbors flag still selects integer array counts
+        # below; it must not change neighbor iteration order.
+        if array_neighbors:
+            from native_coloring_neighbors import ColoringNeighbors
+            neighbors=ColoringNeighbors(rows,count,self.active,followers,triangles)
+        else:
+            neighbors=[set()for _ in range(count)]
+            for elements in rows:
+                for row in elements:
+                    ids=set()
+                    for v in row:
+                        if v>=0:ids.update(support.get(int(v),[int(v)]))
+                    ids.intersection_update(active_set)
+                    for v in ids:neighbors[v].update(ids-{v})
         colors=np.full(count,-1,np.int32);used=[set()for _ in range(count)]
-        heap=[(0,-len(neighbors[v]),int(v))for v in self.active];heapq.heapify(heap)
+        degrees=neighbors.degree if array_neighbors else [len(row)for row in neighbors]
+        heap=[(0,-degrees[v],int(v))for v in self.active];heapq.heapify(heap)
         while heap:
+            if len(heap) % 256 == 0:_cancel_check()
             saturation,degree,v=heapq.heappop(heap)
             if colors[v]>=0 or saturation!=-len(used[v]):continue
             color=next(c for c in range(len(used[v])+1)if c not in used[v]);colors[v]=color
-            for u in neighbors[v]:
+            for u in (neighbors.fast(v) if array_neighbors else neighbors[v]):
                 if colors[u]<0 and color not in used[u]:
-                    used[u].add(color);heapq.heappush(heap,(-len(used[u]),-len(neighbors[u]),u))
-        colors,local=compact(neighbors,colors)
-        colors,tabu=reduce_colors(neighbors,colors)
-        conflicts=sum(colors[v]==colors[u]for v in self.active for u in neighbors[v]if u>v)
+                    used[u].add(color);heapq.heappush(heap,(-len(used[u]),-degrees[u],u))
+        colors,local=compact(neighbors,colors,budget=compact_budget,stop_at_budget=compact_stop_at_budget)
+        colors,tabu=reduce_colors(neighbors,colors,steps=reduce_steps,array_counts=array_neighbors)
+        conflicts=(int(np.count_nonzero(colors[neighbors.src]==colors[neighbors.dst]))//2 if array_neighbors else
+                   sum(colors[v]==colors[u]for v in self.active for u in neighbors[v]if u>v))
         if conflicts:raise ValueError('Invalid structural coloring')
         self.colors=colors;self.applied=False
         self.summary=dict(old_colors=len(self.old_groups),proposed_colors=int(colors.max()+1),
             conflicts=int(conflicts),independent_points=len(self.active),
-            structural_pairs=sum(map(len,neighbors))//2,
+            structural_pairs=(len(neighbors.dst)//2 if array_neighbors else sum(map(len,neighbors))//2),
             excluded_tri=int(self.excluded_tri.sum()),excluded_edge=int(self.excluded_edge.sum()),
             local=local,tabu=tabu,build_s=time.perf_counter()-started)
 

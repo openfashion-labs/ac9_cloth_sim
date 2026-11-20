@@ -49,9 +49,15 @@ class StartCheck(unittest.TestCase):
         self.assertTrue(res['A']['checked'])
         self.assertEqual(res['A']['over'], [])
 
-    def test_mirrored_half_of_another_size_is_not_compared(self):
+    def test_mirrored_half_of_another_size_goes_through_the_mapper(self):
         V, T, X = _square()
         screen = {'A': ('mirrored', (V[:3], T[:1], X[:3]), '')}
+        res = CS.compare(screen, ['A'], self.flat[:4], [0], self.X[:4], _mapper)
+        self.assertTrue(res['A']['checked'])
+
+    def test_a_shape_without_triangles_of_another_size_is_not_compared(self):
+        V, T, X = _square()
+        screen = {'A': ('mirrored', (V[:3], T[:0], X[:3]), '')}
         res = CS.compare(screen, ['A'], self.flat[:4], [0], self.X[:4], _mapper)
         self.assertFalse(res['A']['checked'])
 
@@ -65,6 +71,17 @@ class StartCheck(unittest.TestCase):
     def test_a_piece_not_read_is_said(self):
         res = CS.compare({}, ['A'], self.flat[:4], [0], self.X[:4], _mapper)
         self.assertEqual(res['A']['source'], 'unknown')
+
+
+class Squashed(unittest.TestCase):
+    def test_a_start_squashed_flat_is_named(self):
+        # a placed object put on a larger pattern with the outside pressed onto its edge (2026-11-14): zero area
+        V, T, X = _square()
+        X2 = X.copy(); X2[2] = X2[1]                  # the far corner pressed onto another: triangle 0 has no area
+        F = np.r_[T, T + 4]; fp = np.r_[0, 0, 1, 1]
+        flat = np.r_[V, V]
+        self.assertEqual(CS.squashed_starts(np.r_[X, X2], F, fp, flat, ['A', 'B']), {'B': 1})
+        self.assertEqual(CS.squashed_starts(np.r_[X, X * 1.5], F, fp, flat, ['A', 'B']), {})
 
 
 if __name__ == '__main__':

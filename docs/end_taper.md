@@ -13,7 +13,7 @@ There is no universal recommended distance; the tested sleeve uses 48 mm.
 
 Taper takes effect during simulation. It does not fold a partial line in the
 placed preview or replace the cloth's natural geometry with its current shape.
-Move by Hand keeps the visible geometry and the line setting.
+Moving the placed piece by hand keeps the visible geometry and the line setting.
 
 Live can update the angle or taper distance, including disabling taper, with
 the existing 30-frame transition. A no-edit stop can keep its full checkpoint.

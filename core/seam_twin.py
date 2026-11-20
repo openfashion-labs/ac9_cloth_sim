@@ -14,6 +14,7 @@ the same On / Off, check, pull round the body (left <-> right, arm_L <-> arm_R),
 A side is mirrored point by point: its two ends carried by the mirror map and put on the nearest point of the target
 outline (or internal line), its direction round the outline reversed (a mirror turns the outline round).
 """
+import itertools
 import re
 from ._i18n import rpt, length as len_text
 
@@ -159,9 +160,10 @@ def _new_id(spec, base):
     return k
 
 
-def _mirror_seam(spec, sm, name, tw, outlines, made=None, skip=()):
+def _mirror_seam(spec, sm, name, tw, outlines, made=None, skip=(), plane=None):
     """The seam sm mirrored (a new seam dict, added to nothing), or (None, why). skip: seams whose place the mirror
-    image may land on (its own partner, when an edit is carried over)."""
+    image may land on (its own partner, when an edit is carried over). plane: the mirror's plane when known (the left
+    / right image of a seam just added), else that of `name`'s pair (of side A's piece without one)."""
     sides = {}
     for k in ('a', 'b'):
         sides[k], why = mirror_side(spec, sm[k], name, tw, outlines, skip={sm['id']} | set(skip), made=made)
@@ -169,7 +171,7 @@ def _mirror_seam(spec, sm, name, tw, outlines, made=None, skip=()):
             return None, why
     nm = {kk: v for kk, v in sm.items() if kk not in ('id', 'a', 'b', 'bom')}
     nm.update(id=_new_id(spec, sm['id']), a=sides['a'], b=sides['b'], source='user')
-    pl_ = S.pair_plane(spec, name) if name else S.pair_plane(spec, sm['a']['piece'])
+    pl_ = plane or (S.pair_plane(spec, name) if name else S.pair_plane(spec, sm['a']['piece']))
     if sm.get('path'):
         nm['path'] = dict(sm['path'], side=_swap_lr(sm['path'].get('side', 'auto'), pl_))
         if sm['path'].get('guide'):
@@ -177,67 +179,111 @@ def _mirror_seam(spec, sm, name, tw, outlines, made=None, skip=()):
     return nm, None
 
 
-def mirror_within(spec, ids):
-    """Seams `ids` just added between pieces both edited symmetrically (Symmetric Edit on and symmetric): each gets
-    its mirror image across the pieces' center lines too (user 2026-10-27, b-3), unless it is its own mirror image (a
-    seam across the center line) or the place is sewn already. Returns the ids made."""
-    made = []
-    outlines = {pc['name']: S.Outline(pc) for pc in spec['pieces']}
-    for sm in [x for x in spec['seams'] if x['id'] in set(ids)]:
-        ps = {sm['a']['piece'], sm['b']['piece']}
-        if any(D.symmetric_edit(D.piece(spec, p)) is None for p in ps):
-            continue
-        selfs = {p: p for p in ps}                 # each side onto its own piece, across its center line
-        nm, why = _mirror_seam(spec, sm, None, None, outlines, selfs)
-        if nm is None:
-            continue
-        same = True
-        for k in ('a', 'b'):
-            o, m = sm[k], nm[k]
-            if 'line' in o:
-                same &= m.get('line') == o['line']
-                continue
-            ol = outlines[o['piece']]
-            a0, a1 = _interval(ol, o)
-            b0, b1 = _interval(ol, m)
-            same &= any(min(a1, b1 + sh) - max(a0, b0 + sh) > 1.0 for sh in (-ol.L, 0.0, ol.L))
-        if same:
-            continue
-        spec['seams'].append(nm)
-        made.append(nm['id'])
-    return made
+def _lr_counterpart(spec, p):
+    """p's left / right counterpart, ('twin', name) for the On twin of a left / right Mirror Copy pair (the seam's
+    image goes onto it; also a Pair's partner), ('blocked', why) for a counterpart the image cannot go onto (an Off
+    twin or partner, the garment's symmetry off), (None, None) for a piece with none (its image is itself, across
+    its center line). Symmetric Edit says a piece's outline is symmetric, not that it lies on the body's center: a
+    side panel symmetric in itself, with its twin on the other side of the body, mirrors onto that twin, never onto
+    itself (user 2026-11-17: a box's front sewn to the right side panel got its left edge sewn to that panel too)."""
+    pc = D.piece(spec, p)
+    if S.plane_of(pc) != 'x':
+        return None, None                          # a front / back pair: no left / right counterpart
+    t = twin_in(spec, p, 'x')
+    if t is not None:
+        return 'twin', t
+    fam = D.family_of(pc)
+    if fam and any(D.family_of(o) == fam for o in spec['pieces'] if o['name'] != p):
+        return 'blocked', f"{p}'s twin is Off" if spec.get('symmetry') != 'off' else "the garment's symmetry is off"
+    for pr in spec.get('pairs', []):
+        if p in pr and len(set(pr)) == 2:
+            o = next(n for n in pr if n != p)
+            op = next((x for x in spec['pieces'] if x['name'] == o), None)
+            if op is None or not op.get('enabled', True) or spec.get('symmetry') == 'off':
+                return 'blocked', f"{p}'s Pair partner {o} is Off" if op is not None else f"{o} is gone"
+            # a Pair: two pieces drawn separately, placed as mirror images (a front / back Pair has its plane and left
+            # above). The image goes onto the partner when the mirrored ends land on its outline, as long
+            # (mirror_side's checks); else (a Pair from before the plane, front / back) the piece mirrors onto itself
+            # (lr_images)
+            return 'pair', o
+    return None, None
 
 
-def mirror_onto_twins(spec, ids):
-    """Seams `ids` just added whose every side is on a piece of a left / right pair (Mirror Copy): each gets its
-    mirror image between those pieces' twins (front - back -> front_R - back_R; a dart on front -> on front_R). Not
-    when a side is on a piece with no twin (its mirror image would have to land on that single piece), not a seam
-    between the two halves of one pair (a center front: its own mirror image), not where the twins are sewn there
-    already (the other side added by hand first). Returns (ids made, notes: the seams not mirrored and why)."""
+def lr_images(spec, sm):
+    """The ways seam sm has a left / right mirror image, or ([], why): a list of groups, each a list of maps {piece:
+    its piece in the image} (for _mirror_seam) to try in turn, the first that works being the image. A piece goes to
+    its twin when it has one, onto itself (across its center line) when it has no left / right counterpart and is
+    edited symmetrically (Symmetric Edit); a piece in a Pair to its partner, else (the Pair a front / back one) onto
+    itself. Not when a piece has a counterpart the image cannot go onto, or none and is not symmetric (a collar drawn
+    freely: user 2026-11-04), not between a pair's two halves (a center front), not with the garment's symmetry off.
+    A seam within one piece that has a twin and is edited symmetrically too (a dart) has its image across the piece's
+    own center line as well (user 2026-11-17: kept as it was)."""
+    if spec.get('symmetry') == 'off':
+        return [], None
+    ps = sorted({sm['a']['piece'], sm['b']['piece']})
+    alts = {}
+    for p in ps:
+        kind, v = _lr_counterpart(spec, p)
+        sym = D.symmetric_edit(D.piece(spec, p)) is not None
+        if kind == 'twin':
+            alts[p] = [v]
+        elif kind == 'pair':
+            alts[p] = [v] + ([p] if sym else [])
+        elif kind == 'blocked':
+            return [], v
+        elif sym:
+            alts[p] = [p]
+        else:
+            return [], None
+    group = []
+    for combo in itertools.product(*(alts[p] for p in ps)):
+        tgt = dict(zip(ps, combo))
+        if not any(tgt[p] in ps and tgt[p] != p for p in ps):      # not between a pair's two halves (a center front)
+            group.append(tgt)
+    ways = [group] if group else []
+    if len(ps) == 1:
+        p = ps[0]
+        if alts[p][0] != p and D.symmetric_edit(D.piece(spec, p)) is not None:
+            ways.append([{p: p}])
+    return ways, None
+
+
+def _same_place(spec, outlines, sm, nm):
+    """nm lands where sm is (a seam across the center line is its own mirror image)."""
+    return ((_same_side(spec, outlines, sm['a'], nm['a']) and _same_side(spec, outlines, sm['b'], nm['b']))
+            or (_same_side(spec, outlines, sm['a'], nm['b']) and _same_side(spec, outlines, sm['b'], nm['a'])))
+
+
+def mirror_added(spec, ids):
+    """Seams `ids` just added (Add Seam, Add M:N): each gets its left / right mirror image (lr_images: onto the twins
+    of pieces in left / right pairs, across the center line of single pieces edited symmetrically; user 2026-10-27
+    b-3, 2026-11-04, 2026-11-17), unless it is its own mirror image or the place is sewn already. Front / back pairs
+    get no image here (user 2026-11-17: left / right only for now). Returns (ids made, notes: the seams not mirrored
+    and why)."""
     outlines = {pc['name']: S.Outline(pc) for pc in spec['pieces']}
     made, notes = [], []
     for sm in [x for x in spec['seams'] if x['id'] in set(ids)]:
-        ps = {sm['a']['piece'], sm['b']['piece']}
-        tw = {p: D.twin_of(spec, p) for p in ps}
-        if any(t is None for t in tw.values()):
-            continue                               # the user's rule: both ends on pairs, else no mirror
-        if len({S.pair_plane(spec, p) for p in ps}) > 1:
-            # a front / back pair sewn to a left / right one: no pair of twins is its mirror image
-            notes.append(f"{sm['id']}: its pieces mirror in different planes")
-            continue
-        if any(tw[p] in ps for p in ps):
-            continue                               # sews a pair's two halves to each other
-        nm, why = _mirror_seam(spec, sm, None, None, outlines, tw)
-        if nm is None:
+        ways, why = lr_images(spec, sm)
+        if why:
             notes.append(f"{sm['id']}: {why}")
-            continue
-        hit = next((h for h in (_taken(spec, nm[k], outlines[nm[k]['piece']], ()) for k in ('a', 'b')
-                                if 'line' not in nm[k]) if h), None)
-        if hit:
-            notes.append(f"{sm['id']}: its place on {nm['a']['piece']} is sewn by {hit} already")
-            continue
-        spec['seams'].append(nm)
-        made.append(nm['id'])
+        for group in ways:
+            nm = None
+            for tgt in group:
+                nm, why = _mirror_seam(spec, sm, None, None, outlines, tgt, plane='x')
+                if nm is not None:
+                    break
+            if nm is None:
+                notes.append(f"{sm['id']}: {why}")
+                continue
+            if _same_place(spec, outlines, sm, nm):
+                continue
+            hit = next((h for h in (_taken(spec, nm[k], outlines[nm[k]['piece']], ()) for k in ('a', 'b')
+                                    if 'line' not in nm[k]) if h), None)
+            if hit:
+                notes.append(f"{sm['id']}: its place on {nm['a']['piece']} is sewn by {hit} already")
+                continue
+            spec['seams'].append(nm)
+            made.append(nm['id'])
     return made, notes
 
 
@@ -345,18 +391,9 @@ def _same_side(spec, outlines, o, m, tol=1.0):
 
 
 def _mirror_ways(spec, sm):
-    """The ways sm has a mirror image while its pieces are edited symmetrically ((name, tw, made) for _mirror_seam):
-    both pieces in Symmetric Edit (each onto itself, as mirror_within), or both in pairs mirroring in one plane, not
-    a seam between a pair's two halves (as mirror_onto_twins)."""
-    ps = {sm['a']['piece'], sm['b']['piece']}
-    ways = []
-    if all(D.symmetric_edit(D.piece(spec, p)) is not None for p in ps):
-        ways.append({p: p for p in ps})
-    tw = {p: D.twin_of(spec, p) for p in ps}
-    if (all(t is not None for t in tw.values()) and len({S.pair_plane(spec, p) for p in ps}) == 1
-            and not any(tw[p] in ps for p in ps)):
-        ways.append(tw)
-    return ways
+    """The maps under which sm has a mirror image (for _mirror_seam): the same as a seam just added gets (lr_images),
+    so an edit follows the image Add Seam made."""
+    return [tgt for group in lr_images(spec, sm)[0] for tgt in group]
 
 
 def mirror_partner(spec, sid):
@@ -367,7 +404,7 @@ def mirror_partner(spec, sid):
     outlines = {pc['name']: S.Outline(pc) for pc in spec['pieces']}
     every = {x['id'] for x in spec['seams']}
     for made in _mirror_ways(spec, sm):
-        nm, _ = _mirror_seam(spec, sm, None, None, outlines, made, skip=every)
+        nm, _ = _mirror_seam(spec, sm, None, None, outlines, made, skip=every, plane='x')
         if nm is None:
             continue
         for x in spec['seams']:
@@ -404,7 +441,7 @@ def sync_partners(spec, pairs):
         if sm is None or x is None:
             continue
         for made in _mirror_ways(spec, sm):
-            nm, _ = _mirror_seam(spec, sm, None, None, outlines, made, skip={pid})
+            nm, _ = _mirror_seam(spec, sm, None, None, outlines, made, skip={pid}, plane='x')
             if nm is None:
                 continue
             # keep the partner's own a / b order (side A stays on the same piece)

@@ -16,7 +16,7 @@ sidebar_position: 2
 - The simulation is calculated by a separate program, NVIDIA's Newton. Open **AC9 Cloth Sim** in Preferences under Add-ons. The distributed version uses the bundled one, so you can leave the **Newton Python** field empty. In a development environment, put a Python that has Newton installed in this field.
 - If it isn't specified enough, pressing **Live Sim** shows "Set the Newton Python in the add-on preferences" and it doesn't start.
 - **Keep the Solver Ready** in the same Preferences (on by default): gets the calculation ready ahead of time and keeps it waiting, so the next run starts 3 to 5 seconds sooner. While it waits it uses about 200 MB of GPU memory, and it ends after 15 minutes of not being used. If you turn it off, it ends right away and every run starts from preparation.
-- You need Windows and an NVIDIA GPU (as in the installation guide).
+- You need Windows and an NVIDIA GPU (GeForce RTX 20, 30, 40 or 50 series). Keep the driver up to date ("About GPU support" in the README).
 - Even with the same settings, the result can vary by several centimeters from one calculation to the next. Don't judge good or bad from a single result.
 
 ## What to do first

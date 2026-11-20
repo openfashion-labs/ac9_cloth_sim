@@ -9,15 +9,17 @@ A mismatch is said and shown red, the run goes on (user 2026-11-04, DECISIONS cl
 b-2: no dead end). The shape is not changed here.
 
 screen: {piece: (source, shape or None, note)} read before the run changes anything (start_check.read_screen):
-  source 'placed' (a placed object's own vertices), 'mirrored' (the mirrored half of a pair's object: compared vertex
-  by vertex), 'result' (the dressed garment as shown), 'rule' (no shape on screen to hold it to: drawn from the
+  source 'placed' (a placed object's own vertices), 'mirrored' (the mirrored half of a pair's object, with its own
+  layout points: the source's mirrored into its outline), 'result' (the dressed garment as shown), 'rule' (no shape on screen to hold it to: drawn from the
   placement rule, or a Restart), shape (flat (n, 2) mm, triangles (m, 3), world (n, 3) mm). An optional 4th item
   names what a piece from the rule loses (its hand move): it has no shape on screen to compare with, but the rule
   does not hold that move, so it is said as a piece off (the old Phase Sim took the placed objects away before the
   run read them: the check then saw the collars as drawn from the rule, 2026-11-04)."""
 import numpy as np
 
-TOL_MM = 0.1            # a start this far from the shape on screen is said (mm)
+from .shape_source import CARRY_ATOL, carry, same_layout
+
+TOL_MM = 0.1           # a start this far from the shape on screen is said (mm)
 
 
 def compare(screen, names, flat, offs, Xinit, mapper):
@@ -37,20 +39,28 @@ def compare(screen, names, flat, offs, Xinit, mapper):
             continue
         V, X = np.asarray(flat[a:b], float), np.asarray(Xinit[a:b], float)
         Fs, Ts, Ws = (np.asarray(s) for s in shape)
-        if src == 'mirrored' or (len(Fs) == len(V) and np.allclose(Fs, V, atol=1e-3)):
-            if len(Ws) != len(X):
-                rec['note'] = note or "a different mesh from the run's (mirrored half): not compared"
-                continue
-            Y = Ws.astype(float)
-        else:
-            if not len(Ts):
-                rec['note'] = note or "no triangles to map through"
-                continue
-            Y = mapper(V, Fs.astype(float), Ts.astype(np.int64), Ws.astype(float))
+        # compared through the layout points as the start is made (shape_source.carry), never by a mark: a check
+        # taking the same shortcut as the start it checks says 0.0 mm when the start is torn
+        if not (len(Ws) == len(V) and same_layout(Fs, V, atol=CARRY_ATOL)) and not len(Ts):
+            rec['note'] = note or "no triangles to map through"
+            continue
+        Y, _same = carry(V, Fs, Ts, Ws, mapper)
         d = np.linalg.norm(X - Y, axis=1)
+        k = np.nonzero(d > TOL_MM)[0]
+        # over_mm: each over vertex's distance, in the same order, for the red shaded by how far it is
         rec.update(checked=True, dmax_mm=round(float(d.max()), 3) if len(d) else 0.0,
-                   over=(np.nonzero(d > TOL_MM)[0] + a).tolist())
+                   over=(k + a).tolist(), over_mm=np.round(d[k], 2).tolist())
     return out
+
+
+SHADE_FULL_MM = 10.0      # the red is at its strongest from this far (1-2 cells of the default 6 mm mesh)
+
+
+def shade(d_mm, tol=TOL_MM, full=SHADE_FULL_MM):
+    """0..1 per distance (mm), on a log scale: tol -> 0, full and beyond -> 1 (0.1 mm faint, 1 mm half, 10 mm full).
+    Linear, a 0.3 mm shoulder and a 15 mm hem could not be told apart in one picture."""
+    d = np.maximum(np.asarray(d_mm, float), tol)
+    return np.clip(np.log10(d / tol) / np.log10(full / tol), 0.0, 1.0)
 
 
 def lines(res):
@@ -63,3 +73,22 @@ def lines(res):
     return head, [f"  {n}: starts from the placement rule, without its {r['lost']}" if r['lost'] else
                   f"  {n}: starts up to {r['dmax_mm']:.1f} mm from its {r['source']} shape on screen "
                   f"({len(r['over'])} vertices over {TOL_MM} mm)" for n, r in sorted(off.items())]
+
+
+SQUASHED_RATIO = 1e-6     # a start triangle with less than this of its pattern area: squashed flat
+
+
+def squashed_starts(Xinit, F, fp, flat, names, ratio=SQUASHED_RATIO):
+    """{piece: count} of triangles whose start (Xinit, mm) has less than `ratio` of their flat pattern area: the
+    solver drops a triangle of zero area and then cannot run the piece (stage 1 failed). Empty when none."""
+    X = np.asarray(Xinit, float)
+    F = np.asarray(F, np.int64)
+    fl = np.asarray(flat, float)
+    a3 = 0.5 * np.linalg.norm(np.cross(X[F[:, 1]] - X[F[:, 0]], X[F[:, 2]] - X[F[:, 0]]), axis=1)
+    e1, e2 = fl[F[:, 1]] - fl[F[:, 0]], fl[F[:, 2]] - fl[F[:, 0]]
+    a2 = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0])
+    bad = a3 < ratio * a2
+    if not bad.any():
+        return {}
+    fp = np.asarray(fp)
+    return {str(names[int(p)]): int((bad & (fp == p)).sum()) for p in np.unique(fp[bad])}

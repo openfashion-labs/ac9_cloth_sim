@@ -4,12 +4,16 @@ garment once it has a result). User 2026-10-14: the selected piece is to be foun
 rim), and the four states told apart at a glance (Freeze has its own color; a piece turned off
 is drawn dashed).
 
-    selected     a white rim (seen through the body and the cloth in 3D, faintly) and a light white tint (in 3D a
-                 see-through orange one: the cloth's shading stays)
+    selected     a rim and a light tint in the colors Blender marks selected objects with, the first picked piece's
+                 rim in the active object's color; the same on the flat pattern, the placed pieces and the garment (user
+                 2026-11-15: one color of mark in every view). In 3D the rim is also seen faintly through the body
+                 and the cloth. Drawn whatever the Overlays switches say, as Blender's own selection is; the states
+                 and the fabric tints only with Overlays > Piece Colors on
     Active       as before (nothing added)
     Freeze       a whitish blue tint and a solid light blue rim
-    Off Pattern  a dashed light gray rim (the cloth goes through it, its seams still pull); in 3D a light gray tint
-    Off All      a dashed dark gray rim (out of the simulation); in 3D a dark tint
+    Inactive  a dashed light gray rim (the cloth goes through it, its seams still pull)
+    Off      a dashed dark gray rim (out of the simulation)
+                 (in 3D the Off pieces are drawn only while picked)
 
 Drawn before the seam overlay (overlay.py), so the seams lie on top. In 3D the lines and the tint are moved
 LIFT_MM towards the eye and depth tested, as the 3D seams are (a tint on the cloth itself loses the depth test,
@@ -31,17 +35,19 @@ from . import store
 from . import view_visibility as VV
 from .core import spec as S
 
-SEL = (1.0, 1.0, 1.0, 1.0)
-SEL_FILL = (1.0, 1.0, 1.0, 0.16)
-# in 3D the gray cloth under a light white tint is hardly told from the rest: a see-through warm tint, as Blender's
-# selected objects, that leaves the cloth's light and shade (user 2026-10-24)
-SEL_FILL_3D = (1.0, 0.55, 0.15, 0.30)
+SEL_ALPHA = 0.16           # the selection's tint on the flat pattern
+# in 3D the gray cloth under a light tint is hardly told from the rest: a stronger see-through tint that leaves the
+# cloth's light and shade (user 2026-10-24)
+SEL_ALPHA_3D = 0.30
+# the selection's colors and the first picked piece, read from the theme and the selection for each draw
+_mark = {'sel': (0.93, 0.34, 0.0, 1.0), 'act': (1.0, 0.63, 0.16, 1.0), 'lead': None, 'colors': True}
 FREEZE = (0.70, 0.85, 1.0, 1.0)
 FREEZE_FILL = (0.80, 0.91, 1.0, 0.45)
 OFF_PATTERN = (0.85, 0.85, 0.85, 0.95)
 OFF_ALL = (0.40, 0.40, 0.40, 0.90)
 # in 3D the rims of the two Off states lie mostly under the seam lines: a tint says it (the flat pattern shows them
 # as wire already)
+HIDDEN_VEIL = (0.16, 0.16, 0.16, 0.3)       # a piece hidden in 3D, on the flat pattern (piece_hide)
 OFF_PATTERN_FILL = (0.92, 0.92, 0.92, 0.22)
 OFF_ALL_FILL = (0.10, 0.10, 0.10, 0.45)
 DASH_MM, GAP_MM = 8.0, 6.0
@@ -57,19 +63,21 @@ _g3 = {'key': None}        # the garment's tints and rims before the lift (per s
 
 
 def _selected(context):
-    """The selected pieces: flat pattern pieces and placed objects (a mirrored pair's object: both its pieces)."""
-    out = set()
-    from . import piece_move as PM
-    owners = set(PV.piece_objects().values()) | set(PLV.objects().values()) | set(PM.handles())
-    for ob in owners:
-        if context.scene.objects.get(ob.name) != ob:
-            continue
-        if not ob.select_get(view_layer=context.view_layer):
-            continue
-        for k in (PV.PIECE_PROP, PLV.PROP, PLV.TWIN_PROP):
-            if ob.get(k):
-                out.add(ob[k])
-    return frozenset(out)
+    """The picked pieces (selection.pieces, the one record: a pick in any view is marked in every view; read here
+    before from each object's own flag, the garment's handle gave only its first piece and a Shift-click on the
+    garment showed one piece picked). Also reads the colors of the mark and the first picked piece."""
+    from . import selection as SEL
+    th = context.preferences.themes[0].view_3d
+    _mark.update(sel=(*th.object_selected, 1.0), act=(*th.object_active, 1.0), lead=SEL.lead(context))
+    return frozenset(SEL.pieces(context))
+
+
+def _mark_key():
+    return (_mark['sel'], _mark['act'], _mark['lead'], _mark['colors'])
+
+
+def _sel_color(name):
+    return _mark['act'] if name == _mark['lead'] else _mark['sel']
 
 
 def fabric_colors(spec):
@@ -106,6 +114,12 @@ def _fabric_fills(context, spec):
 
 
 def _states(spec):
+    if not _mark['colors']:
+        return {pc['name']: 'active' for pc in spec['pieces']}
+    return _states_all(spec)
+
+
+def _states_all(spec):
     return {pc['name']: S.piece_state(pc) for pc in spec['pieces']}
 
 
@@ -150,10 +164,18 @@ def _rim(name, state, sel, P, closed=True, in3d=False):
     return [(_nonzero(L), c, k) for L, c, k in out]
 
 
+OFF_STATES = ('off_pattern', 'off_all')
+
+
 def _rim_raw(name, state, sel, P, closed=True, in3d=False):
     out = []
+    if in3d and state in OFF_STATES + ('hidden',) and name not in sel:
+        # an Off piece is drawn in 3D only while it is picked (user 2026-11-15: the dashed rims of every Off piece
+        # round the body got in the way); the pattern shows it always (gray, dashed)
+        return out
     if name in sel:
-        out.append(((_dashes if in3d and state in ('off_pattern', 'off_all') else _pairs)(P, closed), SEL, 'sel'))
+        out.append(((_dashes if in3d and state in ('off_pattern', 'off_all') else _pairs)(P, closed), _sel_color(name),
+                    'sel'))
     if state == 'freeze':
         out.append((_pairs(P, closed), FREEZE, 'state'))
     elif state == 'off_pattern':
@@ -169,12 +191,12 @@ def _fill_color(name, state, sel, in3d=False, fab=None):
         return FREEZE_FILL
     if in3d and state == 'off_pattern':
         return None
-    if in3d and state == 'off_all':
+    if in3d and state in ('off_all', 'hidden'):
         return None
     if fab and name in fab and state == 'active':      # an Off piece keeps its look (dashed rim, no tint)
         return fab[name]
     if name in sel:
-        return SEL_FILL_3D if in3d else SEL_FILL
+        return _sel_color(name)[:3] + (SEL_ALPHA_3D if in3d else SEL_ALPHA,)
     return None
 
 
@@ -188,9 +210,12 @@ def _flat_data(context, spec, outlines):
         _flat_views[visible] = {'key': None}
     _flat = _flat_views[visible]
     M = np.array(PV.layout_matrix(context))
-    st, sel = _states(spec), _selected(context)
-    fab = _fabric_fills(context, spec)
-    key = (store._cache['key'], M.tobytes(), tuple(sorted(st.items())), sel, bool(fab), visible)
+    sel = _selected(context)
+    st = _states(spec)
+    fab = _fabric_fills(context, spec) if _mark['colors'] else None
+    from . import piece_hide as PH
+    hid = PH.names(context.scene, spec)
+    key = (store._cache['key'], M.tobytes(), tuple(sorted(st.items())), sel, bool(fab), visible, _mark_key(), hid)
     if _flat['key'] == key:
         return _flat
     tri, tcol, lines = [], [], []
@@ -204,6 +229,10 @@ def _flat_data(context, spec, outlines):
         B = np.asarray(ol.B, float) * PV.MM
         W = (np.c_[B, np.zeros(len(B)), np.ones(len(B))] @ M.T)[:, :3]
         c = _fill_color(n, st[n], sel, fab=fab)
+        if n in hid and st[n] != 'off_all':
+            # hidden in 3D: kept here, faint -- a dark veil over the piece (its own gray is the object's, not ours),
+            # its own tint at less than half
+            c = HIDDEN_VEIL if c is None else tuple(c[:3]) + (c[3] * 0.4,)
         if c is not None and len(W) >= 3:
             for t in tessellate_polygon([[Vector(p) for p in W]]):
                 tri += [W[i] for i in t]
@@ -229,7 +258,7 @@ def _placed_lines(spec, outlines, st, sel, shown=None, only=None):
         n = pc['name']
         if (st[n] == 'active' and n not in sel) or (only is not None and n not in only):
             continue
-        key = (sk, st[n], n in sel, shown[n][4] if n in shown else None)
+        key = (sk, st[n], n in sel, shown[n][4] if n in shown else None, _mark_key())
         hit = _prim.get(n)
         if hit is None or hit[0] != key:
             try:
@@ -273,8 +302,8 @@ def _garment_topo(ob, job):
     me = ob.data
     names_json = ob.get('ac9_piece_names', '[]')
     owner = (job, int(ob.session_uid), int(me.session_uid), len(me.vertices), len(me.polygons), len(me.loops),
-             names_json, overlay._mesh_epochs.get(ob.as_pointer(), 0), overlay._mesh_epochs.get(me.as_pointer(), 0))
-    watched = overlay._geometry_changed in bpy.app.handlers.depsgraph_update_post
+             names_json, overlay.epoch(ob), overlay.epoch(me), overlay._generation[0])
+    watched = overlay.watching()
     if watched and _topo.get('owner') == owner and _topo['key'] is not None:
         return _topo['pieces']
     names = json.loads(names_json)
@@ -355,11 +384,20 @@ def _data3d(context, spec, outlines, rv3d):
         return None
     from . import dress as DR
     from . import display_state as DS
-    st, sel = _states(spec), _selected(context)
-    fab = _fabric_fills(context, spec)
+    sel = _selected(context)
+    st = _states(spec)
+    fab = _fabric_fills(context, spec) if _mark['colors'] else None
     ob = bpy.data.objects.get(DR.garment_name(spec))
     display = DS.snapshot(spec, ob)
     visible = VV.world_names(context, spec, display=display)
+    # a hidden piece (piece_hide) is drawn in 3D only while it is picked: its rim alone, solid (an Off piece's is
+    # dashed), where it is -- on the garment or on its placed object
+    hid = frozenset(n for n, v in display.items() if v.get('hidden'))
+    if hid:
+        st = dict(st)
+        for n in hid:
+            st[n] = 'hidden'
+        visible = visible | (hid & frozenset(sel))
     if not visible:
         return None
     job = DS.job(ob)
@@ -370,7 +408,8 @@ def _data3d(context, spec, outlines, rv3d):
     if job is None or not result_visible:
         sh, sig = PLV.shown(context, spec, outlines, include_off=True)
         sh = {n: v for n, v in sh.items() if n in visible}
-        key = ('placed', store._cache['key'], tuple(sorted(st.items())), sel, view, sig, bool(fab), visible)
+        key = ('placed', store._cache['key'], tuple(sorted(st.items())), sel, view, sig, bool(fab), visible,
+               _mark_key())
         if _b3['key'] != key:
             tri, tcol, lines = _placed_data(spec, outlines, st, sel, sh, fab, rv3d, only=visible)
             T = _lift(np.vstack(tri), rv3d).astype(np.float32) if tri else np.zeros((0, 3), np.float32)
@@ -384,7 +423,7 @@ def _data3d(context, spec, outlines, rv3d):
     sh = {n: v for n, v in sh.items() if n in sap and n in visible}
     off_g = {n for n, v in display.items() if v['source'] == 'proxy' and n in visible}
     gkey = ('garment', ckey, _topo.get('generation', 0), tuple(sorted(st.items())), sel, store._cache['key'] if fab else None, sig,
-            store._cache['key'] if sh else None, visible)
+            store._cache['key'] if sh else None, visible, _mark_key())
     if _g3['key'] != gkey:
         # the garment's tints and rims as they lie, made again only when the shape, states or selection change;
         # lifted towards the eye per view below (an orbit with a dressed piece picked rebuilt its 56 k tint corners
@@ -486,8 +525,10 @@ def _draw_lines(sh, lines, kind, width, rv3d, alpha=1.0):
 def _draw_view():
     context = bpy.context
     props = getattr(context.scene, 'ac9_cloth_sim', None)
-    if not overlay.shows(props, 'show_piece_colors'):
+    if props is None:
         return
+    # the selection is drawn always; the states and fabric tints with Overlays > Piece Colors
+    _mark['colors'] = overlay.shows(props, 'show_piece_colors')
     spec, outlines = store.get(context)
     if not spec or PV.layout_empty(context) is None:
         return
@@ -522,6 +563,20 @@ def _draw_view():
         _draw_lines(sh, d3['lines'], 'sel', 2.0, rv3d, alpha=0.2)
     gpu.state.depth_test_set('NONE')
     gpu.state.blend_set('NONE')
+
+
+def garment_marked(context):
+    """The picked pieces this module marks on the dressed garment (shown there from its result in a viewport that
+    shows the world; not put back to their placed shapes): selection.marks()."""
+    from . import dress as DR
+    from . import display_state as DS
+    spec = store.get(context)[0]
+    if not spec:
+        return []
+    sel = _selected(context)
+    ob = bpy.data.objects.get(DR.garment_name(spec))
+    display = DS.snapshot(spec, ob)
+    return sorted(n for n in sel if display.get(n, {}).get('source') == 'result')
 
 
 def invalidate():

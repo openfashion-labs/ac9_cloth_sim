@@ -7,7 +7,7 @@ slug: /
 # AC9 Cloth Sim 説明書
 
 Blender の中で服の型紙を読み込み、縫い合わせ、アバターに着せて、布の落ち着き方を確かめるアドオンの説明書です。
-いまは **α版（0.1）** です。機能は足りず、画面と手順はこれからも変わります。
+現在の版は **0.3.0** です。開発段階と版ごとの変更は [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) と [CHANGELOG](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) をご覧ください。機能は足りず、画面と手順はこれからも変わります。
 
 ## 読む順番
 
@@ -18,6 +18,7 @@ Blender の中で服の型紙を読み込み、縫い合わせ、アバターに
 | [はじめての 1 着](first-garment.md) | とにかく 1 着、最後まで着せてみたい |
 | [考え方](concepts.md) | 「今どの形を見ているのか」「どこに保存されるのか」が分からなくなったとき |
 | [機能ごとの説明](features/screen.md) | パネルとボタンを 1 つずつ調べたいとき |
+| [仕組み（技術メモ）](internals/index.md) | データの持ち方、選択とギズモ、計算の流れを知りたいとき。スクリプトで自動化・改造したいとき |
 | [困ったとき](troubleshooting.md) | 思ったように動かないとき |
 | [用語集](glossary.md) | 言葉の意味を確かめたいとき |
 

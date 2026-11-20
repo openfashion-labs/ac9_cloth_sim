@@ -7,6 +7,12 @@ external tool (MCP) all read and write the same thing.
     {
       "version": 1, "name": str, "units": "mm",
       "source": {"kind": "bom" | "manual" | "mesh", "path": str},   # mesh: {"object": name} (core/mesh_to_spec.py)
+                # bom, optional: "drape": the garment's 3D drape (an FBX exported with the BOM) read once
+                # (core/bom_drape.py): {"path": str (a record only: the FBX is never read again),
+                #  "pairs": {str(BOM seam gid): [[piece idx of side a, piece idx of side b]]}  ([] = not found in 3D;
+                #   a gid missing = no answer, a piece of it is not in the FBX), "on": [piece idx in the FBX],
+                #  "seams": int found, "pieces": int on it, "mm_per_uv": float}. The stored pairs decide a BOM seam's
+                #  partner and which pieces are one garment (core/bom_to_spec.py); without "drape", as before.
       "pieces": [
         {"name": str,                       # unique
          "fabric": str,                     # the source's fabric name, kept as a note: never read
@@ -24,6 +30,9 @@ external tool (MCP) all read and write the same thing.
                         "hole": bool}],                    # optional (2026-10-25): the edge of a hole cut out of the
                                                            # piece (a dart's diamond); lines that chain into a closed
                                                            # loop make one hole (holes() below), no cloth inside it
+                                                           # "hand": -1 optional (2026-11-19, core/fold_hand.py): a
+                                                           # fold's side A is the right of the line, not its left (a
+                                                           # mirror line: A the mirror image of A on its partner)
          "enabled": bool,
          "frozen": bool,                    # optional: stays put in the simulation (still touched, still sewn)
          "contact": bool,                   # optional, default true; false with frozen = nothing touches it, the
@@ -63,6 +72,8 @@ external tool (MCP) all read and write the same thing.
                                             # .garments_from_bom; check: split by the layout, not sure). Not the
                                             # spec's "garment" below (one kind proposed for the enabled pieces)
       "placement": {piece name: {...}},     # {guide, theta, h, anchor} (placement.py); "unlinked": true on both of a
+                                            # curved-guide pieces may set ring (own-length radius multiplier)
+                                            # regardless of role; an ordered self-closure uses the stand's ring.
                                             # mirrored pair = placed independently (a monster's arms, 2026-10-10);
                                             # "pose": {"loc": [x, y, z] mm, "rot": [x, y, z] deg} = the piece moved
                                             # by hand from where the numbers put it (2026-10-14, placed_view.py): the
@@ -73,7 +84,8 @@ external tool (MCP) all read and write the same thing.
                                             # mirrored copy (Pair, 2026-10-10); their meshes stay their own
       "folds": [{"piece": name, "line": internal id, "deg": float}    # + = mountain seen from the pattern's face; optional
                                             # "side": "A" / "B", the side Fold turns on the placed shape (A: the left
-                                            # walking the line from its first point; not read by the solver, 10/24)
+                                            # walking the line from its first point, the right on a line with hand -1
+                                            # (above), so a mirror pair's A is one side; not read by the solver, 10/24)
                                             # "side": "NONE" keeps the angle but skips the placed turn (10/30).
                                             # Missing side on old folds retains the legacy A default.
                                             # "layers": "A" / "B", the side kept when the fold is simulated as one
@@ -212,6 +224,7 @@ class Outline:
         self.B = np.vstack(pts)
         self.L = s0
         self.plane = plane_of(piece)       # the plane its pair mirrors in (a pair's pieces both hold it)
+        self.layout = layout_of(piece)     # the pattern axis its pair is drawn mirrored across (mostly the plane's)
         Bc = np.vstack([self.B, self.B[:1]])
         self.cum = np.r_[0, np.cumsum(np.linalg.norm(np.diff(Bc, axis=0), axis=1))]
         self._Bc = Bc
@@ -310,6 +323,22 @@ def in_holes(Q, hole_rings):
 
 
 PIECE_STATES = ('active', 'freeze', 'off_pattern', 'off_all')
+
+# The one place the states' screen names and tooltips are written (user 2026-11-17: the menu and the buttons
+# named the same state two ways, written in three places). Every button, menu, list, header, translation and the manuals read these; the stored
+# keys above never change (old files open). tests/test_state_names.py checks each display against this table.
+STATE_NAMES = {
+    'active': ("Active", "Simulated: moves, is touched and sewn"),
+    'freeze': ("Freeze", "Stays where it is; still touched and sewn"),
+    'off_pattern': ("Inactive", "Stays where it is; nothing touches it (the cloth goes through); its seams still pull"),
+    'off_all': ("Off", "Stays where it is, out of the simulation with its seams (nothing touches it, its seams do "
+                       "not pull)"),
+}
+
+
+def state_name(state):
+    """The screen name of a piece state (English; tx() translates it)."""
+    return STATE_NAMES[state][0]
 
 
 def piece_state(pc):
@@ -485,7 +514,7 @@ def twins(spec, any_state=False):
     """[(primary, twin)]: a piece and its mirrored copy (the same outline mirrored in the layout, the mirrored flag on
     exactly one of them), both enabled. Linked copies that are not mirrored (a shirt's overlapping fronts) are not
     twins. spec['symmetry'] = 'off': none (the garment's halves are meshed, placed and simulated independently).
-    any_state: Off (All) pieces too (the state buttons: switching a pair back on brings both, user 2026-10-24)."""
+    any_state: Off pieces too (the state buttons: switching a pair back on brings both, user 2026-10-24)."""
     if spec.get('symmetry') == 'off':
         return []
     fam = {}
@@ -541,17 +570,96 @@ def axis_of(plane):
     return 1 if plane == 'y' else 0
 
 
-MIRROR_AT = 'mirror_at'     # on both pieces of a pair: world mm of its mirror plane along the plane's axis
+MIRROR_LAYOUT = 'mirror_layout'    # on both pieces of a Pair: the pattern axis they are drawn mirrored across
+
+
+def layout_of(pc):
+    """The pattern axis a piece's pair is drawn mirrored across: 'x' (its left and right turned over) or 'y' (turned
+    upside down). The world plane says where the pair is in 3D; this says how the second piece was drawn, so a back
+    panel drawn upside down and one drawn as a left / right mirror image both land the right way up in a front / back
+    pair (user 2026-11-17: a Pair's back panel came out upside down). Without the key: the plane's own axis (a
+    Mirror Copy is always drawn so, and every pair before the key)."""
+    v = (pc or {}).get(MIRROR_LAYOUT)
+    return v if v in PLANES else plane_of(pc)
+
+
+def pair_layout(spec, name):
+    """layout_of the piece `name` (x when there is no such piece)."""
+    return layout_of(next((pc for pc in spec.get('pieces', []) if pc['name'] == name), None))
+
+
+def _drawn_points(pc, n=240):
+    """Points along a piece's outline (n, evenly spaced) and its internal lines, mm: what tells which way up it is."""
+    ol = Outline(pc)
+    P = [ol.at(np.linspace(0.0, ol.L, n, endpoint=False))]
+    for it in pc.get('internals', []):
+        Q = np.asarray(it.get('pts', ()), float)
+        if len(Q) >= 2:
+            L = polyline_len(Q)
+            m = max(2, int(L / max(ol.L / n, 1e-6)) + 1)
+            cum = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(Q, axis=0), axis=1))]
+            s = np.linspace(0.0, cum[-1], m)
+            P.append(np.stack([np.interp(s, cum, Q[:, 0]), np.interp(s, cum, Q[:, 1])], -1))
+    return np.vstack(P), 0.5 * (ol.B.min(0) + ol.B.max(0))
+
+
+LAYOUT_TIE_MM = 5.0     # both ways within this of each other: the piece reads the same either way up (the outlines
+                        # are sampled 240 points round, a few mm apart, so a plain shape matches either way to ~2 mm)
+
+
+def best_layout(pa, pb, plane):
+    """(layout axis, {axis: mean gap mm}) piece pb is drawn as piece pa mirrored across: the one whose mirror image of
+    pa's outline and internal lines lies nearer pb's (the farthest point either way, about the box centers). A tie (a plain rectangle):
+    the plane's own axis, as before."""
+    A, ca = _drawn_points(pa)
+    B, cb = _drawn_points(pb)
+    gap = {}
+    for ax in PLANES:
+        M = A - ca
+        M[:, axis_of(ax)] *= -1.0
+        M += cb
+        d = np.sqrt(((M[:, None, :] - B[None, :, :]) ** 2).sum(-1))
+        gap[ax] = max(float(d.min(1).max()), float(d.min(0).max()))      # the worst point: a slit or notch tells
+    other = 'y' if plane == 'x' else 'x'
+    return (other if gap[other] + LAYOUT_TIE_MM < gap[plane] else plane), gap
+
+
+MIRROR_AT = 'mirror_at'     # on both pieces of a pair: world mm of its own mirror plane along the plane's axis (files
+                            # from 2026-11-12 to 11-17; a pair made or switched since uses the garment's center)
+CENTER = 'center'           # on the spec: {'o': [x, y, z] world mm}, the garment's mirror center (user 2026-11-17)
+
+
+def garment_center(spec):
+    """The garment's mirror center (world mm, 3 values), or None. Only its position: the planes through it are the
+    world's (user 2026-11-17: moved, never turned; a turn would need the frame, kept for later as {'o', 'R'})."""
+    c = (spec or {}).get(CENTER)
+    return [float(v) for v in c['o']] if c and len(c.get('o', ())) == 3 else None
+
+
+def set_garment_center(spec, o):
+    spec[CENTER] = {'o': [round(float(v), 3) for v in o]}
+
+
+def uses_center(spec, name):
+    """The pair of `name` mirrors about the garment's center: laid flat, no plane of its own (MIRROR_AT), a center."""
+    return (garment_center(spec) is not None and stored_mirror_at(spec, name) is None
+            and name is not None and _pair_flat(spec, name))
 
 
 def mirror_center(spec, plane='x', name=None):
-    """World mm of the mirror plane along its axis: where the pair of `name` has its plane (MIRROR_AT, set when a
-    front / back pair laid flat is linked or copied, user 2026-11-12: a bag's back panel mirrors about the bag, not
-    the body), else x of the torso guide's axis for left / right, its y for front / back (else 0)."""
-    if name is not None:
+    """World mm of the mirror plane along its axis. A pair laid flat (the pair of `name`): its own plane position when
+    it still has one (MIRROR_AT, an older file), else the garment's center (user 2026-11-17: one center per garment,
+    left / right and front / back alike, moved as an empty); else x of the torso guide's axis for left / right, its y
+    for front / back (else 0) -- a pair on the body mirrors about the body."""
+    if name is not None and _pair_flat(spec, name):
         pc = next((p for p in spec.get('pieces', []) if p['name'] == name), None)
-        if pc is not None and plane_of(pc) == plane and pc.get(MIRROR_AT) is not None and _pair_flat(spec, name):
-            return float(pc[MIRROR_AT])
+        if pc is not None and pc.get(MIRROR_AT) is not None:
+            if plane_of(pc) == plane:
+                return float(pc[MIRROR_AT])
+        else:
+            c = garment_center(spec)
+            if c is not None:
+                return c[axis_of(plane)]
     t = spec.get('guides', {}).get('torso')
     return float(t['o'][axis_of(plane)]) if t else 0.0
 
@@ -663,7 +771,7 @@ def swap_sides(spec, a, b):
         p.update({k: pl[y][k] for k in SIDE_KEYS if k in pl[y]})
         c = 0.5 * (ol[x].B.min(0) + ol[x].B.max(0))
         d = np.asarray(pl[x]['anchor'], float) - c
-        d[axis_of(ol[x].plane)] *= -1.0
+        d[axis_of(ol[x].layout)] *= -1.0
         p['anchor'] = (c + d).tolist()
         q = mirror_pose(pl[x].get('pose'), ol[x].plane)
         if q:
@@ -703,15 +811,16 @@ def center_x(spec):
     return float(t['o'][0]) if t else 0.0
 
 
-def mirror_flat(flat, cx=0.0, plane='x'):
+def mirror_flat(flat, cx=0.0, plane='x', layout=None):
     """A flat frame's mirror image in the plane x = cx ('x') or y = cx ('y'). The mirrored piece's pattern is mirrored
-    across the same layout axis, so that axis of the frame turns over: for 'x' ex' = -S ex, ey' = S ey, for 'y' ex' =
-    S ex, ey' = -S ey, and n' = S n (S the mirror): ex' x ey' = n' and the face stays the same side out."""
+    across the layout axis `layout` (default: the plane's own), so that axis of the frame turns over: across x ex' =
+    -S ex, ey' = S ey, across y ex' = S ex, ey' = -S ey, and n' = S n (S the mirror): ex' x ey' = n' either way
+    (det S = -1), so the face stays the same side out."""
     o = list(map(float, flat['o']))
     ex, ey, n = (np.asarray(r, float) for r in flat['R'])
     S = np.array(mirror_diag(plane))
     o[axis_of(plane)] = 2.0 * cx - o[axis_of(plane)]
-    R = (-S * ex, S * ey, S * n) if plane != 'y' else (S * ex, -S * ey, S * n)
+    R = (-S * ex, S * ey, S * n) if (layout or plane) != 'y' else (S * ex, -S * ey, S * n)
     return {'o': [round(v, 3) for v in o], 'R': [[round(float(v), 6) + 0.0 for v in r] for r in R]}
 
 
@@ -739,9 +848,9 @@ def mirrored_placement(pa, ol_a, ol_b, pose='mirror', cx=0.0):
     ca = 0.5 * (ol_a.B.min(0) + ol_a.B.max(0))
     cb = 0.5 * (ol_b.B.min(0) + ol_b.B.max(0))
     d = np.asarray(pa['anchor'], float) - ca
-    d[axis_of(plane)] *= -1.0
+    d[axis_of(ol_a.layout)] *= -1.0          # b is drawn as a mirrored across this pattern axis
     if is_flat(pa):
-        out = dict(pa, flat=mirror_flat(pa['flat'], cx, plane), anchor=(cb + d).tolist())
+        out = dict(pa, flat=mirror_flat(pa['flat'], cx, plane, ol_a.layout), anchor=(cb + d).tolist())
     elif plane == 'y':
         # front / back round a guide: the same guide, the angle turned over (the torso's, neck's and legs' frames
         # have R0 = -x, so the y mirror is theta -> -theta; an arm's frame is near enough, not exact: assumed)

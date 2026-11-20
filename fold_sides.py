@@ -4,9 +4,9 @@
 the side taken out by Layers (Keep A / Keep B) hatched; the letters A and B at the middle of their sides, away
 from the line's dimension boxes.
 
-The sides are the solver's own (place_fold.split_ab on the garment's mesh, as dress.one_layer_rows reads them), so
-what is filled A is what Keep A keeps -- on a mirrored piece of a pair too, where "left of the line" is not what
-split_ab calls A. Only for a line running from the outline to the outline (place_fold.cuts_apart): a line that
+The sides are the solver's own (place_fold.split_ab on the garment's mesh with the line's hand, core/fold_hand.py,
+as dress.one_layer_rows reads them), so what is filled A is what Keep A keeps -- on a mirror line too, where A is the
+mirror image of A on the line it mirrors (the right of the line there). Only for a line running from the outline to the outline (place_fold.cuts_apart): a line that
 stops inside the piece has no two sides (a tuck's fold line; its angle still works while simulating).
 
 Worked out in a timer when the line or the pattern changes (the mesh is kept, dress._build_cached), never while
@@ -99,7 +99,8 @@ def compute(context, spec, piece, line):
     pc = S.piece_index(js).get(piece, {})
     il = next((l for l in pc.get('internals', []) if str(l.get('id')) == str(line)), None)
     L = np.asarray((il or {}).get('pts', ()), float)
-    bkey = (D._build_key(js, props.mesh_size), piece, str(line), L.round(4).tobytes())
+    from .core import fold_hand as FH
+    bkey = (D._build_key(js, props.mesh_size), piece, str(line), L.round(4).tobytes(), FH.hand(il))
     old = _data.get((piece, line))
     if old is not None and old.get('bkey') == bkey:
         return old
@@ -113,7 +114,8 @@ def compute(context, spec, piece, line):
         if fid is None:
             return out
         V = np.asarray(pat[f"V{i}"], float)
-        ab = PF.split_ab(pat, i, fid, T, L)
+        from .core import fold_hand as FH
+        ab = PF.split_ab(pat, i, fid, T, L, FH.hand(il))
         if ab is None:
             return out
         roll, sides, a, _ = ab

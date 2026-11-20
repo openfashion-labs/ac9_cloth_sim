@@ -30,7 +30,7 @@ def garment():
 
 def add(spec, sid, a, b):
     spec['seams'].append({'id': sid, 'a': a, 'b': b, 'source': 'user', 'check': ''})
-    return ST.mirror_onto_twins(spec, [sid])
+    return ST.mirror_added(spec, [sid])
 
 
 def ends(spec, sid):

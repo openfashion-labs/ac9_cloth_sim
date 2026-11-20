@@ -40,6 +40,13 @@ def preflight(spec, settings):
     if layered:
         raise ValueError('AC9 Native 3 does not support Piece Layer above 0: '
                          + ', '.join(layered[:3]) + '; turn off AC9 Native 3')
+    # its three-batch plan is made only for stitched surfaces (native_three_automatic: no spring, no plan), so a
+    # garment with no seam between its pieces (one flat piece, a pattern read in before it is sewn) runs the usual
+    # Live instead of failing at stage 1 (2026-11-15). A switched-off seam counts: Live keeps its stitches as springs
+    on = {p.get('name') for p in (spec or {}).get('pieces', []) if p.get('enabled', True)}
+    if on and not any(sm.get('a', {}).get('piece') in on and sm.get('b', {}).get('piece') in on
+                                    for sm in spec.get('seams', [])):
+        raise ValueError('AC9 Native 3 needs at least one seam between the pieces; turn off AC9 Native 3')
 
 
 def validate_config(cfg):

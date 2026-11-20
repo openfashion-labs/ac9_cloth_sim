@@ -315,7 +315,7 @@ def report(piece, num, left):
     msg = tx("{0} settled: inside the body {1} -> {2}, through other cloth {3} -> {4}", piece,
              b['inside'], num['inside'], b['cross'], num['cross'])
     if left:
-        msg += tx(" ({0} vertices left red: Move by Hand, or simulate from here)", left)
+        msg += tx(" ({0} vertices left red: move it with Whole Pieces, or simulate from here)", left)
     return msg
 
 
@@ -381,7 +381,19 @@ class AC9_OT_SimSettle(bpy.types.Operator):
             left = mark(ob, pat[f"V{i}"], tris[i], num)
             PLV.invalidate_shown()
             ok_any = True
-            self.report({'INFO'}, report(n, num, left))
+            msg = report(n, num, left)
+            twin = ob.get(PLV.TWIN_PROP)
+            pnames = [str(m) for m in pat['names']]
+            if num['cross'] and twin in pnames:
+                # its mirror moves with it: crossings between the two halves are not Settle's to part
+                from .core import spec as S_
+                pl_ = S_.pair_plane(spec, twin)
+                Xt = S_.mirror_points(Y, pl_, S_.mirror_center(spec, pl_, twin))
+                # the mirror of Y keeps Y's vertex order, so it takes this piece's triangles
+                if _crossing_tris(Y, tris[i], [(Xt, tris[i])], np.zeros(len(Y), bool)).size:
+                    msg += tx("; {0} crosses its pair {1}, which moves with it: Unlink the pair, then Move Outside "
+                              "on the one on top", n, twin)
+            self.report({'INFO'}, msg)
             PS.mark_on_next_run(spec, [n], preparation=preparation)
         return {'FINISHED'} if ok_any else {'CANCELLED'}
 

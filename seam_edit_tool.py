@@ -116,6 +116,8 @@ def select_seam(context, sid, extend=False):
         target = cur
     elif sid == cur:
         if not store.seam_more:
+            from . import tool_tab
+            tool_tab.publish(context, 'SEAM')
             return True
         target = sorted(store.seam_more)[0]
         store.seam_more.discard(target)
@@ -128,6 +130,8 @@ def select_seam(context, sid, extend=False):
         props.seam_index = ids.index(target)
     finally:
         store._seam_keep[0] = False
+    from . import tool_tab
+    tool_tab.publish(context, 'SEAM')
     overlay.invalidate()
     return True
 
@@ -137,10 +141,27 @@ def unselect_seam(context):
     props = context.scene.ac9_cloth_sim
     store.seam_more.clear()
     if props.seam_index != -1:
-        props.seam_index = -1
+        store._seam_sync[0] += 1
+        try:
+            props.seam_index = -1
+        finally:
+            store._seam_sync[0] -= 1
+        from . import tool_tab
+        tool_tab.release(context, 'SEAM')
         overlay.invalidate()
         if context.area is not None:
             context.area.tag_redraw()
+
+
+def activate_seam(context, sid):
+    """Make a selected seam the editing lead without changing the multi-selection (context menu, endpoint)."""
+    spec = store.get(context)[0]
+    picked = {sm['id'] for sm in store.selected_seams(context, spec)}
+    if not select_seam(context, sid):
+        return False
+    if sid in picked:
+        store.seam_more.update(picked - {sid})
+    return True
 
 
 def piece_label(spec, name):
@@ -281,6 +302,7 @@ class AC9_OT_SimSeamClick(bpy.types.Operator):
 
     # ------------------------------------------------ drag
     def _start_drag(self, context, event, spec, sid, k, w, key, s):
+        activate_seam(context, sid)
         self.spec = S.loads(S.dumps(spec))
         self.sid, self.k, self.w, self.key = sid, k, w, key
         self.s0 = self.s_cur = s
@@ -535,8 +557,9 @@ class AC9_OT_SimPieceLabel(bpy.types.Operator):
                     if pc.get('enabled', True) and _inside(outlines[pc['name']].B, q):
                         name = pc['name']
                         break
-        if not name and context.active_object is not None:
-            name = context.active_object.get('ac9_piece') or ''
+        if not name:
+            from . import selection as SEL
+            name = SEL.lead(context) or ''
         if not name or name not in S.piece_index(spec):
             self.report({'WARNING'}, "Point at a piece (or select one)")
             return {'CANCELLED'}
@@ -817,8 +840,10 @@ class AC9_OT_SimSeamListPick(bpy.types.Operator):
     def execute(self, context):
         props = context.scene.ac9_cloth_sim
         ids = [it.seam_id for it in props.seams]
+        from . import tool_tab
         if (not self.extend and not store.seam_more and 0 <= props.seam_index < len(ids)
-                and ids[props.seam_index] == self.seam):
+                and ids[props.seam_index] == self.seam
+                and tool_tab.resolve(context, store.get(context)[0]) == 'SEAM'):
             # a click on the row already picked takes it out: the list had no way to pick nothing, and the picked
             # seam's lengths stayed drawn in every tool (user 2026-11-13)
             unselect_seam(context)

@@ -11,7 +11,15 @@ import uuid
 from functools import lru_cache
 import numpy as np
 
-VERSION = 1
+# 2: the bending hinges (edge_indices) are left out of the key. Seam hinges are added or left out by the start shape
+# (newton_vbd seam_bend: not across 120 degrees the wrong way), so a garment started again from a slightly different
+# shape got another key on every Live and rebuilt its plan (5.2 s on a 30 000-vertex garment, hit False twice,
+# 2026-11-15). A loaded plan is still certified against this run's every triangle, hinge and spring row
+# (native_jacobi_diagnostic.TwoPerStencilBatch: at most two independent nodes of a stencil per batch); one that does
+# not hold is rebuilt and saved again, as a miss was. A hit solves with that certified partition, which may not be the
+# one this run's input would have been searched to: results with and without the cache differ within the GPU's
+# run-to-run spread (not bit for bit; nor are two GPU runs), not by more (design review 2026-11-15).
+VERSION = 2
 MAX_POINTS = 120000
 MAX_BYTES = 1048576
 MAX_ENTRIES = 32
@@ -32,7 +40,8 @@ def algorithm_id():
     digest = hashlib.sha256()
     here = Path(__file__).resolve().parent
     for name in ('native_three_automatic.py', 'native_three_cache.py',
-                 'native_experimental_coloring.py', 'native_jacobi_diagnostic.py'):
+                 'native_experimental_coloring.py', 'native_jacobi_diagnostic.py',
+                 'native_stencil_arrays.py', 'native_coloring_neighbors.py'):
         digest.update(name.encode('ascii'))
         digest.update((here / name).read_bytes().replace(b'\r\n', b'\n'))
     for name in ('numpy', 'warp-lang', 'newton'):
@@ -51,8 +60,7 @@ def input_key(model, bound=None):
         raise ValueError('Native three plan cache exceeds its input range')
     digest = hashlib.sha256()
     digest.update(json.dumps([VERSION, algorithm_id(), count, int(model.tri_count),
-                             int(model.edge_count), int(model.spring_count),
-                             int(model.tet_count)], separators=(',', ':')).encode('ascii'))
+                             int(model.spring_count), int(model.tet_count)], separators=(',', ':')).encode('ascii'))
 
     def array(name, values):
         values = np.asarray(values)
@@ -80,7 +88,6 @@ def input_key(model, bound=None):
         raise ValueError('Invalid Native three dependent point membership')
     array('followers', followers); array('supports', supports)
     for name, width, length in [('tri_indices', 3, model.tri_count),
-                                ('edge_indices', 4, model.edge_count),
                                 ('spring_indices', 2, model.spring_count),
                                 ('tet_indices', 4, model.tet_count)]:
         source = getattr(model, name, None)

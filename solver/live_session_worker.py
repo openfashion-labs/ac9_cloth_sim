@@ -14,8 +14,12 @@ join_owned_job()
 import prepared_live as protocol
 import preload_config
 from lifecycle_trace import mark
-
-class CanceledJob(Exception):pass
+import job_cancel
+from job_cancel import CanceledJob
+# Resident Live (Preferences > Keep the Live Model, off by default; DECISIONS cloth-sim-hstar-resident-2026-11-16):
+# the worker keeps the last job's model and begins the next job of the same structure on it (resident_runner.py)
+RESIDENT_ON = os.environ.get('AC9_RESIDENT') == '1'
+RUNNER = None
 
 
 def load_request(line,spec,root,generation):
@@ -43,7 +47,8 @@ def engine_identity():
     import newton
     digest=hashlib.sha256()
     root=Path(newton.__file__).resolve().parent
-    for path in sorted(root.rglob('*.py')):
+    for index, path in enumerate(sorted(root.rglob('*.py'))):
+        if index % 32 == 0:job_cancel.check()
         digest.update(path.relative_to(root).as_posix().encode());digest.update(path.read_bytes())
     return protocol.source_id()+digest.hexdigest()
 
@@ -56,7 +61,7 @@ def run_job(command,spec,variant,engine):
     import lifecycle_trace
     original_trace=lifecycle_trace.mark
     def trace(event,**fields):
-        if event=='solver_import_begin' and not job_globals:
+        if event=='solver_import_begin' and not job_globals and not RESIDENT_ON:
             job_globals.append(sys._getframe(1).f_globals)
         if event=='loop_ready' and os.environ.get('AC9_SESSION_AUDIT')=='1':
             g=sys._getframe(1).f_globals
@@ -66,19 +71,28 @@ def run_job(command,spec,variant,engine):
                 try:references[name]=weakref.ref(g[name])
                 except TypeError:pass
             audit['_references']=references
+        elif event in ('timing_built','timing_finalized','timing_filters','timing_solver','start_check_begin') and os.environ.get('AC9_SESSION_AUDIT')=='1':
+            g=sys._getframe(1).f_globals
+            references=audit.setdefault('_references',{})
+            for name in ('builder','model','solver','s0','s1','graph'):
+                try:references[name]=weakref.ref(g[name])
+                except (KeyError,TypeError):pass
         return original_trace(event,**fields)
     try:
+        job_cancel.activate(stage,command['job_token'],command['generation'])
+        job_cancel.check()
         if command['session_token']!=spec['session_token'] or command['code']!=spec['code']:
             raise ValueError('Stale Native session request')
         if engine_identity()!=engine:raise ValueError('Native session source/dependency changed')
         idx,avatar,cfg_path,_=command['args']
         cfg=json.loads(Path(cfg_path).read_text(encoding='utf8'))
         if preload_config.variant_key(cfg)!=variant:raise ValueError('Native compile variant changed')
-        if protocol.fingerprint(idx,avatar,cfg,spec['environment'],implementation=spec['code'])!=command['fingerprint']:
+        if protocol.fingerprint(idx,avatar,cfg,spec['environment'],implementation=spec['code'],
+                                unaudited=protocol.SESSION_UNAUDITED)!=command['fingerprint']:
             raise ValueError('Native request input changed')
         if any((stage/name).exists() for name in ('run_log.json','frames.npy','live.npy')):
             raise ValueError('Native session refuses an existing result')
-        if (stage/'stop').exists():raise CanceledJob()
+        job_cancel.check()
         stream=(stage/'stdout.txt').open('w',encoding='utf8')
         sys.stdout=sys.stderr=stream
         sys.argv=[str(Path(__file__).with_name('newton_vbd.py')),idx,avatar,cfg_path,str(stage)]
@@ -86,16 +100,36 @@ def run_job(command,spec,variant,engine):
         if os.environ.get('AC9_SESSION_PROFILE')=='1':
             import cProfile
             profile=cProfile.Profile();profile.enable()
-        result=runpy.run_path(sys.argv[0],run_name='__main__',init_globals={'_AC9_CLEANUP':closes.append})
+        init={'_AC9_CLEANUP':closes.append,'_AC9_CANCEL':job_cancel.check,'_AC9_LOOP_READY':job_cancel.loop_ready}
+        if RESIDENT_ON:
+            # the kept model is the runner's, not this job's: it is not cleared below (job_globals stays empty)
+            global RUNNER
+            import resident_runner
+            if RUNNER is None:RUNNER=resident_runner.Resident(sys.argv[0],Path(__file__).parent)
+            try:audit['resident']=RUNNER.run(idx,avatar,cfg,init)
+            finally:
+                last=RUNNER.last or {}
+                mark('resident_job',mode=last.get('mode'),why_fresh=str(last.get('why_fresh'))[:400],
+                     why_not=str(last.get('why_not'))[:300],begin_error=last.get('begin_error'),vram=last.get('vram'))
+        else:
+            result=runpy.run_path(sys.argv[0],run_name='__main__',init_globals=init)
         log=json.loads((stage/'run_log.json').read_text(encoding='utf8'))
         if log.get('error'):code=2;message=str(log['error'])
     except CanceledJob:
-        pass
+        audit['cancelled']=True
+        # Cancellation before frame 1 is a completed request, not a failed I/O
+        # runtime. Close its streams/locks through the usual owned cleanup path.
+        namespaces=list(job_globals)
+        if RUNNER is not None:namespaces.append(RUNNER.g if RUNNER.g is not None else {'_NATIVE_RUNTIME':RUNNER.runtime})
+        for namespace in namespaces:
+            runtime=namespace.get('_NATIVE_RUNTIME')
+            if runtime is not None:runtime.success=True
     except BaseException as exc:
         code=1;message=str(exc)
         try:traceback.print_exc()
         except Exception:pass
     finally:
+        job_cancel.clear()
         if profile is not None:
             profile.disable()
             import pstats

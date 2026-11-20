@@ -27,6 +27,10 @@ import json
 import os
 
 import numpy as np
+try:
+    from job_cancel import check as _cancel_check
+except ImportError:
+    def _cancel_check():pass  # This geometry check can also run standalone on CPU.
 
 
 def _seg_tri_hits(P0, P1, A, B, C, eps=1e-9, each=False):
@@ -56,6 +60,7 @@ def check(cfg, out, X, F, tri_piece, v_piece, pat_names, E, idle, body_inside, u
     """X (n, 3) m, F (t, 3), tri_piece (t,), v_piece (n,), E (s, 2) local stitches, idle: set of stitch ids not sewn in
     this stage, body_inside(P) -> bool (n,). Returns (report dict, action 'ok' | 'warn' | 'stop')."""
     import time
+    _cancel_check()
     t0 = time.perf_counter()
     names = [str(n) for n in pat_names] if pat_names is not None else []
     if cfg.get('init_from') and cfg.get('init_from_pieces') is not None:
@@ -163,10 +168,32 @@ def check(cfg, out, X, F, tri_piece, v_piece, pat_names, E, idle, body_inside, u
             # only the triangles whose box (1 um wider) meets the stitch's: the same hits as testing them all (the
             # test of a triangle does not depend on the others), 1-2 s less per stage (sim_latency 2026-10-20)
             lo_t, hi_t = np.minimum(np.minimum(A, B), C) - 1e-6, np.maximum(np.maximum(A, B), C) + 1e-6
-            for k in sel:
+            # A sorted slab is only a conservative prefilter. Keep the original
+            # inclusive box comparisons and ascending triangle order afterwards.
+            order = None
+            if len(Fa) and np.isfinite(X64).all():
+                axis = int(np.argmax(np.ptp(X64, axis=0)))
+                extent = np.nextafter(np.max(hi_t[:, axis] - lo_t[:, axis]), np.inf)
+                if np.isfinite(extent):
+                    order = np.argsort(lo_t[:, axis], kind='stable')
+                    lo_sorted = np.ascontiguousarray(lo_t[order])
+                    hi_sorted = np.ascontiguousarray(hi_t[order])
+                    key = lo_sorted[:, axis]
+            for index, k in enumerate(sel):
+                if index % 32 == 0:_cancel_check()
                 a, b = int(E_[k, 0]), int(E_[k, 1])
                 lo_s, hi_s = np.minimum(X64[a], X64[b]), np.maximum(X64[a], X64[b])
-                near = np.nonzero((hi_t >= lo_s).all(1) & (lo_t <= hi_s).all(1))[0]
+                if order is None:
+                    near = np.nonzero((hi_t >= lo_s).all(1) & (lo_t <= hi_s).all(1))[0]
+                else:
+                    lower = np.nextafter(lo_s[axis] - extent, -np.inf)
+                    i0 = np.searchsorted(key, lower, side='left')
+                    i1 = np.searchsorted(key, hi_s[axis], side='right')
+                    lo, hi = lo_sorted[i0:i1], hi_sorted[i0:i1]
+                    mask = ((hi[:, 0] >= lo_s[0]) & (lo[:, 0] <= hi_s[0])
+                            & (hi[:, 1] >= lo_s[1]) & (lo[:, 1] <= hi_s[1])
+                            & (hi[:, 2] >= lo_s[2]) & (lo[:, 2] <= hi_s[2]))
+                    near = np.sort(order[i0:i1][mask])
                 keep = near[~((Fa[near] == a) | (Fa[near] == b)).any(1)]
                 hit = _seg_tri_hits(X64[a][None], X64[b][None], A[keep], B[keep], C[keep], each=True)
                 if len(hit):

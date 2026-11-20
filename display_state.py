@@ -47,9 +47,10 @@ def result_names(g):
         return frozenset()
 
 
-def plan(spec, result=(), placed=(), reset=()):
-    """Pure decision table. Proxy is a fallback, never a second solid shape."""
-    result, placed, reset = set(result), set(placed), set(reset)
+def plan(spec, result=(), placed=(), reset=(), hidden=()):
+    """Pure decision table. Proxy is a fallback, never a second solid shape. hidden: the pieces whose eye is closed
+    (piece_hide: not drawn in 3D, still simulated); an Off piece has no eye."""
+    result, placed, reset, hidden = set(result), set(placed), set(reset), set(hidden)
     pcs = {pc['name']: pc for pc in spec['pieces']}
     out = {}
     for n in pcs.keys() | result:
@@ -62,7 +63,8 @@ def plan(spec, result=(), placed=(), reset=()):
         out[n] = {'state': st, 'source': source, 'solid': st not in OFF,
                   'dashed': st in OFF, 'seams': st != 'off_all',
                   'missing': st in ('active', 'freeze') and source in ('proxy', 'none'),
-                  'can_materialize': source == 'proxy'}
+                  'can_materialize': source == 'proxy',
+                  'hidden': n in hidden and st != 'off_all'}
     return out
 
 
@@ -78,7 +80,8 @@ def snapshot(spec, g=None):
     except (ValueError, TypeError):
         reset = []
     placed = {n: ob for n, ob in PV.objects(spec).items() if bpy.context.scene.objects.get(ob.name) == ob}
-    return plan(spec, result_names(g), placed, reset)
+    from . import piece_hide as PH
+    return plan(spec, result_names(g), placed, reset, PH.names(bpy.context.scene, spec))
 
 
 def job(g):
@@ -102,14 +105,15 @@ def placed_names(spec, g):
 
 def hidden_result(spec, g):
     return frozenset(n for n, v in snapshot(spec, g).items()
-                     if n in result_names(g) and (v['source'] in ('placed', 'none') or not v['solid']))
+                     if n in result_names(g) and (v['source'] in ('placed', 'none') or not v['solid'] or v['hidden']))
 
 
-def apply(context, spec, create_missing=False, allow_split=False):
+def apply(context, spec, create_missing=False, allow_split=False, only=None):
     """Reconcile derived scene display inside an operation, never a draw/poll.
 
     Existing geometry is not regenerated. Missing placed shapes use the normal
     shape builder, without starting a simulation or creating a job folder.
+    only: with create_missing, make only these pieces' missing shapes.
     """
     global _applying
     if _applying or not spec:
@@ -121,7 +125,7 @@ def apply(context, spec, create_missing=False, allow_split=False):
     try:
         g = context.scene.objects.get(D.garment_name(spec))
         p = snapshot(spec, g)
-        missing = {n for n, v in p.items() if v['missing']}
+        missing = {n for n, v in p.items() if v['missing'] and (only is None or n in only)}
         if create_missing:
             unplaced = {n for n in missing if not p[n]['can_materialize']}
             if unplaced:
@@ -159,7 +163,8 @@ def apply(context, spec, create_missing=False, allow_split=False):
         split = False
         for ob in set(obs.values()):
             a, b = ob.get(PV.PROP), ob.get(PV.TWIN_PROP)
-            if (allow_split or create_missing) and b and p.get(a, {}).get('solid') != p.get(b, {}).get('solid'):
+            seen = lambda n: (p.get(n, {}).get('solid'), p.get(n, {}).get('hidden'))
+            if (allow_split or create_missing) and b and seen(a) != seen(b):
                 outlines = {pc['name']: S.Outline(pc) for pc in spec['pieces']}
                 PV.split_pair(context, spec, outlines, a, b, keep_shape=True)
                 split = True
@@ -172,7 +177,7 @@ def apply(context, spec, create_missing=False, allow_split=False):
                 continue
             held = [n for n, o in obs.items() if o == ob]
             should_hide = all(not p.get(n, {}).get('solid', False) or p.get(n, {}).get('source') != 'placed'
-                              for n in held)
+                              or p.get(n, {}).get('hidden', False) for n in held)
             if should_hide and not ob.get(HIDDEN):
                 ob[WAS_HIDDEN] = bool(ob.hide_get())
                 ob[HIDDEN] = True
@@ -186,6 +191,7 @@ def apply(context, spec, create_missing=False, allow_split=False):
                 ob.hide_set(bool(ob.get(WAS_HIDDEN, False)))
                 ob.pop(HIDDEN, None)
                 ob.pop(WAS_HIDDEN, None)
+        PV.refresh_thickness(context, spec, obs)       # the placed shapes drawn with their fabric's thickness
         if result_names(g):
             hidden = hidden_result(spec, g)
             key = (g.as_pointer(), g.data.as_pointer(), len(g.data.vertices), len(g.data.polygons),

@@ -24,7 +24,8 @@ set now, a replacement (user 2026-10-22: 45 degrees to look, then 180); its side
 picked again, and folds made after it on the piece are undone.
 
 The side that turns (user 2026-10-24): A is the left of an internal line walked from its first point to its last on the
-flat pattern, B the right; the spec's fold keeps it ("side": "A" / "B", only the placed shape uses it - the solver
+flat pattern, B the right -- the right and the left the other way round on a line whose hand is -1, the mirror image
+of another line (core/fold_hand.py, 2026-11-19: A on a mirror pair is the same side); the spec's fold keeps it ("side": "A" / "B", only the placed shape uses it - the solver
 pulls both sides to the angle). The Tool tab is the only way in (user 2026-10-24, no Fold button): its Fold Angle,
 Direction and Moves fold the placed shape at once, the first time too; A and B are shown on the pattern and on the
 placed shape, and a line it cannot fold shows why with Local Sim to see it."""
@@ -38,6 +39,7 @@ from mathutils import Matrix, Vector
 from . import placed_view as PLV
 from . import store
 from .core import spec as S
+from .core import fold_hand as FH
 from .i18n import tx
 from . import selection as SEL
 
@@ -96,14 +98,16 @@ def signed_to_line(P, L):
     return sd, d[k, j]
 
 
-def _a_side(V, L, roll, sides):
-    """Which of sides (two index arrays into V, flat mm) lies on the left of L (A), or None when the mesh is not in
-    the line's frame (a mirrored piece) or a side is empty."""
+def _a_side(V, L, roll, sides, hand=1):
+    """Which of sides (two index arrays into V, flat mm) is A: the one on the left of L (hand +1) or on its right
+    (hand -1, core/fold_hand.py), by the median signed distance of the first side's vertices; None only when a side
+    is empty. Before 2026-11-19 a line whose mesh vertices lay over 0.5 mm off it also got None, and A was then the
+    mesh flood's first side whichever way the line ran; on 4 garments' 14 fold lines it never happened (the line's
+    vertices 0.001 mm off it at most), and the rule here gave the same A on all 14."""
     if len(L) < 2 or not len(sides[0]) or not len(sides[1]):
         return None
-    if signed_to_line(V[roll], L)[1].max() > 0.5:
-        return None
-    return 0 if float(np.median(signed_to_line(V[sides[0]], L)[0])) > 0 else 1
+    left = 0 if float(np.median(signed_to_line(V[sides[0]], L)[0])) > 0 else 1
+    return left if hand > 0 else 1 - left
 
 
 def _turn_back(ob, info, d):
@@ -301,7 +305,7 @@ def seam_sides(context, spec, sm, piece, *, preparation=None):
         return None, tx("{0} is not placed", other if piece in names else piece)
     i, j = names.index(piece), names.index(other)
     V = np.asarray(pat[f"V{i}"], float)
-    if len(ob.data.vertices) != len(V) or ob.get(PLV.KEY_PROP) != PLV.layout_key(V):
+    if not PLV.layout_matches(ob, V):
         PLV.remesh(ob, V, tris[i])
     st = np.asarray(pat['stitch'])
     mine = (st[:, 0] == i) & (st[:, 2] == j), (st[:, 2] == i) & (st[:, 0] == j)
@@ -397,14 +401,14 @@ def sides(context, spec, piece, line, prepared=None, *, preparation=None):
         return None, tx("{0} is not a fold line of {1}", line, piece)
     V = np.asarray(pat[f"V{i}"], float)
     n = len(ob.data.vertices)
-    if n != len(V) or ob.get(PLV.KEY_PROP) != PLV.layout_key(V):
+    if not PLV.layout_matches(ob, V):
         # the pattern re-meshed since (a fold line drawn): the placed shape carried onto the new mesh
         PLV.remesh(ob, V, tris[i])
         n = len(ob.data.vertices)
     pc = S.piece_index(spec).get(piece, {})
     il = next((l for l in pc.get('internals', []) if str(l.get('id')) == str(line)), None)
     L = np.asarray((il or {}).get('pts', ()), float)
-    ab = split_ab(pat, i, fid, tris[i], L)
+    ab = split_ab(pat, i, fid, tris[i], L, FH.hand(il))
     if ab is None:
         return None, tx("{0} does not divide {1}", line, piece)
     roll, (fall, other), a_side, flap = ab
@@ -437,10 +441,11 @@ def cuts_apart(n, T, roll, fall, other):
     return torn <= max(TEAR_MIN, TEAR_SHARE * on_line)
 
 
-def split_ab(pat, i, fid, T, L):
-    """The two sides of piece i's internal line fid (L its points, flat mm), as Fold and Layers both read them:
-    (roll, [fall, other], a, flap) -- a the index of side A in [fall, other] or None (a mirrored piece: then index
-    0 is A), flap dress.fold_flap's split before _split_end_to_end -- or None when the line does not divide it."""
+def split_ab(pat, i, fid, T, L, hand=1):
+    """The two sides of piece i's internal line fid (L its points, flat mm; hand the line's, core/fold_hand.hand), as
+    Fold, Layers and the fills all read them: (roll, [fall, other], a, flap) -- a the index of side A in [fall,
+    other] or None (the sides could not be told apart by the line: no A / B), flap dress.fold_flap's split before
+    _split_end_to_end -- or None when the line does not divide it."""
     from . import dress as D
     V = np.asarray(pat[f"V{i}"], float)
     roll, fall = D.fold_flap(pat, i, fid, T)
@@ -450,7 +455,7 @@ def split_ab(pat, i, fid, T, L):
     if len(L):
         roll, fall = _split_end_to_end(V, T, L, roll, fall)
     other = np.setdiff1d(np.arange(len(V)), np.r_[roll, fall])
-    return roll, [fall, other], _a_side(V, L, roll, [fall, other]), flap
+    return roll, [fall, other], _a_side(V, L, roll, [fall, other], hand), flap
 
 
 def _split_end_to_end(V, T, L, roll, fall, near=1.0):
@@ -620,41 +625,81 @@ def write_angle(context, piece, line, deg, side=None):
     overlay.invalidate()
 
 
-def _ab_swapped(context, spec, piece, line, tw, tl, M=None):
-    """True when the twin's side A is the mirror image of this line's side B (the sides as filled on the pattern,
-    fold_sides): a Mirror Copy keeps the line's point order, so its left is the other side; a BOM's twin may not.
-    M: the map from piece to tw's layout (the twin's mirror by default)."""
+def _mesh_sides(context, js, piece, line):
+    from . import fold_sides as FS
+    from . import dress as D
+    pm = FS.piece_mesh(context, js, piece)
+    if pm is None:
+        return None
+    pat, _names, i, T = pm
+    fid = D._fold_fid(pat, piece, str(line))
+    il = next((l for l in S.piece_index(js).get(piece, {}).get('internals', []) if str(l.get('id')) == str(line)),
+              None)
+    if fid is None or il is None:
+        return None
+    ab = split_ab(pat, i, fid, T, np.asarray(il.get('pts', ()), float), FH.hand(il))
+    return None if ab is None else (np.asarray(pat[f"V{i}"], float), ab[1])
+
+
+def mirror_raw_side(context, spec, src, line, dst, dline, k, M=None):
+    """The index into dst's two mesh sides of dline (split_ab's [fall, other]) that is the mirror image of src's
+    side k of line: a placed object's saved fold keeps that index, which follows the mesh, not the letters. Raises
+    ValueError when either line's sides cannot be made (nothing is guessed)."""
     from . import fold_sides as FS
     from .core import draft as DR
-    d1, d2 = FS.compute(context, spec, piece, line), FS.compute(context, spec, tw, tl)
-    if not d1.get('n') or not d2.get('n') or not len(d1['tri'][0]) or not len(d2['tri'][0]) or not len(d2['tri'][1]):
-        return True
-    M = M or DR.mirror_fn(DR.piece(spec, piece), DR.piece(spec, tw))
-    a1 = M(d1['V'][d1['tri'][0]].reshape(-1, 2).mean(0))[0]
-    a2, b2 = (d2['V'][d2['tri'][k]].reshape(-1, 2).mean(0) for k in (0, 1))
-    return bool(np.linalg.norm(a1 - b2) < np.linalg.norm(a1 - a2))
+    js = FS.job_spec(context, spec)
+    a, b = _mesh_sides(context, js, src, line), _mesh_sides(context, js, dst, dline)
+    if a is None or b is None or not all(len(s) for s in a[1] + b[1]):
+        raise ValueError(tx("AC9 cannot match the saved fold to the other half: {0}", line))
+    M = M or DR.mirror_fn(DR.piece(spec, src), DR.piece(spec, dst))
+    c = np.asarray(M(a[0][a[1][int(k)]].mean(0)), float).reshape(-1)
+    d = [np.linalg.norm(b[0][s].mean(0) - c) for s in b[1]]
+    return int(np.argmin(d))
+
+
+_apart_cache = {}
+
+
+def named_apart(spec, piece, line):
+    """The mirror lines of the line whose A is not the mirror image of its A (their hand not carried, a file from
+    before 2026-11-19: there each line's A was its own left, so a pair's same side had opposite letters). Read on the
+    Tool tab's draw: kept per spec text (store's key)."""
+    from .core import draft as DR
+    k = (store._cache.get('key'), piece, str(line))
+    hit = _apart_cache.get(k)
+    if hit is not None:
+        return hit
+    out = []
+    f = next((x for x in spec.get('folds', []) if x.get('piece') == piece and x.get('line') == line), {})
+    try:
+        if not any(f.get(n) in ('A', 'B') for n in ('side', 'layers')):
+            raise ValueError('no letters to name apart')
+        src = DR.internal(DR.piece(spec, piece), line)
+        for tw, tid, M in DR.mirror_lines(spec, piece, line):
+            if FH.mapped_hand(src, DR.internal(DR.piece(spec, tw), tid), M) != FH.hand(DR.internal(DR.piece(spec, tw),
+                                                                                                    tid)):
+                out.append((tw, tid))
+    except (KeyError, StopIteration, ValueError, TypeError):
+        out = []
+    if len(_apart_cache) > 64:
+        _apart_cache.clear()
+    _apart_cache[k] = out
+    return out
 
 
 def sync_twin(context, piece, line):
     """The line's fold written on its twin's line too (user 2026-10-25: a symmetric pair's fold is one), and on its
     mirror line across the center line of a piece edited symmetrically (user 2026-10-27): the same angle (seen from
-    each pattern's face, both faces out), Turns and Layers on the mirrored side; none if none."""
+    each pattern's face, both faces out), the same Turns and Layers letters -- each mirror line's hand made so that
+    its A is the mirror image of this line's A (core/fold_hand.carry, 2026-11-19); none if none."""
     from .core import draft as DR
     spec = store.get(context)[0]
     tls = DR.mirror_lines(spec, piece, line) if spec else []
     if not tls:
         return None
-    f = next((x for x in spec.get('folds', []) if x.get('piece') == piece and x.get('line') == line), None)
-    folds = [x for x in spec.get('folds', []) if not any(x.get('piece') == tw and x.get('line') == tid
-                                                         for tw, tid, _ in tls)]
-    if f is not None:
-        for tw, tid, M in tls:
-            g = dict(f, piece=tw, line=tid)
-            if any(f.get(k) in ('A', 'B') for k in ('side', 'layers')) and _ab_swapped(context, spec, piece, line,
-                                                                                       tw, tid, M):
-                g.update({k: {'A': 'B', 'B': 'A'}[f[k]] for k in ('side', 'layers') if f.get(k) in ('A', 'B')})
-            folds.append(g)
-    store.put(context, dict(spec, folds=folds), keep=True, seams=False)
+    # a new spec dict: the folds a new list, a piece copied only when a line's hand changed (the Fold Angle slider
+    # writes here on every step: the pieces' list kept keeps the outlines, store.write)
+    store.put(context, DR.carry_fold(spec, piece, line, tls), keep=True, seams=False)
     return tls[0][:2]
 
 
@@ -1003,10 +1048,8 @@ class AC9_OT_SimFoldLocalSim(bpy.types.Operator):
         if ob is None:
             self.report({'WARNING'}, tx("{0} has no placed shape: Place it first", self.piece))
             return {'CANCELLED'}
-        SEL.deselect_all(context)
         ob.hide_set(False)
-        ob.select_set(True)
-        context.view_layer.objects.active = ob
+        SEL.apply(context, [self.piece], 'SET', active=self.piece, view='world')
         return bpy.ops.ac9_cloth_sim.dress('INVOKE_DEFAULT', mode='LOCAL', button='LOCAL')
 
 

@@ -113,22 +113,23 @@ def measure(body):
             u = -u
         t = (A_ - m_) @ u
         U = A_[t < t.min() + 0.45 * np.ptp(t)]
-        mu = U.mean(0)
-        w = np.linalg.svd(U - mu, full_matrices=False)[2][0]
-        ez = -w if w[0] * sgn > 0 else w                   # up the arm, towards the shoulder
+        # the guide's axis is the whole arm's line (shoulder to hand, the first principal direction of all its
+        # points), the line Dress already wrapped the sleeves round. It was the upper arm's own axis (the first 45 %
+        # of the arm's points from the shoulder), but the shoulder's mass there (160-190 mm tall next to the armpit,
+        # where the vertices are dense) stood that axis up: on the bundled avatar 17 deg from vertical for an arm at
+        # 26, and the cylinder drawn along it ran off the forearm towards the body, the arm's cross-section centers
+        # up to 70 mm from its axis at the wrist end (24 mm round the whole arm's line, 2026-11-15). Round the upper
+        # arm's axis the forearm of an avatar with its arms out at a flatter angle lay 74 mm off too (2026-10-09):
+        # that is why the whole arm's line was kept beside it ('full'), now the same line
+        ez = u if u[0] * sgn < 0 else -u                    # up the arm, towards the shoulder
         Rm = _ring_frame(ez)
-        L = (U - mu) @ Rm.T
-        A2 = np.c_[L[:, :2], np.ones(len(L))]
-        D_, E_, _ = np.linalg.lstsq(A2, -(L[:, :2] ** 2).sum(1), rcond=None)[0]
-        o = mu + (-D_ / 2) * Rm[0] + (-E_ / 2) * Rm[1]
+        # the origin stays by the upper arm, where it was (a placement's h is measured from it)
+        o = m_ + float((U.mean(0) - m_) @ ez) * ez
         r = np.linalg.norm(((U - o) @ Rm.T)[:, :2], axis=1)
-        hh = (U - o) @ Rm[2]
-        # the whole arm's line (shoulder to hand, the first principal direction of all its points): a long sleeve
-        # reaches the wrist, and round the upper arm's axis the forearm of an avatar with its arms out at a flatter
-        # angle lay 74 mm off it (2026-10-09) -- the sleeve was made 32 mm thicker to clear it
+        hh = (A_ - o) @ Rm[2]
         return {'o': o, 'R': Rm, 'r_p90': float(np.percentile(r, 90)), 'h0': float(hh.min()), 'h1': float(hh.max()),
                 'len_arm': float(np.ptp(t)), 'angle_from_vertical_deg': float(np.degrees(np.arccos(abs(ez[2])))),
-                'o_full': m_, 'ez_full': -u}
+                'o_full': o, 'ez_full': ez}
     return {'z_min': z0, 'z_top': z1, 'z_crotch': z_crotch, 'z_armpit': z_armpit, 'z_neck': z_neck,
             'torso_len': TL, 'torso_half_width_armpit': half_arm, 'rows': R,
             'arm_L': arm_axis(+1), 'arm_R': arm_axis(-1)}
@@ -404,3 +405,22 @@ def ray_hit(gd, o, d):
                     best = (name, float(np.degrees(np.arctan2(p[1], p[0]))), float(p[2]), float(t))
                 break
     return best
+
+
+def ray_nearest(g, o, d):
+    """Where a ray (mm) passes nearest guide g's axis, as a point on its wall: (theta_deg, h, t) with h held within
+    the guide's length, or None (the ray along the axis). A ray that misses the wall (beside the cylinder, past its
+    ends) still names a spot on it, and where the ray grazes the wall it is the same spot ray_hit gives, so a drag
+    that leaves the cylinder slides on without a jump (user 2026-11-17: a placed piece slides wherever it is held)."""
+    d = np.asarray(d, float) / np.linalg.norm(d)
+    Rm = np.asarray(g['R'], float)
+    lo = Rm @ (np.asarray(o, float) - np.asarray(g['o'], float))
+    ld = Rm @ d
+    a = ld[0] ** 2 + ld[1] ** 2
+    if a < 1e-12:
+        return None
+    t = max(-(lo[0] * ld[0] + lo[1] * ld[1]) / a, 0.0)
+    p = lo + t * ld
+    if p[0] * p[0] + p[1] * p[1] < 1e-12:
+        return None
+    return (float(np.degrees(np.arctan2(p[1], p[0]))), float(min(max(p[2], g['h0']), g['h1'])), float(t))

@@ -9,6 +9,12 @@ widened evenly shows one color all over, a bad stretch a gradient inside the pie
 the dressed garment and Live, read from the meshes alone (the placed pieces' layout points, the garment's UV =
 pattern mm / 1000). A line at the top left gives each piece's median / largest.
 
+Face Side: the cloth's face blue, its back red (user 2026-11-17, Fable review
+docs/reviews/REVIEW_fable_face_side_flip_2026-11-17.md). The face is the side the pattern is seen from in 2D: the
+triangles' winding, the same side as Blender's normals. Blender's own Face Orientation shows nothing useful here: the
+thickness's Solidify turns its inner shell outward, so both sides read as the face, and it paints the body too. Drawn
+from the meshes before the thickness, culled by winding: one pass for the triangles facing the eye, one for the rest.
+
 Problems: what the add-on found wrong, red on the cloth itself (until 2026-11-02 a color attribute or the object's
 color, seen only in Solid shading with that color mode, so never seen). Each finding is recorded on the object it is
 on -- a placed piece or the dressed garment -- by mark() as {kind: {verts, note}} in the property PROP: verts the
@@ -40,13 +46,16 @@ KINDS = {                                 # kind: the legend's words
     'left': "left after fitting",         # Part to Seam / Band on Edge / settle: inside the body or through cloth
     'placement': "placed",                # Place: a band stretched to clear the body, a piece through another
     'fold': "fold stretches it",          # a fold too sharp for the piece's length here
-    'hand': "moved by hand",              # Move by Hand: vertices added / deleted, inside the body, stretched
+    'hand': "moved by hand",              # moved by hand: vertices added / deleted, inside the body, stretched
     'anomaly': "the run stopped here",    # the solver's anomaly (its hardest pulling stitches)
     'unsettled': "still moving at the end",   # moved 2 mm or more in the last 50 frames of the last stage
     'inside': "inside the body",          # From Mesh: the imported garment's vertices inside the body
     'start': "did not start as shown",    # a run: vertices that started over 0.1 mm from the shape on screen
+    'layer': "Layer has no effect",       # a run: a piece whose Layer reaches none or few of its vertices (seams)
 }
 PROBLEM = np.array((1.0, 0.12, 0.08), np.float32)
+FACE = (0.15, 0.4, 1.0, 0.45)       # the cloth's face (blue) and back (red), as Blender's Face Orientation
+BACK = (0.95, 0.12, 0.08, 0.5)
 
 _handles = []
 _d = {'key': None}          # per piece: triangles' world corners (m), stretches; per shape
@@ -91,8 +100,10 @@ def colors(l1, l2):
 
 
 def _pieces(context, spec, outlines):
-    """{piece: (layout mm, triangles, world m)} as the piece colors show them: the dressed garment's pieces where its
-    result is seen, the placed objects elsewhere (piece_look._data3d decides the same way). And a shape key."""
+    """{piece: (layout mm, triangles, world m, turned)} as the piece colors show them: the dressed garment's pieces
+    where its result is seen, the placed objects elsewhere (piece_look._data3d decides the same way). And a shape key.
+    turned: the triangles wind against the piece's face (a pair's mirrored half reads its source's triangles, and
+    the Mirror modifier turns its faces over)."""
     from . import dress as DR
     from . import display_state as DS
     if not VV.allows_world(context, spec):
@@ -117,13 +128,13 @@ def _pieces(context, spec, outlines):
         if flat is not None:
             for n, p in pieces.items():
                 if n in visible and n not in sap and display.get(n, {}).get('source') == 'result':
-                    out[n] = (flat, p['tri'], co)
+                    out[n] = (flat, p['tri'], co, False)
         sh = {n: v for n, v in sh.items() if n in sap and n in visible}
     else:
         sh = {n: v for n, v in sh.items() if n in visible}
     for n, e in sh.items():
         if e[2] is not None and len(e[1]):
-            out[n] = (e[0], np.asarray(e[1]), np.asarray(e[2], float))
+            out[n] = (e[0], np.asarray(e[1]), np.asarray(e[2], float), len(e[3]) > 2 and e[3][2] == 'twin')
     return out, tuple(map(str, key))
 
 
@@ -148,11 +159,39 @@ def _garment_flat(ob):
     return _gflat['f']
 
 
+_tick = {'n': 0}
+_pc = {}                    # per 3D view: (key, time, pieces, shape key)
+RECHECK_S = 0.5
+
+
+@bpy.app.handlers.persistent
+def _changed(_scene, _depsgraph):
+    _tick['n'] += 1
+
+
+def _pieces_now(context, spec, outlines):
+    """_pieces, read again only when something changed: reading every piece's evaluated mesh took 14 ms a redraw on
+    a T-shirt's placed pieces (2026-11-17), and the viewport redraws on every mouse move. Any depsgraph update, a
+    frame or the stored spec changing reads them again, and at least every RECHECK_S whatever (a change that reaches
+    no depsgraph). Kept per 3D view: what a view shows depends on the view (view_visibility)."""
+    import time
+    area = context.area.as_pointer() if context.area else 0
+    key = (_tick['n'], context.scene.frame_current, PLV.store_key(), id(spec))
+    c = _pc.get(area)
+    now = time.monotonic()
+    if (c is not None and c[0] == key and now - c[1] < RECHECK_S
+            and _changed in bpy.app.handlers.depsgraph_update_post):
+        return c[2], c[3]
+    got, skey = _pieces(context, spec, outlines)
+    _pc[area] = (key, now, got, skey)
+    return got, skey
+
+
 def _data(context, spec, outlines):
-    got, key = _pieces(context, spec, outlines)
-    if _d['key'] != key:
+    got, key = _pieces_now(context, spec, outlines)
+    if _d['key'] != key or 'per' not in _d:     # a view showing nothing has the key None, as the empty cache had
         per = {}
-        for n, (F, T, W) in got.items():
+        for n, (F, T, W, _turned) in got.items():
             l1, l2 = stretches(F, T, np.asarray(W, float) * 1000.0)
             per[n] = (np.asarray(W, float)[T.ravel()], l1, l2)
         _d.update(key=key, per=per)
@@ -163,11 +202,14 @@ def _draw_view():
     context = bpy.context
     props = getattr(context.scene, 'ac9_cloth_sim', None)
     stretch, probs = overlay.shows(props, 'show_stretch'), overlay.shows(props, 'show_problems')
-    if not (stretch or probs):
+    side = overlay.shows(props, 'show_face_side')
+    if not (stretch or probs or side):
         return
     spec, outlines = store.get(context)
     if not spec or PV.layout_empty(context) is None:
         return
+    if side:
+        _draw_face_side(context, spec, outlines)
     if stretch:
         _draw_stretch(context, spec, outlines)
     if probs:
@@ -207,6 +249,42 @@ def _draw_stretch(context, spec, outlines):
     gpu.state.blend_set('NONE')
 
 
+_fb = {'key': None}         # the face side's lifted triangles: per shape and view
+
+
+def _draw_face_side(context, spec, outlines):
+    got, key = _pieces_now(context, spec, outlines)
+    if not got:
+        return
+    rv3d = context.region_data
+    k = (key, np.array(rv3d.view_matrix).tobytes(), rv3d.is_perspective)
+    if _fb['key'] != k:
+        P = []
+        for n, (_F, T, W, turned) in got.items():
+            T = np.asarray(T, np.int64)
+            if len(T):
+                P.append(np.asarray(W, float)[(T[:, [0, 2, 1]] if turned else T).ravel()])
+        if not P:
+            _fb.update(key=k, batch=False)
+            return
+        _fb.update(key=k, batch=None, P=np.ascontiguousarray(_lift(np.vstack(P), rv3d), np.float32))
+    if _fb.get('batch') is False:
+        return
+    su = gpu.shader.from_builtin('UNIFORM_COLOR')
+    if _fb.get('batch') is None:
+        _fb['batch'] = batch_for_shader(su, 'TRIS', {'pos': _fb['P']})
+    gpu.state.blend_set('ALPHA')
+    gpu.state.depth_test_set('LESS_EQUAL')
+    su.bind()
+    for cull, color in (('BACK', FACE), ('FRONT', BACK)):     # counter-clockwise on screen: the face seen
+        gpu.state.face_culling_set(cull)
+        su.uniform_float('color', color)
+        _fb['batch'].draw(su)
+    gpu.state.face_culling_set('NONE')
+    gpu.state.depth_test_set('NONE')
+    gpu.state.blend_set('NONE')
+
+
 def _lift(P, rv3d):
     Vi = np.array(rv3d.view_matrix.inverted())
     if rv3d.is_perspective:
@@ -229,11 +307,26 @@ def summary(per, selected=()):
 # ------------------------------------------------------------------ problems
 
 
-def mark(ob, kind, verts=None, note=""):
-    """Record a problem of `kind` on `ob`: verts (its vertex indices) red, or None for the whole piece."""
+def mark(ob, kind, verts=None, note="", weights=None, detail=""):
+    """Record a problem of `kind` on `ob`: verts (its vertex indices) red, or None for the whole piece.
+    weights: 0..1 per vertex in verts' order, the red shaded by it (strong at 1); none, all at full strength.
+    detail: shown after the kind in the legend (which pieces, how far)."""
     import json
     d = problems(ob)
-    d[kind] = {'verts': None if verts is None else sorted({int(v) for v in verts}), 'note': str(note)}
+    if verts is None:
+        rec = {'verts': None}
+    elif weights is None:
+        rec = {'verts': sorted({int(v) for v in verts})}
+    else:
+        w_of = {}
+        for v, w in zip(verts, weights):
+            w_of[int(v)] = max(w_of.get(int(v), 0.0), float(w))
+        vs = sorted(w_of)
+        rec = {'verts': vs, 'w': [round(w_of[v], 2) for v in vs]}     # rounded: kept in the .blend and undo
+    rec['note'] = str(note)
+    if detail:
+        rec['detail'] = str(detail)
+    d[kind] = rec
     ob[PROP] = json.dumps(d)
 
 
@@ -296,21 +389,29 @@ def _problem_tris(context, ob, recs, garment):
     T = np.empty(len(me.loop_triangles) * 3, np.int64)
     me.loop_triangles.foreach_get('vertices', T)
     T = T.reshape(-1, 3)
-    alpha = np.zeros(len(T), np.float32)
+    alpha = np.zeros(len(T), np.float32)          # per triangle: the kinds without weights, as before
+    va = np.zeros(len(co), np.float32)            # per vertex: the kinds with weights (shaded by how far)
     for rec in recs.values():
         v = rec.get('verts')
         if v is None:
             alpha = np.maximum(alpha, 0.22)
+            continue
+        v = np.asarray(v, np.int64)
+        ok = (v >= 0) & (v < len(co))
+        w = rec.get('w')
+        if w is not None and len(w) == len(v):
+            # 0.08 faint at the least, 0.65 at the most: the strong red is where it is far off
+            np.maximum.at(va, v[ok], (0.08 + 0.57 * np.asarray(w, np.float32)[ok]).astype(np.float32))
         else:
             on = np.zeros(len(co), bool)
-            v = np.asarray(v, np.int64)
-            on[v[(v >= 0) & (v < len(co))]] = True
+            on[v[ok]] = True
             alpha = np.maximum(alpha, np.where(on[T].any(1), 0.6, 0.0).astype(np.float32))
-    keep = alpha > 0
+    ac = np.maximum(alpha[:, None], va[T])        # per corner: SMOOTH_COLOR blends it across the triangle
+    keep = ac.max(1) > 0
     if not keep.any():
         return None
     P = co[T[keep].ravel()]
-    C = np.repeat(np.c_[np.broadcast_to(PROBLEM, (int(keep.sum()), 3)), alpha[keep]], 3, axis=0)
+    C = np.c_[np.broadcast_to(PROBLEM, (int(keep.sum()) * 3, 3)), ac[keep].ravel()]
     return P, C.astype(np.float32), (ob.name, ob.get(PROP), co[::max(1, len(co) // 16)].round(5).tobytes())
 
 
@@ -340,7 +441,8 @@ def problem_lines(spec):
     """The legend's lines: one per object with problems and its kinds (4 at most)."""
     lines = []
     for ob, piece, recs in _problem_objects(spec):
-        what = ', '.join(tx(KINDS.get(k, k)) for k in recs)
+        what = ', '.join(tx(KINDS.get(k, k)) + (f" ({r['detail']})" if r.get('detail') else "")
+                         for k, r in recs.items())
         lines.append(tx("Red on {0}: {1}", piece or tx("the garment"), what))
     return lines[:4]
 
@@ -350,9 +452,12 @@ def _draw_px():
     props = getattr(context.scene, 'ac9_cloth_sim', None)
     stretch = overlay.shows(props, 'show_stretch') and _d.get('per')
     probs = overlay.shows(props, 'show_problems')
+    # the legend only in a view that colored something (not the pattern's view)
+    area = context.area.as_pointer() if context.area else 0
+    side = overlay.shows(props, 'show_face_side') and bool((_pc.get(area) or (None, 0, {}))[2])
     from . import dress as D
     prep = D.run_preparing()
-    if not (stretch or probs or prep):
+    if not (stretch or probs or prep or side):
         return
     spec, _o = store.get(context)
     if not prep and (not spec or PV.layout_empty(context) is None):
@@ -367,7 +472,9 @@ def _draw_px():
             lines.append((tx("This can take a few minutes, once. Later runs start quickly."), (0.85, 0.85, 0.85)))
         # an ordinary start (say after editing the pattern) is not a first run: no more lines (user 2026-11-13)
         if not spec or PV.layout_empty(context) is None:
-            stretch = probs = False
+            stretch = probs = side = False
+    if side:
+        lines.append((tx("Face Side: blue the face, red the back"), (1.0, 1.0, 1.0)))
     if stretch:
         lines.append((tx("Stretch: up to {0} ok, {1} yellow, {2} red, blue squashed", OK, WARN, BAD), (1.0, 1.0, 1.0)))
         for n, m, x in summary(_d['per'], PL._selected(context)):
@@ -386,11 +493,14 @@ def _draw_px():
 
 
 def invalidate():
-    for c in (_d, _b, _gflat, _pb):
+    for c in (_d, _b, _gflat, _pb, _fb):
         c['key'] = None
+    _pc.clear()
 
 
 def register():
+    if _changed not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_changed)
     _handles.append((bpy.types.SpaceView3D.draw_handler_add(_draw_view, (), 'WINDOW', 'POST_VIEW'), 'WINDOW'))
     _handles.append((bpy.types.SpaceView3D.draw_handler_add(_draw_px, (), 'WINDOW', 'POST_PIXEL'), 'WINDOW'))
 
@@ -402,4 +512,7 @@ def unregister():
         except Exception:
             pass
     _handles.clear()
+    for h in [h for h in bpy.app.handlers.depsgraph_update_post if getattr(h, '__name__', '') == '_changed'
+              and getattr(h, '__module__', '') == __name__]:
+        bpy.app.handlers.depsgraph_update_post.remove(h)
     invalidate()

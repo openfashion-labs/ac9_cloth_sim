@@ -1195,9 +1195,14 @@ def mirror_copy(spec, name, gap=50.0, x_axis=None, plane='x'):
     fam =pc.get('family') or pc.get('bom', {}).get('family') or pc['name']
     pc['family'] = fam
     cp = {k: v for k, v in pc.items() if k not in ('edges', 'internals', 'name', 'bom', 'mirrored', 'closes_onto')}
+    from . import fold_hand as FH
+    internals = []
+    for it in pc.get('internals', []):
+        c = xform_internal(copy.deepcopy(it), M)
+        FH.carry(it, c, M)              # the copy's side A the mirror image of the line's (a fold copies as it is)
+        internals.append(c)
     cp.update(name=unique_name(spec, name + "_R" if not pc.get('mirrored') else name + "_L"), edges=edges,
-              internals=[xform_internal(copy.deepcopy(it), M) for it in pc.get('internals', [])],
-              family=fam, mirrored=not pc.get('mirrored', False))
+              internals=internals, family=fam, mirrored=not pc.get('mirrored', False))
     lab = unique_label(spec, pc)
     if lab:
         cp['label'] = lab
@@ -1244,10 +1249,8 @@ def mirror_group(spec, names, gap=50.0, plane='x'):
         if to:
             piece(spec, c)['closes_onto'] = to
     fo = spec.get('folds', [])
-    # the copy's lines keep their point order and are mirrored: the side on their left is the other one (A <-> B)
-    fo += [dict(f, piece=made[f['piece']], **{k: {'A': 'B', 'B': 'A'}[f[k]] for k in ('side', 'layers')
-                                              if f.get(k) in ('A', 'B')})
-           for f in list(fo) if f.get('piece') in made and 'line' in f]
+    # the copy's lines got their hand in mirror_copy (A the mirror image of the line's A): the letters copy as they are
+    fo += [dict(f, piece=made[f['piece']]) for f in list(fo) if f.get('piece') in made and 'line' in f]
     if fo:
         spec['folds'] = fo
     return made, skipped
@@ -1271,8 +1274,32 @@ def set_pair_plane(spec, name, plane):
         else:
             pc.pop('mirror_plane', None)
         pc.pop(S.MIRROR_AT, None)              # the plane's place is of the old plane (the caller sets a new one)
+        pc.pop(S.MIRROR_LAYOUT, None)          # a Mirror Copy is drawn across the plane's own axis
     turned = tw if b.get('mirrored') or not a.get('mirrored') else name
     return turned, transform_piece(spec, turned, 180.0)
+
+
+def set_pair_layout(spec, a, b, plane=None):
+    """A Pair's (spec['pairs']) plane and the pattern axis b is drawn as a's mirror image across (user 2026-11-17: a
+    Pair takes Left / Right or Front / Back too, and b lands the right way up however it was drawn; its pattern is
+    not turned). plane None: the pair's own. Both pieces hold both; a plane changed drops the stored plane position.
+    Returns (layout axis, gaps {axis: mm}, changed)."""
+    pa, pb = piece(spec, a), piece(spec, b)
+    old = (S.plane_of(pa), S.layout_of(pa))
+    plane = plane or old[0]
+    layout, gap = S.best_layout(pa, pb, plane)
+    for pc in (pa, pb):
+        if plane == 'y':
+            pc['mirror_plane'] = 'y'
+        else:
+            pc.pop('mirror_plane', None)
+        if layout != plane:
+            pc[S.MIRROR_LAYOUT] = layout
+        else:
+            pc.pop(S.MIRROR_LAYOUT, None)
+        if plane != old[0]:
+            pc.pop(S.MIRROR_AT, None)
+    return layout, gap, (plane, layout) != old
 
 
 def piece_center(pc):
@@ -1810,6 +1837,35 @@ def mirror_lines(spec, name, lid):
     return out
 
 
+def carry_fold(spec, name, lid, tls=None):
+    """The spec with line lid's fold carried onto its mirror lines tls (mirror_lines by default): each mirror line's
+    hand made so its side A is the image of lid's A (core/fold_hand.carry), and the fold copied with the same angle,
+    Turns and Layers letters; a mirror line's own fold replaced (removed when lid has none). A new dict: the folds a
+    new list, a piece copied only when one of its lines' hand changed (spec itself is not changed)."""
+    from . import fold_hand as FH
+    tls = mirror_lines(spec, name, lid) if tls is None else tls
+    if not tls:
+        return spec
+    src = internal(piece(spec, name), lid)
+    f = next((x for x in spec.get('folds', []) if x.get('piece') == name and x.get('line') == lid), None)
+    pieces = spec['pieces']
+    if f is not None:
+        for tw, tid, M in tls:
+            dst = internal(piece({'pieces': pieces}, tw), tid)
+            if FH.mapped_hand(src, dst, M) != FH.hand(dst):
+                if pieces is spec['pieces']:
+                    pieces = list(pieces)
+                k = next(j for j, p in enumerate(pieces) if p['name'] == tw)
+                pc = dict(pieces[k], internals=[dict(x) for x in pieces[k].get('internals', [])])
+                pieces[k] = pc
+                FH.carry(src, internal(pc, tid), M)
+    targets = {(tw, tid) for tw, tid, _ in tls}
+    folds = [x for x in spec.get('folds', []) if (x.get('piece'), x.get('line')) not in targets]
+    if f is not None:
+        folds += [dict(f, piece=tw, line=tid) for tw, tid, _ in tls]
+    return dict(spec, folds=folds, pieces=pieces)
+
+
 def _move_internal_one(it, which, d):
     P = np.asarray(it['pts'], float)
     d = np.asarray(d, float)
@@ -1867,7 +1923,9 @@ def add_internal(spec, name, P, kind='line', closed=False, mirror=True):
         Q = self_reflect(pc)(P)
         lid = add_internal(spec, name, P, kind, closed, mirror=False)
         if not _line_mirrors_onto(np.asarray(internal(pc, lid)['pts'], float), Q, closed):
-            add_internal(spec, name, Q, kind, closed, mirror=False)
+            from . import fold_hand as FH
+            mid = add_internal(spec, name, Q, kind, closed, mirror=False)
+            FH.carry(internal(pc, lid), internal(pc, mid), self_reflect(pc))   # its A the mirror image of lid's A
         return lid
     used = {it['id'] for it in pc.get('internals', [])}
     k = len(used) + 1
@@ -2157,6 +2215,22 @@ def set_hole(spec, name, lid, on=True):
     return out
 
 
+def _ids_along(old, new):
+    """The twin's own edge ids for its new outline `new`, edge for edge, or None. A twin keeps its ids when it is made
+    the mirror image again: a BOM numbers the two halves' lines apart (a few lines differ), and the BOM's seams name
+    them, so the other half's ids made rebuilding the seams fail on a line the piece no longer had (a jacket's front,
+    KeyError: one line of 13). Matched by the start corners: the same count and one turn of the outline that puts
+    every new start corner on its old one closest."""
+    n = len(old)
+    if n != len(new) or n == 0:
+        return None
+    A = np.array([e['pts'][0] for e in old], float)
+    Bn = np.array([e['pts'][0] for e in new], float)
+    cost = [float(np.linalg.norm(np.roll(A, -r, axis=0) - Bn, axis=1).sum()) for r in range(n)]
+    r = int(np.argmin(cost))
+    return [old[(j + r) % n]['id'] for j in range(n)]
+
+
 def match_twin(spec, name):
     """Make the twin of `name` its exact mirror image again (after the two were edited apart): the twin's outline is
     replaced by `name`'s mirrored about the twin's bbox center, and every seam end and measure point on the twin is
@@ -2168,7 +2242,11 @@ def match_twin(spec, name):
     ol0 = S.Outline(pb)
     refs = [(put, ol0.at(ol0.s_of(*get()))) for get, put in point_refs(spec, tw)]   # where each point was
     M = mirror_fn(pa, pb)
+    old_ids = _ids_along(pb['edges'], mirrored_edges(pa['edges'], M))
     pb['edges'] = mirrored_edges(pa['edges'], M)
+    if old_ids:
+        for e, i in zip(pb['edges'], old_ids):
+            e['id'] = i
     ol = S.Outline(pb)
     B = np.vstack([ol.B, ol.B[:1]])
     A, Dd = B[:-1], np.diff(B, axis=0)

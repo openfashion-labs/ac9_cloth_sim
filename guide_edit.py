@@ -314,8 +314,8 @@ class AC9_OT_SimEditGuides(bpy.types.Operator):
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         made = start(context, spec)
-        for o in list(context.view_layer.objects.selected):
-            o.select_set(False)
+        from . import selection as SEL
+        SEL.deselect_all(context)
         self.report({'INFO'}, rpt("{0} guides to move: G / R / S, then Done", len(made)))
         return {'FINISHED'}
 

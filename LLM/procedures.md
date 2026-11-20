@@ -26,7 +26,7 @@
 
 本人が押す前に一言添えること: 別名で保存済みか、**Watch** は **Live Sim** の前に入れたか、**Fix by Hand** は経過の再生が止まる（Ctrl+Z で戻る）、**Live Sim** は **Esc** か **Stop** を押すまで止まらず経過のコマは残らない、**Delete Cache** で消したコマは戻らない、**To AC9 Cloth Retopo** は画面に出ているコマを使う。
 
-表示名の注意: 画面にない名前を案内しない。今の名前は、**Edit Measure**（採寸の線を動かす）、**Move by Hand**（3D で手で動かす。着せる前も後も）、**Lengths & Notches**（縫い目の長さと合印）、**Particle Distance (mm)**（網目の間隔）、**Default Fabric**（生地。Weight や Bending の欄は服の設定には無い）、**Live Sim**（着せる・続きから回す。**Phase Sim**・**Local Sim** は **Experimental Features** をオンにしたときだけ）、**Import BOM**、**Update BOM Seams**（着装形を保って縫い目を更新）、**All On**。画面に無い名前: Simulate、Live、Continue、Dress、Re-dress、Use Selected Pieces、Seams from BOM、Fold のボタン、Adjust、Back to Frames、Name のボタン（名前は **AC9 Piece** の欄か F2）、Center、Tape／Hold（縫い目を巻き尺に沿わせる欄は今は出ない）。
+表示名の注意: 画面にない名前を案内しない。今の名前は、**Edit Measure**（採寸の線を動かす）、**Whole Pieces**（3D でピースをクリックしてギズモ・G・R で動かす。着せる前も後も）、**Lengths & Notches**（縫い目の長さと合印）、**Particle Distance (mm)**（網目の間隔）、**Default Fabric**（生地。Weight や Bending の欄は服の設定には無い）、**Live Sim**（着せる・続きから回す。**Phase Sim**・**Local Sim** は **Experimental Features** をオンにしたときだけ）、**Import BOM**、**Update BOM Seams**（着装形を保って縫い目を更新）、**All On**。画面に無い名前: Move by Hand（ボタンは無くなった。3D の **Whole Pieces** で動かす）、Simulate、Live、Continue、Dress、Re-dress、Use Selected Pieces、Seams from BOM、Fold のボタン、Adjust、Back to Frames、Name のボタン（名前は **AC9 Piece** の欄か F2）、Center、Tape／Hold（縫い目を巻き尺に沿わせる欄は今は出ない）。
 
 戻し方（共通）: ほとんどの操作は Ctrl+Z で戻る。
 
@@ -58,6 +58,12 @@
 
 Setupの「BOM から縫い目を更新」を押す。保存された読み込み元BOMを使い、全ピースの型紙・識別子・辺/内部線参照の互換性を確認し、縫い目と自動分類だけを更新する。着装形・配置・オン/オフ・凍結・物性・役割・折り・手動分類/縫い目は保持する。型紙変更、消える縫い目の参照/手設定、改名した群の曖昧な統合/分割があれば変更せず理由を表示する。続くLive Simが新しい縫い目を使う。新規Importは3D/配置を破棄する別操作なので、更新の代わりに案内しない。
 
+## 着せ上がりの FBX から縫い目を決める（Seams from 3D Drape (FBX)）
+
+操作 ID: `ac9_cloth_sim.read_drape`（読み込み時は `ac9_cloth_sim.import_bom` の `drape_fbx`）
+
+BOM の番号を何枚ものピースが共有すると（何着も集めた服・別ファイルの部品）縫い目が別のピースに付く。BOM と一緒に書き出した服の FBX で相手を決める。**Import BOM** のファイル選択の **3D Drape (FBX)**（空なら同じフォルダの FBX 1 つ）、読み込み済みなら **Setup** の **Seams from 3D Drape (FBX)**（着装形・配置は保持）。結果「3D drape: ○ / ○ BOM seams found」。FBX に無いピースは BOM の番号から。見つからない縫い目は「not found on the 3D drape」。FBX が無ければ F3 では直らないことが多い: **Edit Seams** で消す／オフ、**Add Seam**。
+
 ## 型紙を読み込む（Import DXF）
 
 操作 ID: `ac9_cloth_sim.import_dxf`、`ac9_cloth_sim.export_dxf`、`ac9_cloth_sim.import_svg`
@@ -88,7 +94,7 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 前提条件:
 
 - 画面: 3D ビュー、オブジェクトモード。
-- 選ぶ物: 服のメッシュをアクティブにする（体とは別のオブジェクト）。**Placement** の **Body** に体が選ばれている（無いと **From Mesh** は灰色）。
+- 選ぶ物: 服のメッシュを **Setup** の **Mesh** の欄に入れる（`scene.ac9_cloth_sim.from_mesh_object`。空ならアクティブなオブジェクト。体とは別のオブジェクト）。**Placement** の **Body** に体が選ばれている（無いと **From Mesh** は灰色）。
 - 服は厚みの無い面 1 枚で、袖口や裾は開いている。UV シームを入れて展開済み。
 - 体は、まっすぐ立って −Y を向いている。
 
@@ -118,7 +124,7 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 1. **Setup** の **Garment** の欄の下の、使うまとまりの行（`<名前> (on の数/ピースの数)`、`ac9_cloth_sim.select_garment`）を押す。そのまとまりのピースが選ばれる（Shift で足す）。まとまりが 1 つだけなら行は出ないので、3D ビューで使うピースを選ぶ。
 2. Tool タブの **AC9 Piece** の **State** で **Active**（`ac9_cloth_sim.piece_state`）。
-3. **State** の行の **Invert Selection**（`ac9_cloth_sim.invert_piece_selection`）で残りを選び、**Off All**。
+3. **State** の行の **Invert Selection**（`ac9_cloth_sim.invert_piece_selection`）で残りを選び、**Off**。
 4. まとまりの分け方が違う（オレンジの行、縫い目が別の服のピースや自分自身に付いている）ときは、まず **Update BOM Seams**（`ac9_cloth_sim.seams_from_bom`）。手動分類の訂正が必要な場合だけ正しい 1 着ぶんのピースを選びF3の **Garment from Selection**（`ac9_cloth_sim.garment_from_selection`）。そのまとまりと元のまとまりの BOM の縫い目が作り直される。名前は行の鉛筆（`ac9_cloth_sim.rename_garment`）。
 5. 全部を戻すときは **All On**（`ac9_cloth_sim.enable_all_pieces`）。
 
@@ -142,18 +148,18 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 手順:
 
-1. ピースごと動かす: **Pattern** の **Whole Pieces** を押して道具を持つ。ピースか内部線をクリックで選び（Shift で足す、何も無い所から引くと箱）、ドラッグで動かす。G（移動）・R（回す）・S（拡大縮小）は選んだ物の真ん中を基準にする。Shift+D（そのまま複製）、F2（名前）、X／Delete（選んだ物を消す）。
-2. 形を直す: **Pattern** の **Edit Pieces** を押して道具を持つ。型紙の上で、角・辺・取っ手・内部線（端・途中の点・線全体）をドラッグする。クリックで選び、Shift＋クリックで足すと、選んだ全部を一緒にドラッグできる。ダブルクリックでピース全体を選ぶ。ドラッグ中は X／Y で軸、Shift で 0／45／90°、数字で長さ、Ctrl で吸着を切る。G／R／S（選んだ角・辺・線）、K（辺か内部線に点を足す）、C（辺か内部線の区間をカーブ／直線）、N（合印）、Shift+D（そのまま複製）、F9（直前の操作の数値）。S は拡大・縮小だけ。ダーツを足す・動かす、切り開き、線で切る、平行な線は右クリックのメニューにだけある（右クリック＝カーソルの下の物にできることの全部、キーは近道）。道具のヘッダーにはカーソルの下の物のキーだけが出る。全部は **Pattern** パネルの **Keys**（2 つの道具の両方）。
+1. ピースごと動かす: **Pattern** の **Whole Pieces** を押して道具を持つ。ピースか内部線をクリックで選び（Shift で足す、何も無い所から引くと箱）、ドラッグで動かす。G（移動）・R（回す）・S（拡大縮小）は選んだ物の真ん中を基準にする。Shift+D（そのまま複製）、F2（名前）、X／Delete（選んだ物を消す）。3D のギズモは移動か回転の片方ずつ出る（道具のヘッダーの **Gizmo** か W で切り替え）。
+2. 形を直す: **Pattern** の **Edit Pieces** を押して道具を持つ。型紙の上で、角・辺・取っ手・内部線（端・途中の点・線全体）をドラッグする。クリックで選び、Shift＋クリックで足すと、選んだ全部を一緒にドラッグできる。ダブルクリックでピース全体を選ぶ。ドラッグ中は X／Y で軸、Shift で 0／45／90°、数字で長さ、Ctrl で吸着を切る。G／R／S（選んだ角・辺・線）、K（辺か内部線に点を足す）、C（辺か内部線の区間をカーブ／直線）、N（合印）、Shift+D（そのまま複製）。S は拡大・縮小だけ。ダーツを足す・動かす、切り開き、線で切る、平行な線は右クリックのメニューにだけある（右クリック＝カーソルの下の物にできることの全部、キーは近道）。道具のヘッダーにはカーソルの下の物のキーだけが出る。全部は **Pattern** パネルの **Keys**（2 つの道具の両方）。
 2b. 何もしていないときの右クリックは、カーソルの下の物のメニュー（`ac9_cloth_sim.context_menu`）。右クリックした物が先に選ばれ、項目はキーやボタンと同じ操作を呼ぶ。操作の途中の右クリックは取り消し。
 2c. **AC9 Run** の **3D Follows Edits**（シーンのプロパティ `follow_edits`、既定オフ）が外れている間は、型紙の直しは 3D に写らずに待つ（`sync_pending` が真、**Update 3D** が赤）。**Update 3D**（`ac9_cloth_sim.sync_3d`）か、次の **Live Sim** で写る。
-3. 距離をそろえる: 選んだ内部線・辺の Tool タブに周りまでの距離が並ぶ。距離は表示だけで、「数値で動かす…」（`ac9_cloth_sim.set_gap`）の小窓で、今の位置からの X・Y か、周りまでの距離を入れて動かす。
+3. 距離をそろえる: 選んだ内部線・辺の Tool タブに周りまでの距離が並ぶ。距離は表示だけで、「数値入力…」（`ac9_cloth_sim.set_gap`）の小窓で、今の位置からの X・Y か、周りまでの距離を入れて動かす。
 4. 左右ペアの片方を直すと、相方も鏡像で直る。ずれたときは片方を消し、もう片方を **Mirror Copy** する。**Mirror Copy**（`ac9_cloth_sim.mirror_copy`）は選んだ全部を縫い目ごと鏡に写す。
 5. そのままの複製は **Selected Pieces** の **Duplicate** か Shift+D（`ac9_cloth_sim.duplicate_pieces`）。鏡にせず、左右ペアにもしない。複製したピースどうしの縫い目だけ一緒に写る。複製は置かれていないので Place で置く。
 6. 左右対称の 1 ピース（1 枚で裁つ前身頃など）は Tool タブ **AC9 Piece** の **Symmetric Edit**。Rectangle／Ellipse の道具のヘッダーのチェック（既定オン）で、描いたときからオンにもできる。オンのままなら K・X・N、内部線（描く・動かす・消す）・折り・ダーツ・切り開き・縫い目も反対側へ鏡で入る（中心線をまたいで自分の鏡になる線は 1 本）。角を隣の角に落とすと 1 点にまとまる。中心線は `mirror_axis`（中心 x, y と角度）に持ち、R で回すと一緒に回る。中心線で切ると左右ペアでない 2 枚になる。崩れたら隣の **Symmetrize**（`ac9_cloth_sim.symmetrize`、`keep='LEFT'|'RIGHT'`、既定 LEFT）で反対側を作り直す。
 7. 外周の辺か内部線に平行な内部線は右クリックの Parallel Line（`ac9_cloth_sim.parallel_line`、先に小窓。`distance` m・`count` 本・等間隔。辺なら `piece`・`edges` はカンマ区切りの辺 ID で内側へ、隣り合う辺は 1 本の線。内部線なら `line` に線 ID、`flip`・`both` で側、`extend` で端を外周まで）。
 8. ピースの名前は Tool タブの **AC9 Piece** のいちばん上の欄か F2（`ac9_cloth_sim.piece_label`）。
 
-期待結果: 型紙の形が変わる。着せた服・置いた形へは、**3D Follows Edits** が外れていれば（既定）次の実行（Live Sim など）か **Update 3D** でまとめて写り、押されていればその場で写る。置いた形のオブジェクト（Move by Hand・Part to Seam・Fold などの後）も、その場で新しい型紙の形に作り直す（頂点ごとに直したものは除き、そう出る）。写したか・写せなかった理由は Run の状態行に「Pattern edit: …」として残る。ピースを動かす・回すだけでは着た服は動かない。写せない形は、理由が出て止まる。続けて **Live Sim**（「シミュレーションする（Live Sim）」の節）で落ち着く。
+期待結果: 型紙の形が変わる。着せた服・置いた形へは、**3D Follows Edits** が外れていれば（既定）次の実行（Live Sim など）か **Update 3D** でまとめて写り、押されていればその場で写る。置いた形のオブジェクト（Place・Part to Seam・Fold などの後）も、その場で新しい型紙の形に作り直す（頂点ごとに直したものは除き、そう出る）。写したか・写せなかった理由は Run の状態行に「Pattern edit: …」として残る。ピースを動かす・回すだけでは着た服は動かない。写せない形は、理由が出て止まる。続けて **Live Sim**（「シミュレーションする（Live Sim）」の節）で落ち着く。
 
 制限・してはいけないこと: 型紙のピースのオブジェクトは鍵が掛かっている。Blender の G／R／S や標準の編集で動かさない。型紙データを JSON で直接変えると、着せた服へ写せずエラーになることがある。Blender の標準の X でピースのオブジェクトだけが消えたときは、**Lists** の **Pieces** タブの **Restore N Deleted Object(s)**（`ac9_cloth_sim.restore_pieces`）で戻す。
 
@@ -252,11 +258,11 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 5. 円柱の無い所で押すと平らに置く（spec placement `{'guide': 'flat', 'flat': {'o': [mm], 'R': [ex, ey, n]}, 'anchor'}`）。面の上なら型紙の法線を面の法線に合わせて 2 mm 浮かせ、何も無ければ Z = 0 に上向き。刺さりは自動で直さない。平らのピースを押してドラッグすると面（地面）の上を滑る。位置・回転は Tool タブ AC9 Piece の Location & Rotation（置いた形のオブジェクトの変形）。
 6. **Back to Flat**（`ac9_cloth_sim.clear_placement`）は、選んだピースを 3D の今の位置・向きのまま、アンカーの接平面へ平らにする（平らの placement に書き換える）。手の移動は捨てる。3D から外すのは状態 Off。
 7. 床: Run の **Floor (Z = 0)**（`scene.ac9_cloth_sim.floor`）。Z = 0 の下に厚み 20 mm の箱を当たりとして足す（シーンには何も足さない）。体・Collision・床・他の服が何も無いと、重力の無い段だけ回して止まり 1 行で知らせる。
-8. 左右: **Pair**／**Unpair**（`ac9_cloth_sim.pair`）、**Unlink**／**Link**（`ac9_cloth_sim.unlink_pair`）。置いた対の左右を入れ替えるのは **Swap Sides**（`ac9_cloth_sim.swap_sides`。対の両方が on のとき）。
+8. 左右: **Pair**／**Unpair**（`ac9_cloth_sim.pair`、F9 に `plane`）、**Unlink**／**Link**（`ac9_cloth_sim.unlink_pair`）。鏡の面は Tool タブ AC9 Piece の **Pair** の **Mirror Plane**（`ac9_cloth_sim.pair_plane`、`plane='x'|'y'`。Mirror Copy の対も Pair の対も）。Pair の対は型紙を回さず、相手がどちら向きに描いてあっても正しい向きで置く（spec の `mirror_layout`）。平らに置いた対は服の中心 `spec['center']['o']`（mm、Empty「AC9 Center: 服名」）で左右も前後も鏡写し、体の上の対は体の中心。中心を選択に足すのは **Select Center**（`ac9_cloth_sim.center_select`）、古いファイルの自分の面（`mirror_at`）の対を中心へそろえるのは **Align to Center**（`ac9_cloth_sim.center_align`）。置いた対の左右を入れ替えるのは **Swap Sides**（`ac9_cloth_sim.swap_sides`。対の両方が on のとき）。
 
 期待結果: 離すと、シミュレーションが実際に始まる形が置いた形として出て、`○ guides; ○ / ○ pieces placed` の数が増える。帯は自分の長さの輪で始まり、体に入るときだけ一様に広げて赤く示す。ほかのピースと重なったまま始まるピースも赤くなり、1 行で理由が出る（上に来る方を選んで **Move Outside**、と出る）。
 
-制限・してはいけないこと: ピースを選ばずに押すと「click pattern pieces first」、型紙の上では「press on a guide, a surface or the ground」と出て始まらない。**Back to Flat** は選択ピースと連動中の鏡像を平らにし、未選択の着装形・型紙・縫い目を保持する。無選択のときだけ確認後に置いたピース全部。服オブジェクトだけなど対象ピースを特定できない選択は、全体操作に広げず変更前に拒否する。Ctrl+Zで戻せる。体の凹凸をなぞって伸ばすことはせず、置いた所から勝手に動かすこともしない。**Swap Sides** は、相手へ運んだ形・縁に載せた形・Edit Mode の直しを作り直す（手の動きと折りは場所の側に残る）。着せた服の上では、そのピースが置いた形に戻る。
+制限・してはいけないこと: クリックは選ぶだけで置かない（何も無い所なら選択解除）。置くのはドラッグだけで、ピースを選ばずにドラッグすると「click pieces first」と出て始まらない。着た服・体の上から始めたドラッグも置く（着た服はつかまない）。選んだ中の着ているピースは置かず 1 行出る（先に **Back to Placed**）。置いたピースはどこをつかんでも円柱に沿って滑る。箱選択は Place には無く、**Whole Pieces** の何も無い所からのドラッグ（着た服はピース単位、Shift 足す・Ctrl 外す）。**Back to Flat** は選択ピースと連動中の鏡像を平らにし、未選択の着装形・型紙・縫い目を保持する。無選択のときだけ確認後に置いたピース全部。服オブジェクトだけなど対象ピースを特定できない選択は、全体操作に広げず変更前に拒否する。Ctrl+Zで戻せる。体の凹凸をなぞって伸ばすことはせず、置いた所から勝手に動かすこともしない。**Swap Sides** は、相手へ運んだ形・縁に載せた形・Edit Mode の直しを作り直す（手の動きと折りは場所の側に残る）。着せた服の上では、そのピースが置いた形に戻る。
 
 戻し方: Ctrl+Z。
 
@@ -270,9 +276,9 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 手順:
 
-1. ピース（衿・台衿・カフス・ポケットなど）に折り設定を反映してから、縫う点を今回指定した相手との有効な縫い目の点の上へ乗せ、縫う点を固定して整える（Settle と同じ）: **Part to Seam**（`ac9_cloth_sim.move_to_seam`）。相手は今ある所（置いた形、着た服、円柱の順）。起動後に相手をクリックして指定する。Shiftクリックで追加・解除、Aで全相手、Enterで適用、Escで取消。相手の指定は今回だけで、ピースや縫い目のOn/Offと次Simの縫合設定は変更しない。移動側と追従ペアは起動時に固定して表示し、寄せ先選択でactiveを変更しない。伸びは数と「オーバーレイ > 伸び」で示し、断るのは三角が潰れるときだけ。外側へは出さない（必要なら 3 の Move Outside を別に押す）。寄せる前の手配置・頂点編集・折りは別に保持し、繰り返しても基準を上書きしない。
+1. ピース（衿・台衿・カフス・ポケットなど）に折り設定を反映してから、縫う点を今回指定した相手との有効な縫い目の点の上へ乗せ、縫う点を固定して整える（Settle と同じ）: **Part to Seam**（`ac9_cloth_sim.move_to_seam`）。相手は今ある所（置いた形、着た服、円柱の順）。起動後に相手をクリックして指定する。Shiftクリックで追加・解除、Aで全相手、Enterで適用、Escで取消。相手の指定は今回だけで、ピースや縫い目のOn/Offと次Simの縫合設定は変更しない。移動側と追従ペアは起動時に固定して表示し、寄せ先選択でactiveを変更しない。伸びは数と「オーバーレイ > 伸び」で示し、断るのは三角が潰れるときと、縫い目に乗せると伸びすぎるため形を保って近くへ運ぶ場合に、運ぶと今より体の中・他の布を貫く所が増えるとき（大きな身頃・袖に使ったとき）。外側へは出さない（必要なら 3 の Move Outside を別に押す）。寄せる前の手配置・頂点編集・折りは別に保持し、繰り返しても基準を上書きしない。
 2. 細い帯（衿リブ）を指定相手の縫い付け線に沿わせ、幅方向も含めて配置する（相手指定は1と同じ）: **Band on Edge**（`ac9_cloth_sim.lay_on_edge`）。
-3. 重なったピースを外側へ出す: **Move Outside**（`ac9_cloth_sim.move_outside`）。選んだ現在形を保ち、相手の表側へ移します。自分・相手とも配置形／シミュレーション後の形で利用でき、縫い合わせは不要。補正後の形から再Simできます。表側が曖昧、または途中で別の層や人体を通り抜ける場合は理由を表示して無変更です。
+3. 重なったピースを外側へ出す: **Move Outside**（`ac9_cloth_sim.move_outside`）。選んだ現在形を保ち、相手の表側へ移します。自分・相手とも配置形／シミュレーション後の形で利用でき、縫い合わせは不要。補正後の形から再Simできます。移動量は重なる相手の 8 mm 外まで（報告に移動量と交差の前後が出る）。既に相手の 8 mm 以上外にあるピースは動かさない。ペアは鏡の相方も一緒に動くので、相方どうしが交差しているときは無変更で「ペアの連動を切り（Tool タブ > AC9 Piece > Pair）上の方だけで押す」と案内する。表側が曖昧、または途中で別の層や人体を通り抜ける場合も理由を表示して無変更です。
 4. 体から出す・相手の側へ載せる・辺の長さを戻す: **Settle**（`ac9_cloth_sim.settle_placed`）。1 と 2 も運んだあとに同じ整えを行う。
 
 期待結果: 置いた形が変わり、残った所は赤く示される。Part to Seam の報告は 1 ピース 1 行で、相手の名前・隙間・伸び（赤が残れば体の中と貫く所の数）が出る。
@@ -281,23 +287,23 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 戻し方: Ctrl+Z。**Move Outside** は現在形に対する編集で、配置形なら **Back to Guide** で手配置とともに戻せます。着た形の補正は **Back to Placed** で元の配置形へ戻ります。
 
-## 配置を手で直す（Move by Hand・Back to Guide）
+## 配置を手で直す（Whole Pieces・Back to Guide）
 
-操作 ID: `ac9_cloth_sim.move_by_hand`、`ac9_cloth_sim.show_placed`、`ac9_cloth_sim.reset_placed`、`ac9_cloth_sim.set_pose`、`ac9_cloth_sim.mirror_pose`
+操作 ID: `ac9_cloth_sim.show_placed`、`ac9_cloth_sim.reset_placed`、`ac9_cloth_sim.set_pose`、`ac9_cloth_sim.mirror_pose`
 
-目的: 置いた形をオブジェクトとして出し、G・R で動かす、または Edit Mode で直す。手で直さなくても **Live Sim** は同じ始まりの形を作るので、微調整が要るときだけ使う。着せた後は、着た服のピースにつまみを付けて動かす。
+目的: 置いた形を 3D で G・R・ギズモで動かす、または Edit Mode で直す。手で直さなくても **Live Sim** は同じ始まりの形を作るので、微調整が要るときだけ使う。着せた後は、着た服のピースにつまみを付けて動かす。
 
-前提条件: ピースが置かれている。**Body** が選ばれている。シミュレーション中でない。着せた後は、型紙か着た服で動かすピースを選んでおく（無いと「Click a piece on the pattern or the garment first」）。
+前提条件: ピースが置かれている。シミュレーション中でない。置いた形のオブジェクトは、ピースを置いたとき（Place）とガイドを取り直したとき（Detect Guides）にできる。置いてあるのにオブジェクトが無い（Placement に「No placed shapes: Place the pieces again」）ときは、そのピースを置き直すか、スクリプトから `ac9_cloth_sim.show_placed`（Make Placed Shapes。画面のボタンは無い）。
 
 手順:
 
-1. **Placement** の **Move by Hand**（`ac9_cloth_sim.move_by_hand`。着せる前は置いた形のオブジェクトを出す `ac9_cloth_sim.show_placed` と同じ）を押す。選んだピースが選ばれ、移動の道具に切り替わる。
-2. 置いた形のオブジェクトを選んで G・R などで動かす。数値で動かすなら Tool タブ AC9 Piece の Location & Rotation（操作 `ac9_cloth_sim.set_pose` も残っているが、パネルのボタンは無い）。対の相手へ鏡で写すのは **Mirror Placement**（`ac9_cloth_sim.mirror_pose`）。
+1. 3D ビューの道具 **Whole Pieces** で、動かすピースをクリックする（着せた後は着た服のピースをクリックするとつまみが出る）。Shift＋クリックで足す。
+2. ギズモ（W で移動と回転を切り替え）か G・R で動かす。数値で動かすなら Tool タブ AC9 Piece の Location & Rotation（操作 `ac9_cloth_sim.set_pose` も残っているが、パネルのボタンは無い）。連動したペアは相手が鏡で付いてくる。対の相手へ鏡で写すのは **Mirror Placement**（`ac9_cloth_sim.mirror_pose`）。
 3. 手直しを捨てるなら、そのピースを選んで **Back to Guide**（`ac9_cloth_sim.reset_placed`）。選ばずに押すと全部（確認が出る）。着た服のピースは先に置いた形に戻る。
 
-期待結果: 置いたピースのオブジェクトが現れ、Move と Turn の値が出る。続く **Live Sim** がその形から始まる。
+期待結果: 選んだピースが動き、Move と Turn の値が出る。続く **Live Sim** がその形から始まる。
 
-制限・してはいけないこと: 着せた後の手直しは、着た服のピースのつまみを G・R で動かす（README の『Placement（体のまわりに置く）』の「着せた後の操作」）。**Back to Placed** で戻したピースや着せた後に置いたピースは、つまみではなく置いた形のオブジェクトが選ばれる。Edit Mode で頂点まで直した分は、作り直すと残らない（動かした量は残る）。
+制限・してはいけないこと: 着せた後の手直しは、着た服のピースのつまみを G・R で動かす（README の『Placement（体のまわりに置く）』の「着せた後の操作」）。**Back to Placed** で戻したピースや着せた後に置いたピースは、つまみではなく置いた形のオブジェクトが選ばれる。Edit Mode で頂点まで直した分は、作り直すと残らない（動かした量は残る）。「Move by Hand」のボタンはもう無いので案内しない。
 
 戻し方: Ctrl+Z、または **Back to Guide**。
 
@@ -334,7 +340,7 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 - ほかの服をシミュレーションすると、前の服の経過は消えて最後の形だけが残る。**Delete Cache**（`ac9_cloth_sim.delete_cache`）は経過のコマを消す（戻せない。AI は押さない）。
 - 最後の形は .blend の中に残る。ジョブのフォルダが無いと **Result** は `Result: folder gone` になるが、**Live Sim** はその形から続く。
 - 布の無い所で Ctrl＋クリックしても何も起きない。生地の値など、上の 5 以外の変更は次に押したときから効く。
-- AI は押さない。状態表示の `done:` の行、`stopped`、エラー文、**Log**（`ac9_cloth_sim.log`、**Details** の中）を読み上げる。
+- AI は押さない。状態表示の `done:` の行、`stopped`、エラー文、**Log**（`ac9_cloth_sim.log`、**AC9 Run** の **Settings** の中）。状態表示はふだん 1 行で、全文も **Settings** の中を読み上げる。
 
 戻し方: **Stop**／**Esc** で止めた所が残る。**Back to Placed** で置いた形に戻す。Ctrl+Z。
 
@@ -349,7 +355,7 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 手順:
 
 1. **Phase Sim**（`ac9_cloth_sim.update_3d`）: 段を追って縫い、決まった段を全部終えたら自動で止まる。経過のコマがタイムラインに入り、2 回目からは画面に出ているコマから続ける。本人が押す。
-2. **Local Sim**: 動かすピースを選んでから押す。選んでいないピースは回っている間 **Off All** と同じ扱い（動かず当たらない）で、選んだピースどうしの縫い目だけが引く。**Gravity** は既定オフ。**Esc** か **Stop** まで回る。置いた形で折れない線の欄の下に出る **Local Sim**（`ac9_cloth_sim.fold_local_sim`）は、そのピースだけの **Local Sim**。
+2. **Local Sim**: 動かすピースを選んでから押す。選んでいないピースは回っている間 **Off** と同じ扱い（動かず当たらない）で、選んだピースどうしの縫い目だけが引く。**Gravity** は既定オフ。**Esc** か **Stop** まで回る。置いた形で折れない線の欄の下に出る **Local Sim**（`ac9_cloth_sim.fold_local_sim`）は、そのピースだけの **Local Sim**。
 3. ほかに **Native 3** の切り替え（既定オン。受け付けない服は通常の計算で回して 1 行知らせる）、縫い目の引き寄せ方、ピースの **Layer** が出る。
 
 期待結果: **Phase Sim** は「done: …」と出て、**Result** に `Frames: on the timeline`。**Local Sim** は、着せた服があれば結果はその服の形、着せる前なら置いた形に残る（ピースを選んでいないと「Local Sim did not start: select the pieces to simulate first」）。
@@ -386,19 +392,19 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 操作 ID: `ac9_cloth_sim.piece_state`、`ac9_cloth_sim.select_piece`、`ac9_cloth_sim.invert_piece_selection`、`ac9_cloth_sim.collider`、`ac9_cloth_sim.collider_select`
 
-目的: ピースごとに **Active**、**Freeze**、**Off Pattern**、**Off All** を決める。ほかの服や小物を障害物にする。
+目的: ピースごとに **Active**、**Freeze**、**Inactive**、**Off** を決める。ほかの服や小物を障害物にする。
 
 前提条件: 型紙が読み込まれている。画面は **Lists** の **Pieces** タブ、またはピースを選んだときの **AC9 Piece** の **State**。
 
 手順:
 
-1. **Lists** の **Pieces** タブで、ピースの行の右の 4 つのアイコンを押す（行の名前を押すとそのピースが選ばれる、`ac9_cloth_sim.select_piece`）。服の行の 3 つのアイコンはその服の全ピースをまとめて切り替える（**Off All** は除く）。
+1. **Lists** の **Pieces** タブで、ピースの行の右の 4 つのアイコンを押す（行の名前を押すとそのピースが選ばれる、`ac9_cloth_sim.select_piece`）。服の行の 3 つのアイコンはその服の全ピースをまとめて切り替える（**Off** は除く）。
 2. 選んだピースをまとめて切り替えるなら、**AC9 Piece** の **State**。残りを選び直すのは同じ行の **Invert Selection**（`ac9_cloth_sim.invert_piece_selection`）。
-3. 障害物は、**Collision** タブで物を選んで **Add Selected**（`ac9_cloth_sim.collider`）、やめるのは **Remove**。行の名前を押すとその物が選ばれる（`ac9_cloth_sim.collider_select`）。
+3. 障害物は、**Collision** タブの **Add** の欄（`scene.ac9_cloth_sim.collider_pick`。物を入れると登録され、欄は空に戻る）か、物を選んで **Add Selected**（`ac9_cloth_sim.collider`）、やめるのは **Remove**。登録した物は 3D ビューの **Whole Pieces** のクリックで選べる。行の名前を押すとその物が選ばれる（`ac9_cloth_sim.collider_select`）。
 
 期待結果: ピースの状態がアイコンの押された表示と型紙の見え方（**Off** は灰色の半透明）に出る。重ね着では、結果を持つほかの服が自動で障害物になる。
 
-制限・してはいけないこと: 状態のボタンは左右の対（鏡のペアと **Pair** の対）を一緒に切り替える。片側だけは Ctrl＋クリック。**Off All** のピースは一覧に数だけ出る。戻すときは **Edit Pieces** で灰色のピースをクリックして選び、**Active** にする（戻したピースは残った側の鏡の形にそろう）。
+制限・してはいけないこと: 状態のボタンは左右の対（鏡のペアと **Pair** の対）を一緒に切り替える。片側だけは Ctrl＋クリック。**Off** のピースは一覧に数だけ出る。戻すときは **Edit Pieces** で灰色のピースをクリックして選び、**Active** にする（戻したピースは残った側の鏡の形にそろう）。
 
 戻し方: 同じボタンで **Active** に戻す。Ctrl+Z。
 
@@ -418,7 +424,7 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 4. ピースの生地と芯地: **AC9 Piece** の **Fabric** と **Interlining** の欄（スクリプトからは `scene.ac9_cloth_sim.piece_fabric`、`piece_bond`）。右の鉛筆は **Edit...** と同じ画面。
 5. ピースの見た目 **Look**、厚みの表示 **Thickness**、**Layer**（0〜9。高い方を低い方の外側に保つ。全部を 0 に戻すのは右の矢印 **All Layers to 0**、`ac9_cloth_sim.layers_to_zero`）、点の間隔 **Distance (mm)**（左の矢印で服の値に戻す、`ac9_cloth_sim.piece_mesh`）、縮み **Elastic**。どれも **AC9 Piece** の欄。Layer は一時的な順序補助として、内外を確認したら停止→All Layers to 0→Live Sim で再計算する。変更は次のシム開始から有効。深い食い込みの追加回復は異層の間だけで、全0の再計算では起動しない。本人の指示なしにAIが自動解除しない。
 6. 役割は **Piece Roles** の **Propose Roles**（`ac9_cloth_sim.propose_roles`）か、**AC9 Piece** の **Role**（`ac9_cloth_sim.set_role`）。
-7. 折りは、型紙の内部線をクリックして出る **AC9 Internal Line** の **Fold Angle**（角度）・**Direction**（Mountain／Valley、布の表から見て）・**Turns**（置いた形で動く側 **Side A**／**Side B**）・**Layers**（**Both**／**A only**／**B only**。片側だけを計算し、反対側は 2 層目として付いていく）。スクリプトからは `scene.ac9_iline_fold`（符号つきの角度、＋＝Mountain）のままでも書けます。値を書くと置いた形がその場で折れます（初めてでも。左右ペアの相方の線にも入る）。折れなかった理由は `place_fold.why_not(piece, line)`。縫い目は `scene.ac9_seam_fold` と `scene.ac9_seam_fold_turn`（'A'／'B'＝縫い目の a／b のピースが回る）。
+7. 折りは、型紙の内部線をクリックして出る **AC9 Internal Line** の **Fold Angle**（角度）・**Direction**（Mountain／Valley、布の表から見て）・**Turns**（置いた形で動く側 **Side A**／**Side B**）・**Layers**（**Both**／**A only**／**B only**。片側だけを計算し、反対側は 2 層目として付いていく）。スクリプトからは `scene.ac9_iline_fold`（符号つきの角度、＋＝Mountain）のままでも書けます。値を書くと置いた形がその場で折れます（初めてでも。左右ペアの相方の線にも同じ文字で入る。相方の A は元の A の鏡の側＝線の `hand` が -1 の線では線の右）。折れなかった理由は `place_fold.why_not(piece, line)`。縫い目は `scene.ac9_seam_fold` と `scene.ac9_seam_fold_turn`（'A'／'B'＝縫い目の a／b のピースが回る）。
 
 期待結果: 生地の一覧と、ピースの生地の割り当てが変わる。型紙に **Show Fabric Colors** で色が出る。何枚か選んでいて値が違う欄は「(mixed)」と赤く出て、変えると全部に効く。
 
@@ -470,13 +476,13 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 前提条件:
 
 - 着せた結果がある（無いとボタンは灰色）。
-- 画面: **AC9 Run** の下の状態表示の **Details** を開く（折りたたまれている）。
+- 画面: **AC9 Run** の **Settings** を開く（折りたたまれている）。
 - タイムラインを最後のコマにしてある（画面に出ているコマが使われる）。
 
 手順:
 
 1. タイムラインを最後のコマに合わせる。
-2. **Details** の **To AC9 Cloth Retopo**（`ac9_cloth_sim.export_retopo`）を押す。本人が押す。
+2. **Settings** の **To AC9 Cloth Retopo**（`ac9_cloth_sim.export_retopo`）を押す。本人が押す。
 
 期待結果: 画面に、頂点数と、縫い目がどれだけ開いていたか（閉じる前）が出る。Cloth Retopo が有効なら、その Guide に自動で設定される。
 
@@ -497,7 +503,7 @@ README の『うまく動かないとき』の表を土台に、今のコード�
 | 「Set the Newton Python in the add-on preferences」 | Preferences の **Newton Python** | 指定を案内する。 | パスを推測して書く。 |
 | 赤が出ない | **Overlays** の目のボタンと **Diagnose > Problems** がオンか。**Watch** を **Live Sim** の前に入れたか。 | 表示の設定を、本人が頼めば確認付きで代行してよい。 | 後から **Watch** を入れて今回の結果に効くと言う。 |
 | 赤が出た | 状態表示の「the first (marked red): …」を書き写し、その場所の画像を撮る。 | 画像を見せ、本人に判断してもらう。 | 「異常です」「不良です」と言い切る。 |
-| 布が交差した・巻き込んだか知りたい | **Details** の **Log**（`ac9_cloth_sim.log`）の `guard` の行。 | ログを読み上げる。 | 件数の意味を断定する。 |
+| 布が交差した・巻き込んだか知りたい | **AC9 Run** の **Settings** の **Log**（`ac9_cloth_sim.log`）の `guard` の行。 | ログを読み上げる。 | 件数の意味を断定する。 |
 | 経過が動かない・**Fix by Hand** が灰色 | **Fix by Hand** か **Back to Placed** の後なら正常。 | 正常と伝える。Ctrl+Z で経過に戻る。 | 押していないのに動かないなら、古い .blend や一時フォルダの消失を疑い、記録して知らせる。 |
 | 衿が裏返る・つなぎ目がねじれる | **Piece Roles**（衿の役割が合っているか）、**Flip the direction of**、置き方。 | **Propose Roles** の結果を見せる。手で直すなら **Fix by Hand**。 | 画面から変えられない縫う順番や置く角度を、勝手に変える。 |
 | 新しい服が最初から崩れる | その場で **Esc**。どの段・何コマ目か。 | 状態表示を記録する。 | **Esc** を AI が押すこと自体は案内に留め、押させる。 |

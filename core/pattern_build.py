@@ -36,9 +36,10 @@ FOLD_ROW = 0.4       # x h: the rows beside a fold line (spec fold_rows), clear 
 # packing, 3 a sewn internal line is a fold line too (its stretches not sewn get samples, 2026-10-25), 4 an internal line
 # near the outline kept where it runs along it (2026-10-28), 5 an internal line sampled span by span between its
 # corners, a corner a vertex (a rectangle drawn inside had no vertex at its corners, 4.6 mm off at 10 mm; user
-# 2026-10-28). Part of the interior cache's key and written to a job (job.json mesh 'mesher'); nothing branches on it.
+# 2026-10-28), 6 bounded outline seam-sample clusters, including wrapped runs and fine seam spacing (2026-11-19).
+# Part of the interior cache's key and written to a job (job.json mesh 'mesher'); nothing branches on it.
 # Raise it whenever _interior (or what it calls) makes different points: else the cache on disk returns the old ones
-MESHER_VERSION = 5
+MESHER_VERSION = 6
 CORNER_DEG = 20.0     # an internal line turning more than this at a point: a corner there (sampled up to it)
 
 # The interior points of a piece are a function of its outline vertices, its internal line vertices, its constraint
@@ -645,7 +646,8 @@ def build(spec, h=6.0):
                     hh = min(hh, seams[x[0]]['h'])
             if src is None or all(x is None for x in c['srcs']):
                 hh = h
-            return s - c['s_last'] < MERGE * hh
+            # Bound the whole cluster: dense samples must not chain distant sewing stations together.
+            return s - c['members'][0] < MERGE * hh
         for s, src in zip(s_sorted, src_sorted):
             if clusters and near(s, clusters[-1], src):
                 c = clusters[-1]
@@ -655,7 +657,10 @@ def build(spec, h=6.0):
             c['members'].append(s)
             c['srcs'].append(src)
             c['s_last'] = s
-        if len(clusters) > 1 and (clusters[0]['members'][0] + o.L - clusters[-1]['s_last']) < MERGE * h:
+        # Across the closed outline, bound the union at the finest participating seam spacing.
+        wrap_h = min([h] + [seams[src[0]]['h'] for c in (clusters[:1] + clusters[-1:])
+                            for src in c['srcs'] if src is not None])
+        if len(clusters) > 1 and (clusters[0]['s_last'] + o.L - clusters[-1]['members'][0]) < MERGE * wrap_h:
             last = clusters.pop()
             clusters[0]['members'] = [m - o.L for m in last['members']] + clusters[0]['members']
             clusters[0]['srcs'] = last['srcs'] + clusters[0]['srcs']

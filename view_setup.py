@@ -11,6 +11,11 @@ from . import pattern_view as PV
 RESULTS = 'AC9_ClothSim_Results'
 OWNED = 'ac9_cloth_sim_results'
 SCREEN = 'ac9_cloth_sim_separated'
+# Objects found directly under the Scene Collection go here when the Work Screen is set up. A collection can be
+# hidden per view; an object directly under the Scene Collection cannot, so it would show in the pattern view.
+# Avatars, accessories and collision objects brought in by the user often land there.
+SCENE_OBJECTS = 'Scene Objects'
+SCENE_OWNED = 'ac9_cloth_sim_scene_objects'
 
 
 def _result_owned(context, obj, spec):
@@ -81,6 +86,33 @@ def organize_existing(context):
     return moved
 
 
+def collect_root(context):
+    """Explicit Work Screen action (user 2026-11-17): move every object directly under the Scene Collection into
+    one collection of the add-on's, so both views can be separated. Nothing else about an object changes: its other
+    collections, parent, hide and selection stay. A pattern piece found there only leaves the root (it is already
+    in the pattern collection). Returns (moved names, the collection's name)."""
+    scene = context.scene
+    roots = list(scene.collection.objects)
+    if not roots:
+        return [], ''
+    pattern = bpy.data.collections.get(PV.COLL_NAME)
+    coll = next((c for c in scene.collection.children if c.get(SCENE_OWNED)), None)
+    moved = []
+    for obj in roots:
+        if pattern is not None and pattern in obj.users_collection:
+            scene.collection.objects.unlink(obj)
+            continue
+        if coll is None:
+            coll = bpy.data.collections.new(SCENE_OBJECTS)
+            coll[SCENE_OWNED] = True
+            scene.collection.children.link(coll)
+        if coll.objects.get(obj.name) != obj:
+            coll.objects.link(obj)
+        scene.collection.objects.unlink(obj)
+        moved.append(obj.name)
+    return moved, coll.name if coll is not None else ''
+
+
 def _layers(context):
     out = []
     def walk(node):
@@ -107,7 +139,7 @@ def preflight(context):
         if set(obj.users_collection) - allowed:
             notes.append('AC9 pattern has an additional collection membership: ' + obj.name)
     for obj in context.scene.collection.objects:
-        if obj.visible_get(view_layer=context.view_layer):
+        if not obj.hide_viewport and not obj.hide_get(view_layer=context.view_layer):
             notes.append('AC9 cannot isolate this scene-root object without moving it: ' + obj.name)
     if nodes and not nodes[0].is_visible:
         notes.append('AC9 pattern collection is hidden or excluded; its setting was kept')
@@ -115,14 +147,18 @@ def preflight(context):
 
 
 def configure(context, window, left, right):
-    """Explicit Work Screen setup; preserve native Local View and other flags."""
+    """Explicit Work Screen setup; preserve native Local View and other flags.
+
+    The notes only explain what this setup cannot keep apart; they no longer stop it. Hiding the pattern
+    collection in the 3D view never depends on objects outside it, and that is what keeps a move in the 3D view
+    off the flat pieces (an object left directly under the Scene Collection only shows in the pattern view too)."""
     coll = PV._collection(context)
     context.view_layer.update()
     notes = preflight(context)
-    if notes:
-        return notes
     layers = _layers(context)
-    index = next(i for i, node in enumerate(layers) if node.collection == coll)
+    index = next((i for i, node in enumerate(layers) if node.collection == coll), None)
+    if index is None:
+        return notes + ['AC9 pattern collection is not in this view layer; the views were not separated']
     node = layers[index]
     for area, is_pattern in ((left, False), (right, True)):
         space = area.spaces.active
@@ -134,7 +170,7 @@ def configure(context, window, left, right):
             elif node.visible_get():
                 bpy.ops.object.hide_collection(collection_index=index, toggle=True, extend=False)
     window.screen[SCREEN] = True
-    return []
+    return notes
 
 
 def refresh(context):

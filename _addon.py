@@ -1,58 +1,99 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Registration (Blender only). Split from __init__ so core/ imports without bpy."""
+import ast
 import importlib
 import os
+import sys
 
-# F3 (Reload Scripts) re-runs this file: reload the submodules in dependency order first
+# Reloaded by __init__ itself, before this file.
+_SELF_RELOADED = (__name__, __package__ + '.companion_state')
+
+
+def _loaded_submodules():
+    """Every module of this add-on now in sys.modules, except this file and the ones __init__ reloads."""
+    head = __package__ + '.'
+    return [name for name, mod in list(sys.modules.items())
+            if name.startswith(head) and name not in _SELF_RELOADED and mod is not None]
+
+
+def _module_imports(name, mod):
+    """The add-on modules `name` imports at its top level (inside def/class is resolved at call time, so it is left out)."""
+    path = getattr(mod, '__file__', None)
+    try:
+        with open(path, 'rb') as f:
+            tree = ast.parse(f.read())
+    except (OSError, TypeError, ValueError, SyntaxError):
+        return []
+    is_pkg = os.path.basename(path or '') == '__init__.py'
+    here = name if is_pkg else name.rpartition('.')[0]
+    out = []
+
+    def walk(body):
+        for node in body:
+            if isinstance(node, ast.ImportFrom):
+                base = here
+                for _ in range(max(node.level - 1, 0)):
+                    base = base.rpartition('.')[0]
+                if node.level == 0:
+                    base = node.module or ''
+                elif node.module:
+                    base = base + '.' + node.module
+                out.append(base)
+                out.extend(base + '.' + a.name for a in node.names)
+            elif isinstance(node, ast.Import):
+                out.extend(a.name for a in node.names)
+            elif isinstance(node, (ast.If, ast.Try, ast.With)):
+                for part in ('body', 'orelse', 'finalbody'):
+                    walk(getattr(node, part, []))
+                for h in getattr(node, 'handlers', []):
+                    walk(h.body)
+    walk(tree.body)
+    return out
+
+
+def _reload_order(names):
+    """Dependencies first, so a module's `from .x import y` binds the reloaded y (a cycle is cut where it closes)."""
+    names = sorted(names)
+    known = set(names)
+    deps = {n: [d for d in dict.fromkeys(_module_imports(n, sys.modules[n])) if d in known and d != n] for n in names}
+    order, state = [], {}
+
+    def visit(n):
+        if state.get(n):
+            return
+        state[n] = 1
+        for d in deps[n]:
+            visit(d)
+        order.append(n)
+    for n in names:
+        visit(n)
+    return order
+
+
+def _reload_all_submodules():
+    """Reload every loaded module of the add-on in place (same module objects, so state they keep across a reload
+    stays). A module whose file is gone in the new version is dropped from sys.modules."""
+    for name in _reload_order(_loaded_submodules()):
+        mod = sys.modules.get(name)
+        if mod is None:
+            continue
+        try:
+            importlib.reload(mod)
+        except ModuleNotFoundError:
+            if not os.path.exists(getattr(mod, '__file__', None) or ''):
+                sys.modules.pop(name, None)
+            else:
+                raise
+
+
+# F3 (Reload Scripts) and an install over a loaded version re-run this file: reload every submodule first, not a
+# hand-kept list (a module only imported by other modules, units.py, was missed and an upgrade stopped on its new names).
 if "_spec" in locals():
-    if '_dress' in locals():
-        _dress.standby_end()
-    if '_prepared_live' in locals():
-        importlib.reload(_process_tree)
-        importlib.reload(_prepared_live)
-        importlib.reload(_prepared_candidate)
-        if '_live_session' in locals():importlib.reload(_live_session)
+    if '_dress' in locals() and hasattr(_dress, 'standby_end'):  # noqa: F821
+        _dress.standby_end()  # noqa: F821
     if "_place_targets" in locals():
-        _place_targets.unregister()
-        importlib.reload(_target_scope)
-        importlib.reload(_place_targets)
-    if '_fast_contract' in locals():
-        importlib.reload(_fast_contract)
-        importlib.reload(_fast_live)
-    if '_native_three_contract' in locals():
-        importlib.reload(_native_three_contract)
-        importlib.reload(_native_three)
-    if '_native_runtime_io' in locals():
-        importlib.reload(_native_runtime_io)
-        importlib.reload(_native_three_io)
-    if '_preload_status' in locals():
-        importlib.reload(_preload_status)
-    if '_preload_config' in locals():
-        importlib.reload(_preload_config)
-    if "_fold_reference" in locals():
-        importlib.reload(_fold_reference)
-    if "_live_resume" in locals():
-        importlib.reload(_live_resume)
-    if "_outside" in locals():
-        importlib.reload(_outside)
-    if "_look_reference" in locals():
-        importlib.reload(_look_reference)
-    if '_prepare_build' in locals():
-        importlib.reload(_prepare_build)
-    if "_result_reference" in locals():
-        importlib.reload(_result_reference)
-    if "_display_state" in locals():
-        importlib.reload(_display_state)
-    if "_view_visibility" in locals():
-        importlib.reload(_view_visibility)
-    if "_view_setup" in locals():
-        importlib.reload(_view_setup)
-    if "_text_band" in locals():
-        importlib.reload(_text_band)
-    for _m in (*([_i18n_ja, _i18n] if '_i18n' in locals() else []), *([_core_i18n] if '_core_i18n' in locals() else []), _spec, *([_shape_source] if '_shape_source' in locals() else []), *([_piece_table] if '_piece_table' in locals() else []), _bom_parse, _bom_to_spec, _body_axes, _pattern_build, _roles, *([_fabric, _look] if '_look' in locals() else []), _recipe, _presets, *([_prepare_plan] if '_prepare_plan' in locals() else []), *([_phase_from] if '_phase_from' in locals() else []), _simlog,  # noqa: F821
-               _store, *([_look_apply] if '_look_apply' in locals() else []), _pattern_view, _placed_view, *([_selection] if '_selection' in locals() else []), _overlay, _piece_look, *([_diagnose] if '_diagnose' in locals() else []), _click_log, _toolbar, *([_pre_click] if '_pre_click' in locals() else []), _seam_tool, _seam_edit, _seam_edit_tool, _draft, _snap, _transfer, _dxf_out, _walk, _notch_import, _dart, _spread, *([_cut] if '_cut' in locals() else []), _blend, _draft_tool, _shape_tool, _walk_ui, _dart_ui, _spread_ui, _blend_ui, _placement, _guide_edit, _piece_move, _garment_mark, _work_screen, _attach, _buttons, _zippers, _button_shape, _button_view, _zipper_view, _button_ui, *([_lifecycle_trace, _stop_control] if '_stop_control' in locals() else []), _dress, *([_place_fold] if '_place_fold' in locals() else []), *([_place_seam] if '_place_seam' in locals() else []), *([_place_lay] if '_place_lay' in locals() else []), *([_place_settle] if '_place_settle' in locals() else []), _export_retopo,  # noqa: F821
-               _mesh_to_spec, _mesh_import, _measure, _measure_tool, *([_measure_edit] if '_measure_edit' in locals() else []), _properties, _operators, _ui, _tool_tab):                                                     # noqa: F821
-        importlib.reload(_m)
+        _place_targets.unregister()  # noqa: F821
+    _reload_all_submodules()
 
 from .core import shape_source as _shape_source
 from .core import prepare_plan as _prepare_plan
@@ -95,6 +136,7 @@ from . import placed_view as _placed_view           # noqa: E402
 from . import selection as _selection               # noqa: E402
 from . import result_reference as _result_reference # noqa: E402
 from . import display_state as _display_state       # noqa: E402
+from . import piece_hide as _piece_hide             # noqa: E402
 from . import view_visibility as _view_visibility   # noqa: E402
 from . import view_setup as _view_setup             # noqa: E402
 from . import text_band as _text_band               # noqa: E402
@@ -102,6 +144,7 @@ from . import overlay as _overlay                   # noqa: E402
 from . import piece_look as _piece_look             # noqa: E402
 from . import diagnose as _diagnose                 # noqa: E402
 from . import click_log as _click_log               # noqa: E402
+from . import box_pieces as _box_pieces             # noqa: E402
 from . import toolbar as _toolbar                   # noqa: E402
 from . import seam_tool as _seam_tool               # noqa: E402
 from .core import seam_edit as _seam_edit           # noqa: E402
@@ -156,23 +199,16 @@ from . import operators as _operators               # noqa: E402
 from . import ui as _ui                             # noqa: E402
 from . import tool_tab as _tool_tab                 # noqa: E402
 
-_CHAIN = (_core_i18n, _spec, _shape_source, _piece_table, _bom_parse, _bom_to_spec, _body_axes, _pattern_build, _roles, _fabric, _look, _recipe, _presets, _prepare_plan, _phase_from, _simlog, _attach, _result_reference, _look_reference, _store, _look_apply, _pattern_view, _placed_view, _selection, _view_visibility, _view_setup, _overlay, _piece_look, _toolbar, _pre_click,
-          _seam_tool, _seam_edit, _seam_edit_tool, _draft, _snap, _transfer, _dxf_out, _walk, _notch_import, _dart, _spread, _cut, _blend, _draft_tool, _shape_tool, _walk_ui, _dart_ui, _spread_ui, _blend_ui, _placement, _guide_edit, _piece_move, _garment_mark, _work_screen, _buttons, _zippers, _button_shape, _button_view, _zipper_view, _button_ui, *([_lifecycle_trace, _stop_control] if '_stop_control' in locals() else []), _prepare_build, _dress, _place_fold, _target_scope, _place_targets, _place_seam, _place_lay, _place_settle, _export_retopo, _mesh_to_spec,
-          _mesh_import, _measure,
-          _measure_tool, _measure_edit, _properties,
-          _operators,
-          _ui, _tool_tab, _display_state)
 _STAMPS = {}
-_CHAIN = (_preload_status, *_CHAIN)
 
 
 def _file_stamps():
     out = {}
-    for mod in (*_CHAIN, _outside):
+    for name in _loaded_submodules():
         try:
-            out[mod.__name__] = os.path.getmtime(mod.__file__)
-        except OSError:
-            out[mod.__name__] = None
+            out[name] = os.path.getmtime(sys.modules[name].__file__)
+        except (OSError, TypeError, AttributeError):
+            out[name] = None
     return out
 
 
@@ -181,8 +217,7 @@ def _reload_changed_submodules():
     global _STAMPS
     now = _file_stamps()
     if _STAMPS and now != _STAMPS:
-        for mod in (*_CHAIN, _outside):
-            importlib.reload(mod)
+        _reload_all_submodules()
         now = _file_stamps()
     _STAMPS = now
 
@@ -223,6 +258,7 @@ def register():
     _overlay.register()
     _pre_click.register()
     _display_state.register()
+    _piece_hide.register()
     _selection.register()
     _garment_mark.register()          # last: its dot is drawn over the pieces' tints and the seams
 
@@ -230,6 +266,7 @@ def register():
 def unregister():
     _place_targets.unregister()
     _selection.unregister()
+    _piece_hide.unregister()
     _display_state.unregister()
     _garment_mark.unregister()
     _pre_click.unregister()

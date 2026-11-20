@@ -16,6 +16,7 @@ from mathutils import Vector
 from gpu_extras.batch import batch_for_shader
 
 from . import pattern_view as PV
+from . import result_reference as RR
 from . import placed_view as PLV
 from . import store
 from . import view_visibility as VV
@@ -30,8 +31,9 @@ _geo_views = {}             # bounded caches by logical viewport membership, nev
 _jobseg = {'key': None}
 _gpos = {'key': None}        # the garment's seam points, kept while the frame, the shape and the transform stay
 _batch3 = {'key': None}      # the 3D seam batch, kept while the points and the view stay
-_mesh_epochs = {}
+_mesh_epochs = {}           # session_uid of an object or mesh -> the epoch its geometry last changed in
 _mesh_epoch = 0
+_generation = [0]           # bumped on undo / redo / load: datablocks swapped without a depsgraph update
 _scene_index_cache = {'key': None}
 
 
@@ -42,7 +44,25 @@ def _geometry_changed(_scene, depsgraph):
     for update in depsgraph.updates:
         if update.is_updated_geometry and isinstance(update.id, (bpy.types.Mesh, bpy.types.Object)):
             _mesh_epoch += 1
-            _mesh_epochs[update.id.original.as_pointer()] = _mesh_epoch
+            # session_uid, not the pointer: a freed datablock's address can come back for another one
+            _mesh_epochs[update.id.original.session_uid] = _mesh_epoch
+
+
+@bpy.app.handlers.persistent
+def _datablocks_swapped(*_args):
+    """Undo, redo and a file load replace datablocks without reporting their geometry as updated."""
+    _generation[0] += 1
+    _mesh_epochs.clear()
+
+
+def watching():
+    """True while the geometry handler runs: caches may trust the epochs (else they read the data whole)."""
+    return _geometry_changed in bpy.app.handlers.depsgraph_update_post
+
+
+def epoch(id_):
+    """The epoch the object's or mesh's geometry last changed in (0: not since the handler started)."""
+    return _mesh_epochs.get(id_.session_uid, 0)
 
 RUNG_MM = 10.0       # one rung about every 10 mm of seam (a ladder, not a wall)
 LIFT_MM = 5.0        # 3D seam lines drawn this much towards the eye, so the cloth they lie on does not hide them
@@ -240,7 +260,7 @@ def _placed_flat(spec, outlines, enabled):
         wa = wa * PV.MM if wa is not None else None
         wb = laid_mm(spec, pb, fb, rad.get(b))
         wb = wb * PV.MM if wb is not None else None
-        c = OFF if not sm.get('enabled', True) else (FLAG if sm.get('check') else SE.color(sm))
+        c = OFF if not sm.get('enabled', True) else SE.color(sm)
         rows.append((sm['id'], a, b, fa, fb, c, wa, wb))
     _pflat.update(key=key, rows=rows)
     return rows
@@ -431,13 +451,13 @@ def _scene_seam_index(ob, n_verts, spec, outlines):
 def _seam_index(job, ob, n_verts, spec, outlines):
     if job is not None:
         try:
-            with np.load(os.path.join(job, 'scene.idx.npz')) as z:
+            with np.load(os.path.join(job, RR.INDEX)) as z:
                 flat, offs = z['flat'], z['offs']
                 E = z['E_st'] if 'E_st' in z.files else np.empty((0, 2), np.int64)
                 sid = z['E_seam'].astype(str) if 'E_seam' in z.files else np.full(len(E), '')
                 triangles = z['F'] if 'F' in z.files else None
                 owners = z['fp'] if 'fp' in z.files else None
-            with open(os.path.join(job, 'job.json'), encoding='utf-8') as f:
+            with open(os.path.join(job, RR.JOB), encoding='utf-8') as f:
                 names = json.load(f)['names']
             if (not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names) or
                     len(set(names)) != len(names)):
@@ -509,14 +529,14 @@ def _garment_segments(job, spec, n_verts, outlines=None, ob=None):
     drawn; a seam turned off is gray (user 2026-10-14). A missing/stale index is recovered read-only from verified
     current mesh metadata; None when neither correspondence is valid."""
     try:
-        stat = os.stat(os.path.join(job, 'scene.idx.npz')) if job is not None else None
+        stat = os.stat(os.path.join(job, RR.INDEX)) if job is not None else None
         if stat is None:
             raise OSError('No result folder')
         generation = (stat.st_mtime_ns, stat.st_size)
     except OSError:
         generation = None
     owner_key = ((ob.as_pointer(), ob.data.as_pointer(),
-                  _mesh_epochs.get(ob.data.as_pointer(), 0), str(ob.get('ac9_piece_names', '')),
+                  epoch(ob.data), _generation[0], str(ob.get('ac9_piece_names', '')),
                   float(bpy.context.scene.ac9_cloth_sim.mesh_size))
                  if ob is not None else None)
     key = (job, store._cache['key'], n_verts, generation, owner_key)
@@ -536,7 +556,7 @@ def _garment_segments(job, spec, n_verts, outlines=None, ob=None):
             segs, cols = [], []
 
             def color(sm):
-                return OFF if not sm.get('enabled', True) else (FLAG if sm.get('check') else SE.color(sm))
+                return OFF if not sm.get('enabled', True) else SE.color(sm)
             for s_ in dict.fromkeys(sid.tolist()):
                 sm = by_id.get(s_)
                 if sm is None:
@@ -628,7 +648,7 @@ def _mixed_ladders(spec, outlines, plan, visible, shown, ob, co):
             continue
         if A is None or B is None:
             continue
-        color = OFF if not sm.get('enabled', True) else (FLAG if sm.get('check') else SE.color(sm))
+        color = OFF if not sm.get('enabled', True) else SE.color(sm)
         P, C, size = _ladder_np(A, B, fa, color, _arc_of(spec, outlines, sm['id'], names[0], entries))
         pos.append(P)
         colors.extend(C)
@@ -651,7 +671,7 @@ def garment_seams(context, spec):
     # Dress links the garment to its result only at the end, and the lines stayed where the pieces were placed until
     # then (user 2026-10-14)
     rj = DR.AC9_OT_SimDress._running_job if DR.AC9_OT_SimDress.running() else None
-    if rj and rj[0] == ob.name and os.path.exists(os.path.join(rj[1], 'job.json')):
+    if rj and rj[0] == ob.name and os.path.exists(os.path.join(rj[1], RR.JOB)):
         job = rj[1]
     if job is None and not DS.result_names(ob):
         return None
@@ -800,7 +820,7 @@ def notches3d(context, spec, outlines, act, garment):
         if ob is not None and name not in hidden and _jobseg.get('rng') and name in _jobseg['rng']:
             try:
                 if gco is None:
-                    z = np.load(os.path.join(DR.job_of(ob), 'scene.idx.npz'))
+                    z = np.load(os.path.join(DR.job_of(ob), RR.INDEX))
                     flat = z['flat']
                     gco = DR.garment_co(context, ob).astype(np.float64)
                     Mw = np.array(ob.matrix_world)
@@ -832,8 +852,8 @@ def _garment_tris(ob, lo, hi):
     """The garment mesh's triangles among the vertices lo..hi (a piece), indexed from lo."""
     me = ob.data
     owner = (ob.as_pointer(), me.as_pointer(), len(me.vertices), len(me.polygons), len(me.loops),
-             _mesh_epochs.get(ob.as_pointer(), 0), _mesh_epochs.get(me.as_pointer(), 0))
-    watched = _geometry_changed in bpy.app.handlers.depsgraph_update_post
+             epoch(ob), epoch(me), _generation[0])
+    watched = watching()
     if watched and _gtri.get('owner') == owner:
         T = _gtri['T']
         if lo == 0 and hi == len(me.vertices):
@@ -859,54 +879,167 @@ def _garment_tris(ob, lo, hi):
     return T - lo
 
 
-def iline3d(context, spec, outlines, garment):
-    """World (m) points (a polyline, (n, 3)) of the internal line picked in Edit Pieces, in 3D (user 2026-10-21): on
-    the garment's result inside its piece's triangles (barycentric on the flat coordinates, so the line follows the
-    cloth between vertices), on a placed piece's object, else on the cylinder wrap -- as the 3D notches.
-    Empty when no line is picked or its piece is not in 3D."""
-    from . import draft_tool as DT
-    name, lid = DT._isel['piece'], DT._isel['line']
-    if not name or name not in outlines or name not in VV.world_names(context, spec):
-        return np.zeros((0, 3))
-    pc = next((x for x in spec['pieces'] if x['name'] == name), None)
-    it = next((x for x in (pc or {}).get('internals', []) if x.get('id') == lid), None)
-    if it is None or len(it.get('pts', [])) < 2:
-        return np.zeros((0, 3))
-    sh, sig = PLV.shown(context, spec, outlines)
-    gk = _gpos['key'] if garment else None
-    key = (store._cache['key'], name, lid, gk, sig)
-    if _iline3['key'] == key:
-        return _iline3['P']
-    P0 = np.asarray(it['pts'], float)
+def _dense(pts):
+    """A pattern polyline (mm) with a point every ILINE_STEP_MM, so it bends with the cloth."""
+    P0 = np.asarray(pts, float)
     Q = [P0[0]]
-    for a, b in zip(P0[:-1], P0[1:]):               # every ILINE_STEP_MM, so it bends with the cloth
+    for a, b in zip(P0[:-1], P0[1:]):
         n = max(1, int(np.ceil(np.linalg.norm(b - a) / ILINE_STEP_MM)))
         Q += [a + (b - a) * (k / n) for k in range(1, n + 1)]
-    Q = np.asarray(Q, float)
-    P = None
+    return np.asarray(Q, float)
+
+
+_ibind = {}
+
+
+def _bind(Q, F, T, k=16):
+    """(vertex ids (n, 3), weights (n, 3)) of flat points Q in the flat triangles (F, T): the containing or nearest
+    triangle among the k with the nearest centers, weights clamped -- dress._bary_map's rule, kept so it is applied
+    to each frame's positions without searching again."""
+    from mathutils.kdtree import KDTree
+    Q = np.asarray(Q, np.float64)
+    A, B, C = F[T[:, 0]], F[T[:, 1]], F[T[:, 2]]
+    cen = (A + B + C) / 3.0
+    k = min(k, len(T))
+    tree = KDTree(len(T))
+    for t, c in enumerate(cen):
+        tree.insert((float(c[0]), float(c[1]), 0.0), t)
+    tree.balance()
+    cand = np.array([[i for _co, i, _d in tree.find_n((float(q[0]), float(q[1]), 0.0), k)] for q in Q], np.int64)
+    a, v0, v1 = A[cand], B[cand] - A[cand], C[cand] - A[cand]
+    v2 = Q[:, None, :] - a
+    d00 = (v0 * v0).sum(-1); d01 = (v0 * v1).sum(-1); d11 = (v1 * v1).sum(-1)
+    d20 = (v2 * v0).sum(-1); d21 = (v2 * v1).sum(-1)
+    den = d00 * d11 - d01 * d01
+    with np.errstate(divide='ignore', invalid='ignore'):
+        v = (d11 * d20 - d01 * d21) / den
+        w = (d00 * d21 - d01 * d20) / den
+    u = 1 - v - w
+    worst = np.nan_to_num(np.minimum(np.minimum(u, v), w), nan=-np.inf)
+    j = np.argmax(worst, 1)
+    r = np.arange(len(Q))
+    W = np.clip(np.stack([u[r, j], v[r, j], w[r, j]], 1), 0, 1)
+    W /= np.maximum(W.sum(1, keepdims=True), 1e-12)
+    return T[cand[r, j]], W
+
+
+def _lines_to_3d(context, spec, outlines, name, Qs, garment, sh, memo):
+    """World (m) polylines of the pattern polylines Qs (mm) of piece `name`: on the garment's result inside its
+    piece's triangles (barycentric on the flat coordinates, so a line follows the cloth between vertices), on a placed
+    piece's object, else on the cylinder wrap -- as the 3D notches. memo keeps the garment's reads for one call.
+    A list as Qs (an entry None where a line could not be carried)."""
     from . import dress as DR
-    ob = bpy.data.objects.get(DR.garment_name(spec)) if garment else None
-    if (ob is not None and name not in set(DR.hidden_pieces(ob, spec)) and _jobseg.get('rng')
-            and name in _jobseg['rng']):
+    if 'ob' not in memo:
+        memo['ob'] = bpy.data.objects.get(DR.garment_name(spec)) if garment else None
+        memo['hidden'] = set(DR.hidden_pieces(memo['ob'], spec)) if memo['ob'] is not None else set()
+    ob = memo['ob']
+    if ob is not None and name not in memo['hidden'] and _jobseg.get('rng') and name in _jobseg['rng']:
         try:
-            z = np.load(os.path.join(DR.job_of(ob), 'scene.idx.npz'))
+            if 'flat' not in memo:
+                memo['bind_key'] = (store._cache['key'], DR.job_of(ob))
+                memo['flat'] = np.load(os.path.join(DR.job_of(ob), RR.INDEX))['flat'].astype(np.float64)
+                gco = DR.garment_co(context, ob).astype(np.float64)
+                Mw = np.array(ob.matrix_world)
+                memo['co'] = gco @ Mw[:3, :3].T + Mw[:3, 3]
             lo, hi = _jobseg['rng'][name]
-            gco = DR.garment_co(context, ob).astype(np.float64)
-            Mw = np.array(ob.matrix_world)
-            X = gco[lo:hi] @ Mw[:3, :3].T + Mw[:3, 3]
             T = _garment_tris(ob, lo, hi)
-            if len(T):
-                P = DR._bary_map(Q, z['flat'][lo:hi].astype(np.float64), T, X)
+            if not len(T):
+                return [None] * len(Qs)
+            # the lines bound once to the piece's flat triangles (kept while the pattern, the mesh and these lines
+            # stay; each frame only the positions change). The key holds the lines themselves: keyed by the piece
+            # only, a line picked after another was drawn through the other's points.
+            Qa = np.vstack(Qs)
+            bk = (memo.get('bind_key'), name, lo, hi, len(T), hash(Qa.tobytes()))
+            if _ibind.get(bk) is None:
+                if len(_ibind) > 256:
+                    _ibind.clear()
+                _ibind[bk] = _bind(Qa, memo['flat'][lo:hi], T)
+            V, W = _ibind[bk]
+            X = memo['co'][lo:hi]
+            P = (W[:, :, None] * X[V]).sum(1)
+            return np.split(P, np.cumsum([len(Q) for Q in Qs])[:-1])
         except Exception:
-            P = None
-    elif name in sh:
-        P = PLV.to_world(sh[name], Q)
-    else:
-        pl = spec.get('placement', {}).get(name)
-        P = laid_mm(spec, pl, Q, wrap_radii(spec, outlines).get(name))
-        P = P * PV.MM if P is not None else None
-    P = np.zeros((0, 3)) if P is None else np.asarray(P, float).reshape(-1, 3)
-    _iline3.update(key=key, P=P)
+            return [None] * len(Qs)
+    if name in sh:
+        return [PLV.to_world(sh[name], Q) for Q in Qs]
+    pl = spec.get('placement', {}).get(name)
+    r = wrap_radii(spec, outlines).get(name)
+    out = []
+    for Q in Qs:
+        P = laid_mm(spec, pl, Q, r)
+        out.append(P * PV.MM if P is not None else None)
+    return out
+
+
+def ilines_picked3d(context, spec, outlines, garment):
+    """World (m) polylines ([(n, 3)]) of the internal lines picked in Edit Pieces, in 3D: the one picked and those
+    added with Shift (user 2026-11-14: several picked showed only one). Lines whose piece is not in 3D are left out."""
+    from . import draft_tool as DT
+    picked = [(DT._isel['piece'], DT._isel['line'])] + list(DT._imore)
+    picked = [(n, l) for n, l in picked if n]
+    sh, sig = PLV.shown(context, spec, outlines)
+    gk = _gpos['key'] if garment else None
+    key = (store._cache['key'], tuple(picked), gk, sig)
+    if _iline3['key'] == key:
+        return _iline3['P']
+    visible = VV.world_names(context, spec) if picked else ()
+    by = {}
+    for name, lid in picked:
+        if name not in outlines or name not in visible:
+            continue
+        pc = next((x for x in spec['pieces'] if x['name'] == name), None)
+        it = next((x for x in (pc or {}).get('internals', []) if x.get('id') == lid), None)
+        if it is not None and len(it.get('pts', [])) >= 2:
+            by.setdefault(name, []).append(_dense(it['pts']))
+    memo, out = {}, []
+    for name, Qs in by.items():
+        for P in _lines_to_3d(context, spec, outlines, name, Qs, garment, sh, memo):
+            if P is not None:
+                P = np.asarray(P, float).reshape(-1, 3)
+                if len(P) > 1 and np.isfinite(P).all():
+                    out.append(P)
+    _iline3.update(key=key, P=out)
+    return out
+
+
+_ilines3 = {'key': None}
+ILINES_3D = (0.05, 0.25, 0.85, 1.0)      # deep blue: reads on white cloth and stays apart from the orange picked lines
+
+
+def ilines3d(context, spec, outlines, garment):
+    """Segments (world m, (2n, 3) pairs) of every internal line of every piece shown in 3D, thin, as the pattern
+    draws them (user 2026-11-14; Overlays > Internal Lines in 3D). Baselines are left out, as on the pattern."""
+    visible = VV.world_names(context, spec)
+    sh, sig = PLV.shown(context, spec, outlines)
+    gk = _gpos['key'] if garment else None
+    key = (store._cache['key'], gk, sig, visible)
+    if _ilines3['key'] == key:
+        return _ilines3['P']
+    if _ilines3.get('qkey') != store._cache['key']:       # the lines in mm, made again only when the pattern changes
+        _ilines3.update(qkey=store._cache['key'], Q={
+            pc['name']: [_dense(it['pts']) for it in pc.get('internals', [])
+                         if it.get('kind') != 'baseline' and len(it.get('pts', [])) >= 2]
+            for pc in spec['pieces']})
+    memo, segs = {}, []
+    for pc in spec['pieces']:
+        name = pc['name']
+        if name not in visible or name not in outlines or not pc.get('enabled', True):
+            continue
+        Qs = _ilines3['Q'].get(name)
+        if not Qs:
+            continue
+        for P in _lines_to_3d(context, spec, outlines, name, Qs, garment, sh, memo):
+            if P is None:
+                continue
+            P = np.asarray(P, float).reshape(-1, 3)
+            if len(P) < 2:
+                continue
+            S2 = np.stack([P[:-1], P[1:]], 1)
+            S2 = S2[np.isfinite(S2).all((1, 2))]          # a point the mapping could not carry drops its segments
+            if len(S2):
+                segs.append(S2.reshape(-1, 3))
+    P = np.vstack(segs) if segs else np.zeros((0, 3))
+    _ilines3.update(key=key, P=P, batch=None, bkey=None)
     return P
 
 
@@ -999,8 +1132,9 @@ def _build(context, spec, outlines):
     gob = bpy.data.objects.get(DR.garment_name(spec))
     on_g = DS.result_names(gob)
     more = frozenset(store.seam_more)
+    hid = frozenset(n for n, v in display.items() if v.get('hidden'))
     key = (store._cache['key'], M.tobytes(), act['id'] if act else None, props.seam_index, props.show_guides, shown,
-           on_g, more, visibility, context.scene.unit_settings.length_unit)   # the labels are in the unit
+           on_g, more, visibility, context.scene.unit_settings.length_unit, hid)   # the labels are in the unit
     if _geo['key'] == key:
         return _placed3d(context, spec, outlines) if world_visible else _geo
     enabled = {pc['name'] for pc in spec['pieces'] if pc.get('enabled', True)}
@@ -1010,13 +1144,15 @@ def _build(context, spec, outlines):
         H = np.c_[P2, np.zeros(len(P2)), np.ones(len(P2))]
         return (H @ M.T)[:, :3]
 
-    pos, col, apos, acol = [], [], [], []
+    pos, col, apos, acol, checks = [], [], [], [], []
     for i, sm in enumerate(spec['seams']):
         if sm['a']['piece'] not in enabled or sm['b']['piece'] not in enabled:
             continue
         # the color from the seam's group / id (core/seam_edit.py): the same in the seam list, and kept when other
-        # seams are added or deleted
-        c = (0.5, 0.5, 0.5, 0.6) if not sm.get('enabled', True) else (FLAG if sm.get('check') else SE.color(sm))
+        # seams are added or deleted. A seam to check keeps its color and gets a "!" by its middle (user 2026-11-15:
+        # drawn all orange, the flagged seams read as one more seam color, and most of a garment from a BOM was)
+        c = (0.5, 0.5, 0.5, 0.6) if not sm.get('enabled', True) else SE.color(sm)
+        flagged = bool(sm.get('check'))
         is_act = act is not None and (sm['id'] == act['id'] or sm['id'] in more)
         # a dart switched off (marked, not sewn; user 2026-10-21): its legs dashed, 4 mm on / 4 mm off
         dashed = not sm.get('enabled', True) and sm['a']['piece'] == sm['b']['piece']
@@ -1027,6 +1163,9 @@ def _build(context, spec, outlines):
                 P = world(S.side_polyline(spec, sm[k], outlines, step=2.0))
             except Exception:
                 continue
+            if flagged and len(P):
+                checks.append(P[len(P) // 2])
+                flagged = False                         # one mark for the seam, by its first side shown
             tgt_p, tgt_c = (apos, acol) if is_act else (pos, col)
             for j, (u, v) in enumerate(zip(P[:-1], P[1:])):
                 if dashed and j % 4 >= 2:
@@ -1096,8 +1235,9 @@ def _build(context, spec, outlines):
         if pc['name'] not in visible:
             continue
         B = outlines[pc['name']].B
-        labels.append((world([B.mean(0)])[0], pc.get('label') or pc['name'], pc['name'] in enabled))
-    _geo.update(key=key, pos=pos, col=col, apos=apos, acol=acol, join=join, labels=labels, alab=alab,
+        labels.append((world([B.mean(0)])[0], pc.get('label') or pc['name'], pc['name'] in enabled,
+                       pc['name'] in hid))
+    _geo.update(key=key, pos=pos, col=col, apos=apos, acol=acol, join=join, labels=labels, alab=alab, checks=checks,
                 guides=guides, placed=placed, pcol=pcol, pnew=pnew, pncol=pncol, enabled=enabled, k3=None,
                 center=center, fills=fills, p3=(), p3c=(), p3id=(), world_names=world_names)
     return _placed3d(context, spec, outlines) if world_visible else _geo
@@ -1206,6 +1346,39 @@ def _draw_gone_view(context):
     gpu.state.blend_set('NONE')
 
 
+def _draw_hidden_px(context):
+    """'Hidden in 3D' on each flat piece hidden in the 3D view (piece_hide), whatever the overlay switches say: the
+    faint piece alone was not told apart from an Off one in a file with the overlays off."""
+    from . import piece_hide as PH
+    spec = store.get(context)[0]
+    hid = PH.names(context.scene, spec) if spec else frozenset()
+    if not hid:
+        return
+    visible = VV.pattern_names(context, spec)
+    if not visible & hid:
+        return
+    from .i18n import tx
+    from . import text_band
+    outlines = store.get(context)[1]
+    M = np.array(PV.layout_matrix(context))
+    region, rv3d = context.region, context.region_data
+    fid = 0
+    blf.size(fid, 13)
+    t = tx("Hidden in 3D")
+    w, _ = blf.dimensions(fid, t)
+    items = []
+    for n in sorted(hid & visible):
+        ol = outlines.get(n)
+        if ol is None:
+            continue
+        c = np.asarray(ol.B, float).mean(0) * PV.MM
+        p = M @ np.array([c[0], c[1], 0.0, 1.0])
+        xy = location_3d_to_region_2d(region, rv3d, Vector(p[:3]))
+        if xy is not None:
+            items.append((xy[0] - w / 2, xy[1] - 19, t, (1.0, 1.0, 1.0, 0.95)))
+    text_band.draw(fid, items)
+
+
 def _draw_gone_px(context):
     from .i18n import tx
     gone = _gone(context)
@@ -1269,7 +1442,8 @@ def _draw_view():
     props = getattr(context.scene, 'ac9_cloth_sim', None)
     if props is not None:
         _draw_gone_view(context)
-    if not (shows(props, 'show_overlay') or shows(props, 'show_guides') or shows(props, 'show_lengths')):
+    if not (shows(props, 'show_overlay') or shows(props, 'show_guides') or shows(props, 'show_lengths')
+            or shows(props, 'show_internal_3d')):
         return
     seams = props.show_overlay
     from . import guide_edit as GE                  # (guide_edit imports this module)
@@ -1312,7 +1486,8 @@ def _draw_view():
     elif g['guides']:
         sh.uniform_float('lineWidth', 1.0)
         _batch(g, 'guides', sh, g['guides'], [(0.7, 0.8, 1.0, 0.35)] * len(g['guides'])).draw(sh)
-    gs = garment_seams(context, spec) if seams and world_visible else None
+    # the garment's result also carries the internal lines (drawn with the seams off too)
+    gs = garment_seams(context, spec) if world_visible else None
     if g.get('fills') and seams:
         _draw_fills(context, g, only_new=gs is not None)
         sh.bind()
@@ -1367,17 +1542,36 @@ def _draw_view():
                 bt.draw(psh)
             gpu.state.point_size_set(1.0)
             sh.bind()
-    if seams and world_visible:
+    if world_visible and props.show_internal_3d:
         try:
-            L3 = iline3d(context, spec, outlines, gs is not None)
+            A3 = ilines3d(context, spec, outlines, gs is not None)
         except Exception:
-            L3 = ()
-        if len(L3) > 1:
-            # the internal line picked on the pattern, in 3D: dark under its orange, seen through like the seam
+            A3 = ()
+        if len(A3):
+            # every internal line in 3D, thin in the pattern's color, hidden behind the body and the cloth like the
+            # seams (user 2026-11-14; Overlays > Internal Lines in 3D)
+            gpu.state.depth_test_set('LESS_EQUAL')
+            rv = context.region_data
+            bk = (id(A3), np.array(rv.view_matrix).tobytes(), rv.is_perspective)
+            if _ilines3.get('bkey') != bk:
+                L = _lift(A3, rv).astype(np.float32)
+                _ilines3.update(bkey=bk, batch=batch_for_shader(sh, 'LINES', {'pos': L,
+                                                                             'color': [ILINES_3D] * len(L)}))
+            sh.uniform_float('lineWidth', 2.0)
+            _ilines3['batch'].draw(sh)
+            gpu.state.depth_test_set('NONE')
+    if world_visible:
+        try:
+            Ls = ilines_picked3d(context, spec, outlines, gs is not None)
+        except Exception:
+            Ls = ()
+        if Ls:
+            # the internal lines picked on the pattern, in 3D: dark under their orange, seen through like the seam
             from . import draft_tool as DT
             gpu.state.depth_test_set('NONE')
-            Lp = _lift(L3, context.region_data).astype(np.float32)
-            seg = np.stack([Lp[:-1], Lp[1:]], 1).reshape(-1, 3)
+            rv = context.region_data
+            seg = np.vstack([np.stack([Lp[:-1], Lp[1:]], 1).reshape(-1, 3)
+                             for Lp in (_lift(L3, rv).astype(np.float32) for L3 in Ls)])
             for w, c in ((6.0, (0.0, 0.0, 0.0, 0.8)), (3.0, DT.ISEL)):
                 sh.uniform_float('lineWidth', w)
                 batch_for_shader(sh, 'LINES', {'pos': seg, 'color': [c] * len(seg)}).draw(sh)
@@ -1392,6 +1586,7 @@ def _draw_px():
     props = getattr(context.scene, 'ac9_cloth_sim', None)
     if props is not None:
         _draw_gone_px(context)
+        _draw_hidden_px(context)
         _draw_frames_px(context)
     if not (shows(props, 'show_lengths') or shows(props, 'show_names') or shows(props, 'show_overlay')):
         return
@@ -1416,6 +1611,16 @@ def _draw_px():
         w, _h = blf.dimensions(fid, txt)
         items.append((xy[0] - w / 2, xy[1] + 6, txt, (1.0, 1.0, 1.0, 1.0)))
     text_band.draw(fid, items)
+    if props.show_overlay:
+        # the seams to check: a "!" by the middle of each, in the color the check had (core/bom_to_spec.py)
+        blf.size(fid, 15)
+        items = []
+        for p in _geo.get('checks', []):
+            xy = location_3d_to_region_2d(region, rv3d, p)
+            if xy is not None:
+                items.append((xy[0] + 4, xy[1] + 4, "!", FLAG))
+        text_band.draw(fid, items)
+        blf.size(fid, 13)
     if not props.show_names:
         return
     blf.size(fid, 12)
@@ -1423,7 +1628,7 @@ def _draw_px():
     from .i18n import tx
     starts = {pc['name']: RO.start_of(pc) for pc in spec.get('pieces', [])}
     items = []
-    for p, name, on in _geo.get('labels', []):
+    for p, name, on, *hidden in _geo.get('labels', []):
         xy = location_3d_to_region_2d(region, rv3d, p)
         if xy is None:
             continue
@@ -1438,10 +1643,49 @@ def _draw_px():
     text_band.draw(fid, items)
 
 
+def name_boxes(context):
+    """The pixel boxes (x0, y0, x1, y1) of the piece names _draw_px puts on the pattern (and the Start line under a
+    name), so the numbers on the pattern can keep clear of them (draft_tool.draw_labels)."""
+    props = getattr(context.scene, 'ac9_cloth_sim', None)
+    if not shows(props, 'show_names'):
+        return []
+    spec, outlines = store.get(context)
+    if not spec or not VV.pattern_names(context, spec):
+        return []
+    _build(context, spec, outlines)
+    from . import text_band
+    from .core import roles as RO
+    from .i18n import tx
+    region, rv3d = context.region, context.region_data
+    fid = 0
+    blf.size(fid, 12)
+    _w, h = blf.dimensions(fid, "Ag")
+    P = text_band.PAD
+    starts = {pc['name']: RO.start_of(pc) for pc in spec.get('pieces', [])}
+    out = []
+    for p, name, on, *_hidden in _geo.get('labels', []):
+        xy = location_3d_to_region_2d(region, rv3d, p)
+        if xy is None:
+            continue
+        rows = [(name, xy[1])]
+        if starts.get(name, 'placed') != 'placed' and on:
+            rows.append((tx(RO.START_EN[starts[name]]), xy[1] - 19))
+        for t, y in rows:
+            w, _ = blf.dimensions(fid, t)
+            x = xy[0] - w / 2
+            out.append((x - P, y - P - 1, x + w + P, y + h + P))
+    blf.size(fid, 13)
+    return out
+
+
 def invalidate():
     _geo['key'] = None
     _geo_views.clear()
     _batch3['key'] = None
+    _ibind.clear()
+    _iline3['key'] = None
+    _ilines3['key'] = None
+    _ilines3['qkey'] = None
     _pflat['key'] = None
     _plad.clear()
     _gpos['key'] = None
@@ -1456,6 +1700,11 @@ def register():
     for old in [f for f in handlers if getattr(f, '__module__', '') == __name__]:
         handlers.remove(old)
     handlers.append(_geometry_changed)
+    for name in ('undo_post', 'redo_post', 'load_post'):
+        hs = getattr(bpy.app.handlers, name)
+        for old in [f for f in hs if getattr(f, '__module__', '') == __name__]:
+            hs.remove(old)
+        hs.append(_datablocks_swapped)
     _handles.append(bpy.types.SpaceView3D.draw_handler_add(_draw_view, (), 'WINDOW', 'POST_VIEW'))
     _handles.append(bpy.types.SpaceView3D.draw_handler_add(_draw_px, (), 'WINDOW', 'POST_PIXEL'))
 
@@ -1464,6 +1713,10 @@ def unregister():
     handlers = bpy.app.handlers.depsgraph_update_post
     for old in [f for f in handlers if getattr(f, '__module__', '') == __name__]:
         handlers.remove(old)
+    for name in ('undo_post', 'redo_post', 'load_post'):
+        hs = getattr(bpy.app.handlers, name)
+        for old in [f for f in hs if getattr(f, '__module__', '') == __name__]:
+            hs.remove(old)
     for h in _handles:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(h, 'WINDOW')

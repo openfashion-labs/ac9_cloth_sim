@@ -41,7 +41,6 @@ def _look(get, msg):
 
 # the end of the report of an operator whose numbers are adjusted afterwards in the Redo panel (user 2026-10-23,
 # Fable review REVIEW_fable_settings_places_2026-10-23: the panel is folded in the corner and goes at the next action)
-F9 = "   (F9: adjust)"
 
 
 def tx(msg, *args):
@@ -52,6 +51,21 @@ def tx(msg, *args):
 def rpt(msg, *args):
     """msg translated as a report (self.report), then filled with args."""
     return _fill(_look(_bt.pgettext_rpt, msg) if _bt else msg, msg, args)
+
+
+EDITED = " (edited)"
+
+
+def fabric_name(name):
+    """A fabric's or interlining's name as shown: a preset's name (and "<preset> (edited)") in the interface
+    language, a name the user typed as it is. The stored name stays the preset's English one, so a garment reads the
+    same in any language, and Blender's own words never come in (it turns Leather into a word for skin)."""
+    from .core import fabric as _fa
+    names = {p['name'] for k in ('fabrics', 'interlinings') for p in _fa.presets().get(k, [])}
+    base, tail = (name[:-len(EDITED)], EDITED) if name.endswith(EDITED) else (name, '')
+    if base not in names:
+        return name
+    return tx(base) + (tx(tail) if tail else '')
 
 
 def _width(ch):

@@ -42,21 +42,22 @@ class TwoPerStencilBatch(JacobiBatch):
         if np.any(colors[inactive]!=-1):raise ValueError('Inactive vertex entered three-batch solve')
         followers=bound.vertices.numpy()if bound is not None else np.empty(0,np.int32)
         triangles=bound.triangles.numpy()if bound is not None else np.empty((0,3),np.int32)
-        support={int(v):list(map(int,t))for v,t in zip(followers,triangles)}
         self.excluded_tri=np.isin(model.tri_indices.numpy(),followers).any(1)
         self.excluded_edge=np.isin(model.edge_indices.numpy(),followers).any(1)
         rows=[model.tri_indices.numpy()[~self.excluded_tri],model.edge_indices.numpy()[~self.excluded_edge],model.spring_indices.numpy().reshape(-1,2)[:model.spring_count]]
         if getattr(model,'tet_count',0):rows.append(model.tet_indices.numpy())
         count=0
+        from native_stencil_arrays import independent_rows
+        active_mask=np.zeros(model.particle_count,bool);active_mask[self.active]=True
         for elements in rows:
-            for row in elements:
-                nodes=set()
-                for v in row:
-                    if v>=0:nodes.update(support.get(int(v),[int(v)]))
-                batches=colors[list(nodes)];batches=batches[batches>=0]
-                if np.bincount(batches,minlength=3).max(initial=0)>2:
-                    raise ValueError('More than two independent nodes of one stencil share a batch')
-                count+=1
+            # Re-expand the model and count from labels independently of the
+            # search's stencils, incidence and mutable occupancy counters.
+            nodes=independent_rows(elements,active_mask,followers,triangles)
+            batches=np.full(nodes.shape,3,np.int32)
+            valid=nodes>=0;batches[valid]=colors[nodes[valid]];batches.sort(axis=1)
+            if batches.shape[1]>=3 and np.any((batches[:,:-2]==batches[:,2:])&(batches[:,:-2]<3)):
+                raise ValueError('More than two independent nodes of one stencil share a batch')
+            count+=len(elements)
         self.colors=colors.copy();self.groups=[wp.array(np.flatnonzero(colors==i).astype(np.int32),dtype=int,device=model.device)for i in range(3)]
         if any(group.size==0 for group in self.groups):raise ValueError('Empty diagnostic batch')
         self.summary.update(algorithm='Three Jacobi batches with GS between batches; not proper coloring',proposed_colors=3,structural_rows_checked=count,max_independent_per_stencil=2,dynamic_contacts_certified=False)

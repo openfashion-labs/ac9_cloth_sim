@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
 import sys
-from .i18n import CTX, rpt, tx
+from .i18n import CTX, fabric_name, rpt, tx
 
 import bpy
 from bpy.props import EnumProperty, FloatProperty, StringProperty
@@ -217,6 +217,10 @@ class AC9_OT_SimImportBOM(bpy.types.Operator, ImportHelper):
 
     filename_ext = ".xml"
     filter_glob: StringProperty(default="*.xml", options={'HIDDEN'})
+    drape_fbx: StringProperty(name="3D Drape (FBX)", subtype='FILE_PATH',
+                              description="The garment's FBX exported with the BOM. It tells which pieces each seam "
+                                          "sews when the BOM's numbers are shared by several pieces. Empty: the one "
+                                          "FBX in the BOM's folder, if there is one")
 
     @classmethod
     def poll(cls, context):
@@ -226,12 +230,20 @@ class AC9_OT_SimImportBOM(bpy.types.Operator, ImportHelper):
     def draw(self, context):
         self.layout.label(text='Discards the current 3D and placement', icon='ERROR')
         self.layout.label(text='Keep the drape: use Update BOM Seams')
+        self.layout.prop(self, "drape_fbx")
 
     def execute(self, context):
         try:
             spec, rep = bom_to_spec.convert(self.filepath)
             if not spec['pieces']:
                 raise ValueError(tx('No pattern pieces were found in this BOM'))
+            from . import drape_fbx as DF
+            fbx = bpy.path.abspath(self.drape_fbx) if self.drape_fbx else DF.find_beside(self.filepath)
+            if fbx:
+                drape, r = _read_drape(spec, fbx)
+                if drape:
+                    spec, _ = bom_to_spec.convert(self.filepath, drape=drape)
+                rep = r + rep
             rep += _rebuild_bom_seams(spec)
             _replace_bom(context, spec)
         except Exception as exc:
@@ -240,7 +252,67 @@ class AC9_OT_SimImportBOM(bpy.types.Operator, ImportHelper):
         from . import shape_tool as ST
         ST.set_mm_if_default(context)
         _tag_redraw(context)
-        self.report({'INFO'}, rpt("{0} pieces, {1} seams", len(spec['pieces']), len(spec['seams'])))
+        msg = rpt("{0} pieces, {1} seams", len(spec['pieces']), len(spec['seams']))
+        self.report({'INFO'}, msg + ("; " + rep[0] if rep and not rep[0][:1].isdigit() else ""))
+        return {'FINISHED'}
+
+
+def _read_drape(spec, fbx):
+    """(drape or None, report lines) of a BOM spec from its FBX (core/bom_drape.py); spec is a fresh convert's."""
+    from . import drape_fbx as DF
+    from .core import bom_drape as BD
+    try:
+        meshes = DF.read_meshes(fbx)
+    except Exception as exc:                        # an unreadable FBX: the BOM's own rules
+        return None, [rpt("The FBX could not be read: {0}", exc)]
+    drape, rep = BD.resolve(spec, meshes, fbx)
+    if drape is None:
+        return None, [rpt("The FBX does not hold this pattern ({0} of the pieces found on its UV)", rep[1])]
+    return drape, [rpt("3D drape: {0} / {1} BOM seams found", drape['seams'], len(drape['pairs']))]
+
+
+class AC9_OT_SimReadDrape(bpy.types.Operator, ImportHelper):
+    """Read the garment's FBX exported with the BOM: the pieces that meet on it decide which pieces each BOM seam sews and which pieces are one garment. The dressed shape and placement are kept"""
+    bl_idname = "ac9_cloth_sim.read_drape"
+    bl_label = "Seams from 3D Drape (FBX)"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".fbx"
+    filter_glob: StringProperty(default="*.fbx", options={'HIDDEN'})
+
+    @classmethod
+    def poll(cls, context):
+        spec = store.get(context)[0]
+        from .dress import AC9_OT_SimDress
+        return (spec is not None and S.from_bom(spec) and AC9_OT_SimDress.running() is None
+                and context.mode == 'OBJECT')
+
+    def execute(self, context):
+        old, _ = store.get(context)
+        text = store.text(context)
+        raw = text.as_string()
+        try:
+            path = old['source']['path']
+            if not os.path.exists(path):
+                raise ValueError(tx("BOM not found: {0}", path))
+            drape, rep = _read_drape(bom_to_spec.convert(path)[0], self.filepath)
+            if not drape:
+                raise ValueError(rep[0])
+            spec, rep2 = bom_to_spec.apply_drape(old, drape)
+            rep += [r for r in rep2 if not r.startswith(' ') and 'garment(s)' not in r]
+            text.clear()
+            text.write(S.dumps(spec))
+            store.invalidate()
+            store.sync_seam_list(context, spec)
+        except Exception as exc:
+            text.clear()
+            text.write(raw)
+            store.invalidate()
+            store.sync_seam_list(context, old)
+            self.report({'ERROR'}, rpt('BOM seams were not updated: {0}', exc))
+            return {'CANCELLED'}
+        _tag_redraw(context)
+        self.report({'WARNING'} if len(rep) > 1 else {'INFO'}, "; ".join(rep))
         return {'FINISHED'}
 
 
@@ -321,19 +393,11 @@ class AC9_OT_SimSelectGarment(bpy.types.Operator):
 
     def execute(self, context):
         # user 2026-10-25: a garment as a selection set (3ds Max's named selections): pick it, switch it on, invert,
-        # switch the rest off. The flat pieces and the placed objects of its pieces, as Invert Selection selects
-        from . import placed_view as PLV
+        # switch the rest off. The pieces are picked in every view (selection.apply)
         spec, _ = store.get(context)
         names = set(bom_to_spec.garment_pieces(spec, self.garment))
-        if not self.extend:
-            SEL.deselect_all(context)
-        got = []
-        for ob in context.view_layer.objects:
-            if any(ob.get(k) in names for k in (PV.PIECE_PROP, PLV.PROP, PLV.TWIN_PROP)) and ob.visible_get():
-                ob.select_set(True)
-                got.append(ob)
-        if got:
-            context.view_layer.objects.active = got[0]
+        got = [n for n in (pc['name'] for pc in spec['pieces']) if n in names]
+        SEL.apply(context, got, 'ADD' if self.extend else 'SET', active=got[0] if got else None, interaction=True)
         _tag_redraw(context)
         self.report({'INFO'}, rpt("{0} piece(s) selected", len(names)))
         return {'FINISHED'}
@@ -636,6 +700,25 @@ class AC9_OT_SimSeamAttachUntil(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class AC9_OT_SimFoldMatchMirror(bpy.types.Operator):
+    """Name the sides of this line's mirror lines as here: A on each is the mirror image of A here. The folds on them
+    are written as this one, so the sides that turn and the layers kept stay where they were"""
+    bl_idname = "ac9_cloth_sim.fold_match_mirror"
+    bl_label = "Match Mirror A/B"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    piece: StringProperty(options={'HIDDEN'})
+    line: StringProperty(options={'HIDDEN'})
+
+    def execute(self, context):
+        from . import place_fold as PF
+        if PF.sync_twin(context, self.piece, self.line) is None:
+            self.report({'INFO'}, "No mirror line to match")
+            return {'CANCELLED'}
+        _tag_redraw(context)
+        return {'FINISHED'}
+
+
 class AC9_OT_SimSetFold(bpy.types.Operator):
     """Fold angle on an internal line: + folds it as a mountain seen from the pattern's face, - as a valley, 0 removes it"""
     bl_idname = "ac9_cloth_sim.set_fold"
@@ -716,11 +799,8 @@ class AC9_OT_SimFreeze(bpy.types.Operator):
         return {'FINISHED'}
 
 
-STATE_ITEMS = [('active', "Active", "Simulated: moves and is touched"),
-               ('freeze', "Freeze", "Stays where it is; still touched and sewn"),
-               ('off_pattern', "Off (Pattern)", "Stays where it is; nothing touches it (the cloth goes through), its "
-                                                "seams still pull"),
-               ('off_all', "Off (All)", "Left out with its seams (not meshed)")]
+# the names and tooltips come from the one table (core/spec.py STATE_NAMES)
+STATE_ITEMS = [(k, *bom_to_spec.S.STATE_NAMES[k]) for k in bom_to_spec.S.PIECE_STATES]
 
 
 class AC9_OT_SimPieceState(bpy.types.Operator):
@@ -738,10 +818,11 @@ class AC9_OT_SimPieceState(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, props):
-        d = dict((k, v) for k, _n, v in STATE_ITEMS).get(props.state, '')
+        d = tx(dict((k, v) for k, _n, v in STATE_ITEMS).get(props.state, ''))
         return {'SELECTED': tx("The selected pieces with their other halves (Ctrl: these only): {0}", d),
                 'PIECE': tx("This piece with its other half (Ctrl: this one only): {0}", d),
-                'GARMENT': tx("Every piece of this garment that is not Off (All): {0}", d)}[props.scope]
+                'GARMENT': tx("Every piece of this garment that is not {0}: {1}",
+                              tx(bom_to_spec.S.state_name('off_all')), d)}[props.scope]
 
     def invoke(self, context, event):
         self.solo = event.ctrl
@@ -754,7 +835,7 @@ class AC9_OT_SimPieceState(bpy.types.Operator):
         current = t == store.text(context)
         spec = bom_to_spec.S.loads(t.as_string())
         if self.scope == 'GARMENT':
-            # a garment's pieces that are Off (All) stay so: a BOM keeps every piece of the file, and a garment's
+            # a garment's pieces that are Off stay so: a BOM keeps every piece of the file, and a garment's
             # Freeze brought the 125 unused pieces of a jacket back (GUI test 2026-10-13)
             names = {pc['name'] for pc in spec['pieces'] if bom_to_spec.S.piece_state(pc) != 'off_all'}
         else:
@@ -772,6 +853,10 @@ class AC9_OT_SimPieceState(bpy.types.Operator):
                 bom_to_spec.S.set_piece_state(pc, self.state)
                 n += 1
         matched = _match_back(spec, names & was_off) if self.state != 'off_all' else []
+        if self.state == 'off_all':
+            # out of the simulation, not just hidden: its eye opens (no piece is both, piece_hide)
+            from . import piece_hide as PH
+            PH.forget(context, spec, names)
         if current:
             store.put(context, spec)
             PV.refresh_enabled(spec)
@@ -821,7 +906,7 @@ class AC9_OT_SimInvertPieceSelection(bpy.types.Operator):
     def execute(self, context):
         # user 2026-10-25: a button, not Blender's Ctrl+I (that inverts the body and the guides too). The pieces of
         # this garment only; the pattern pieces end up selected wherever the selection was (the flat pieces or the
-        # placed objects), as the state buttons act on them; Off (All) pieces are pieces too
+        # placed objects), as the state buttons act on them; Off pieces are pieces too
         from . import placement as PL
         spec, _ = store.get(context)
         mine = [pc['name'] for pc in spec['pieces']]
@@ -829,11 +914,7 @@ class AC9_OT_SimInvertPieceSelection(bpy.types.Operator):
         sel |= _other_halves(spec, sel)
         obs = PV.piece_objects()
         want = [n for n in mine if n not in sel and n in obs and obs[n].visible_get()]
-        SEL.deselect_all(context)
-        for n in want:
-            obs[n].select_set(True)
-        if want:
-            context.view_layer.objects.active = obs[want[0]]
+        SEL.apply(context, want, 'SET', active=want[0] if want else None, interaction=True)
         _tag_redraw(context)
         self.report({'INFO'}, rpt("{0} piece(s) selected", len(want)))
         return {'FINISHED'}
@@ -841,7 +922,7 @@ class AC9_OT_SimInvertPieceSelection(bpy.types.Operator):
 
 def _other_halves(spec, names):
     """The other halves of the pieces `names`: their mirrored twins and the pieces paired with them (Pair), whatever
-    their state -- a pair switches together, back from Off (All) too (user 2026-10-24: the twin came along to Off
+    their state -- a pair switches together, back from Off too (user 2026-10-24: the twin came along to Off
     but not back on, as twins() leaves out the pieces that are off)."""
     S = bom_to_spec.S
     out = set()
@@ -852,7 +933,7 @@ def _other_halves(spec, names):
 
 
 def _match_back(spec, back):
-    """Pieces back from Off (All) whose mirrored twin stayed on and was edited meanwhile (no longer its mirror
+    """Pieces back from Off whose mirrored twin stayed on and was edited meanwhile (no longer its mirror
     image): made the twin's mirror image again, as an edit made on one twin makes on the other. Left as it is when
     both came back (which one is right is not known). Returns the pieces made so."""
     from .core import draft as D
@@ -890,11 +971,9 @@ class AC9_OT_SimSelectPiece(bpy.types.Operator):
         if ob is None:
             self.report({'WARNING'}, rpt("{0}: not in the viewport", self.piece))
             return {'CANCELLED'}
-        if not self.extend:
-            for o in context.view_layer.objects.selected:
-                o.select_set(False)
-        ob.select_set(True)
-        context.view_layer.objects.active = ob
+        SEL.apply(context, [self.piece], 'ADD' if self.extend else 'SET', active=self.piece)
+        from . import tool_tab
+        tool_tab.piece_clicked(context)
         _tag_redraw(context)
         return {'FINISHED'}
 
@@ -994,8 +1073,7 @@ class AC9_OT_SimPieceElastic(bpy.types.Operator):
         spec, _ = store.get(context)
         sel = set(SEL.pieces(context))
         # what the panel shows for the active piece (its own setting, else its twin's)
-        act = context.active_object
-        name = act[PV.PIECE_PROP] if act is not None and PV.PIECE_PROP in act else (sorted(sel)[0] if sel else None)
+        name = SEL.lead(context) or (sorted(sel)[0] if sel else None)
         cur = EL.piece_ratio(spec, name) if name else None
         self.percent = round(cur * 100.0, 1) if cur is not None else 75.0
         return context.window_manager.invoke_props_dialog(self)
@@ -1051,6 +1129,8 @@ def set_piece_thickness(context, sel, on):
     g = bpy.data.objects.get(D.garment_name(spec))
     if g is not None:
         D.refresh_thickness(context, g, spec)
+    from . import placed_view as PV
+    PV.refresh_thickness(context, spec)
     _tag_redraw(context)
     return tx("{0} piece(s): ", len(sel)) + (tx("thickness on") if on else tx("no thickness"))
 
@@ -1297,16 +1377,16 @@ def _fabric_spec(context):
 def _fabric_items(self, context):
     spec, _ = store.get(context)
     d = FA.default_fabric(spec or {})
-    items = [('DEFAULT', tx("Default ({0})", d['name']) if d else "Default",
+    items = [('DEFAULT', tx("Default ({0})", fabric_name(d['name'])) if d else "Default",
               "Follow the garment's default fabric (it follows when the default changes)")]
     have = set()
     for f in (spec or {}).get('fabrics', []):
-        items.append((f"id:{f['id']}", f['name'], f"{f['weight_gsm']:g} g/m², {FA.bending(f):g} µN·m"))
+        items.append((f"id:{f['id']}", fabric_name(f['name']), f"{f['weight_gsm']:g} g/m², {FA.bending(f):g} µN·m"))
         if f.get('preset'):
             have.add(f['preset'])
     for p in FA.presets()['fabrics']:
         if p['preset'] not in have:
-            items.append((f"preset:{p['preset']}", tx("{0} (preset)", p['name']),
+            items.append((f"preset:{p['preset']}", tx("{0} (preset)", fabric_name(p['name'])),
                           f"{p['weight_gsm']:g} g/m², {FA.bending(p):g} µN·m. {p.get('source', '')}"))
     return _keep(items, owner='fabric')
 
@@ -1317,12 +1397,12 @@ def _bond_items(self, context):
     items = [('OFF', "Off", "No interlining")]
     have = set()
     for i in (spec or {}).get('interlinings', []):
-        items.append((f"id:{i['id']}", i['name'], f"+{i['weight_gsm']:g} g/m², +{i['bending_uNm']:g} µN·m"))
+        items.append((f"id:{i['id']}", fabric_name(i['name']), f"+{i['weight_gsm']:g} g/m², +{i['bending_uNm']:g} µN·m"))
         if i.get('preset'):
             have.add(i['preset'])
     for p in FA.presets()['interlinings']:
         if p['preset'] not in have:
-            items.append((f"preset:{p['preset']}", tx("{0} (preset)", p['name']),
+            items.append((f"preset:{p['preset']}", tx("{0} (preset)", fabric_name(p['name'])),
                           f"+{p['weight_gsm']:g} g/m², +{p['bending_uNm']:g} µN·m. {p.get('source', '')}"))
     return _keep(items, owner='bond')
 
@@ -1387,6 +1467,8 @@ def refresh_display(context, spec=None):
     g = bpy.data.objects.get(D.garment_name(spec))
     if D.has_result(g):
         D.refresh_thickness(context, g, spec)
+    from . import placed_view as PV
+    PV.refresh_thickness(context, spec)
     LA.apply_all(context, spec)
 
 
@@ -1586,19 +1668,11 @@ def _select_pieces(context, names, extend):
     obs = [o for o in context.view_layer.objects if o.get(PV.PIECE_PROP) in names]
     if not obs:
         return None
-    if not extend:
-        for o in context.view_layer.objects.selected:
-            o.select_set(False)
-    n = 0
-    for o in obs:
-        try:
-            o.select_set(True)
-            n += 1
-        except RuntimeError:                          # hidden from the view layer
-            pass
-    context.view_layer.objects.active = obs[0]
+    picked = [o.get(PV.PIECE_PROP) for o in obs]
+    SEL.apply(context, picked, 'ADD' if extend else 'SET', active=picked[0])
+    n = sum(1 for o in obs if o.select_get())
     try:
-        P.sync_looks()                                # what tool_tab._on_depsgraph does on a selection change
+        P.sync_looks()                                # update the Look fields for the projected selection
     except Exception:
         pass
     return n
@@ -1657,8 +1731,7 @@ class AC9_OT_SimColliderSelect(bpy.types.Operator):
         if ob is None:
             return {'CANCELLED'}
         if not self.extend:
-            for o in context.view_layer.objects.selected:
-                o.select_set(False)
+            SEL.deselect_all(context)
         try:
             ob.select_set(not ob.select_get() if self.extend else True)   # Shift takes it out again
         except RuntimeError:                          # hidden from the view layer
@@ -1691,7 +1764,7 @@ class AC9_OT_SimFabricNew(bpy.types.Operator):
 
 
 def _preset_items(self, context):
-    return _keep([(p['preset'], p['name'], f"{p['weight_gsm']:g} g/m², {FA.bending(p):g} µN·m. {p.get('source', '')}")
+    return _keep([(p['preset'], fabric_name(p['name']), f"{p['weight_gsm']:g} g/m², {FA.bending(p):g} µN·m. {p.get('source', '')}")
                   for p in FA.presets()['fabrics']], owner='fabric_preset')
 
 
@@ -1731,17 +1804,41 @@ class AC9_OT_SimFabricEdit(bpy.types.Operator):
 
     fabric_id: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})      # set by the button
     fabric_name: StringProperty(name="Name")
-    weight_gsm: FloatProperty(name="Weight g/m²", min=1.0, max=2000.0)
+    # The tooltips say what raising / lowering a value does, in plain words, with the presets as a scale (users
+    # cannot read the measured quantities). The measurement behind each value: weight in g/m²; bending = flexural
+    # rigidity (KES / FAST B), warp and weft averaged; shear = KES G x 56.2; hysteresis = 2HB / 2B, the curvature up
+    # to which a bend stays. A cloth stands or droops by bending against weight (bending length ~ (B / w g)^(1/3)).
+    weight_gsm: FloatProperty(name="Weight g/m²", min=1.0, max=2000.0,
+                              description="How heavy the cloth is, in grams per square meter. Higher: heavier, it "
+                                          "hangs and sags more under its own weight. Lower: lighter, it keeps its "
+                                          "shape more easily. Jersey about 125, wool suiting 276, leather 706")
     bending_uNm: FloatProperty(name="Bending µN·m", min=0.01, max=10000.0,
-                               description="Flexural rigidity (KES / FAST B), warp and weft averaged")
-    stretch_warp: FloatProperty(name="Stretch warp N/m", min=0.1, max=1e6, description="Along the pattern's x")
-    stretch_weft: FloatProperty(name="Stretch weft N/m", min=0.1, max=1e6, description="Along the pattern's y")
-    shear_N_m: FloatProperty(name="Shear N/m", min=0.1, max=1e5, description="KES G x 56.2")
+                               description="How hard the cloth is to bend. Higher: stiffer, with fewer, rounder "
+                                           "folds. Lower: softer, it falls into fine wrinkles. Jersey 0.65, poplin "
+                                           "6, wool suiting 18, leather 262. Whether a cloth stands or droops "
+                                           "depends on this against Weight: to make it stand, raise this and lower "
+                                           "Weight")
+    stretch_warp: FloatProperty(name="Stretch warp N/m", min=0.1, max=1e6,
+                                description="How hard the cloth is to stretch along the pattern's x (side to side "
+                                            "on the pattern). Higher: it barely stretches. Lower: it stretches "
+                                            "like a knit. Woven cloth about 3000, jersey 280, rib knit 15")
+    stretch_weft: FloatProperty(name="Stretch weft N/m", min=0.1, max=1e6,
+                                description="How hard the cloth is to stretch along the pattern's y (up and down "
+                                            "on the pattern). Higher: it barely stretches. Lower: it stretches "
+                                            "like a knit. Woven cloth about 3000, jersey 280, rib knit 15")
+    shear_N_m: FloatProperty(name="Shear N/m", min=0.1, max=1e5,
+                             description="How hard the cloth is to skew diagonally (a square pulled into a diamond). "
+                                         "Higher: it keeps its weave square and stands away from curves. Lower: it "
+                                         "follows round shapes more easily, with more diagonal wrinkles. Most cloth "
+                                         "15-30, leather 704")
     bend_hyst_per_m: FloatProperty(name="Hysteresis /m", min=0.0, max=1000.0,
-                                   description="Bending hysteresis 2HB / 2B: the curvature up to which a bend stays")
+                                   description="How much a bend stays after the pull is gone. Higher: creases and "
+                                               "the draped shape stay, and the cloth comes to rest sooner. Lower: "
+                                               "it springs back and keeps moving longer. Most cloth about 40, "
+                                               "jersey 61")
     thickness_mm: FloatProperty(name="Thickness mm", min=0.0, max=10.0, precision=2,
-                                description="Drawn thickness of the cloth (display only, the simulation does not use "
-                                            "it). 0: none")
+                                description="How thick the cloth is drawn (display only, the simulation does not "
+                                            "use it). 0: none")
 
     @classmethod
     def poll(cls, context):
@@ -1753,7 +1850,7 @@ class AC9_OT_SimFabricEdit(bpy.types.Operator):
         if f is None:
             return {'CANCELLED'}
         st = FA.stretch(f) or (FA.OLD_STRETCH_N_M, FA.OLD_STRETCH_N_M)
-        self.fabric_name = f['name']
+        self.fabric_name = fabric_name(f['name'])         # the name as shown (a preset's in the interface language)
         self.weight_gsm, self.bending_uNm = float(f['weight_gsm']), FA.bending(f)
         self.stretch_warp, self.stretch_weft = st
         self.shear_N_m, self.bend_hyst_per_m = float(f['shear_N_m']), FA.bend_hyst(f)
@@ -1771,6 +1868,7 @@ class AC9_OT_SimFabricEdit(bpy.types.Operator):
         f = FA.fabric_index(spec).get(self.fabric_id)
         if f is None:
             return {'CANCELLED'}
+        shown = fabric_name(f['name'])               # the dialog showed this: left as it is, it is no new name
         r = lambda v: round(float(v), 6)
         f.update(weight_gsm=r(self.weight_gsm), bending_uNm=r(self.bending_uNm), shear_N_m=r(self.shear_N_m),
                  bend_hyst_per_m=r(self.bend_hyst_per_m),
@@ -1784,6 +1882,8 @@ class AC9_OT_SimFabricEdit(bpy.types.Operator):
             if not f['name'].endswith('(edited)'):
                 f['name'] += ' (edited)'
         nm = self.fabric_name.strip()
+        if nm == shown:
+            nm = p['name'] if p is not None else f['name']
         if nm and nm != f['name'] and not (p is not None and nm == p['name']):
             f['name'] = nm                            # a name typed in the dialog wins over "(edited)"
         store.put(context, spec)
@@ -1793,7 +1893,7 @@ class AC9_OT_SimFabricEdit(bpy.types.Operator):
 
 
 def _interlining_preset_items(self, context):
-    return _keep([(p['preset'], p['name'], f"+{p['weight_gsm']:g} g/m², +{p['bending_uNm']:g} µN·m. {p.get('source', '')}")
+    return _keep([(p['preset'], fabric_name(p['name']), f"+{p['weight_gsm']:g} g/m², +{p['bending_uNm']:g} µN·m. {p.get('source', '')}")
                   for p in FA.presets()['interlinings']], owner='interlining_preset')
 
 
@@ -1853,10 +1953,11 @@ class AC9_OT_SimInterliningEdit(bpy.types.Operator):
     interlining_id: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     piece: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})          # the pencil: the piece's (its id may be new)
     interlining_name: StringProperty(name="Name")
-    weight_gsm: FloatProperty(name="Weight +g/m²", min=0.0, max=2000.0, description="Added to the fabric's weight")
+    weight_gsm: FloatProperty(name="Weight +g/m²", min=0.0, max=2000.0,
+                              description="Added to the fabric's weight. Higher: the piece hangs heavier")
     bending_uNm: FloatProperty(name="Bending +µN·m", min=0.0, max=10000.0,
-                               description="Added to the fabric's bending (the sum is a lower bound: a fused pair is "
-                                           "stiffer)")
+                               description="Added to the fabric's bending. Higher: the piece is stiffer (a real "
+                                           "fused pair is a little stiffer still)")
 
     @classmethod
     def poll(cls, context):
@@ -1869,7 +1970,7 @@ class AC9_OT_SimInterliningEdit(bpy.types.Operator):
         i = FA.interlining_index(spec).get(self.interlining_id)
         if i is None:
             return {'CANCELLED'}
-        self.interlining_name = i['name']
+        self.interlining_name = fabric_name(i['name'])
         self.weight_gsm, self.bending_uNm = float(i['weight_gsm']), float(i['bending_uNm'])
         return context.window_manager.invoke_props_dialog(self)
 
@@ -1883,6 +1984,7 @@ class AC9_OT_SimInterliningEdit(bpy.types.Operator):
         i = FA.interlining_index(spec).get(self.interlining_id)
         if i is None:
             return {'CANCELLED'}
+        shown = fabric_name(i['name'])
         r = lambda v: round(float(v), 6)
         i.update(weight_gsm=r(self.weight_gsm), bending_uNm=r(self.bending_uNm))
         p = FA.preset('interlinings', i.get('preset') or '')
@@ -1892,6 +1994,8 @@ class AC9_OT_SimInterliningEdit(bpy.types.Operator):
             if not i['name'].endswith('(edited)'):
                 i['name'] += ' (edited)'
         nm = self.interlining_name.strip()
+        if nm == shown:
+            nm = p['name'] if p is not None else i['name']
         if nm and nm != i['name'] and not (p is not None and nm == p['name']):
             i['name'] = nm
         store.put(context, spec)
@@ -1957,9 +2061,9 @@ class AC9_OT_SimInterliningSelect(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (AC9_OT_SimSetUnits, AC9_OT_SimLayersToZero, AC9_OT_SimProposeRoles,AC9_OT_SimSetRole, AC9_OT_SimSetStart, AC9_OT_SimImportBOM, AC9_OT_SimUseSelectedPieces, AC9_OT_SimGarmentFromSelection,
+CLASSES = (AC9_OT_SimSetUnits, AC9_OT_SimFoldMatchMirror, AC9_OT_SimLayersToZero, AC9_OT_SimProposeRoles,AC9_OT_SimSetRole, AC9_OT_SimSetStart, AC9_OT_SimImportBOM, AC9_OT_SimUseSelectedPieces, AC9_OT_SimGarmentFromSelection,
            AC9_OT_SimSelectGarment, AC9_OT_SimRenameGarment, AC9_OT_SimEnableAllPieces,
-           AC9_OT_SimSeamsFromBOM, AC9_OT_SimSeamEdit, AC9_OT_SimSeamPath, AC9_OT_SimSeamPathPart, AC9_OT_SimSeamAttach, AC9_OT_SimSeamAttachUntil, AC9_OT_SimSetFold, AC9_OT_SimPiecesOnOff, AC9_OT_SimFreeze, AC9_OT_SimPieceState, AC9_OT_SimInvertPieceSelection, AC9_OT_SimSelectPiece, AC9_OT_SimRefresh,
+           AC9_OT_SimSeamsFromBOM, AC9_OT_SimReadDrape, AC9_OT_SimSeamEdit, AC9_OT_SimSeamPath, AC9_OT_SimSeamPathPart, AC9_OT_SimSeamAttach, AC9_OT_SimSeamAttachUntil, AC9_OT_SimSetFold, AC9_OT_SimPiecesOnOff, AC9_OT_SimFreeze, AC9_OT_SimPieceState, AC9_OT_SimInvertPieceSelection, AC9_OT_SimSelectPiece, AC9_OT_SimRefresh,
            AC9_OT_SimPieceMesh, AC9_OT_SimPieceElastic, AC9_OT_SimPieceFabric, AC9_OT_SimPieceInterlining,
            AC9_OT_SimFabricAdd, AC9_OT_SimFabricRemove, AC9_OT_SimFabricDefault, AC9_OT_SimFabricSelect, AC9_OT_SimColliderSelect, AC9_OT_SimFabricNew,
            AC9_OT_SimFabricPreset, AC9_OT_SimFabricEdit, AC9_OT_SimInterliningNew, AC9_OT_SimInterliningPreset,

@@ -220,7 +220,27 @@ def commit(context, spec, keep=False, seams=True, owner=None):
     return saved_owner, ''
 
 
+_seam_sync = [0]
+
+
 def sync_seam_list(context, spec=None):
+    """Rebuild a derived list without publishing user input; retain the selected stable seam ID."""
+    props = context.scene.ac9_cloth_sim
+    index = props.seam_index
+    sid = props.seams[index].seam_id if 0 <= index < len(props.seams) else None
+    _seam_sync[0] += 1
+    try:
+        _fill_seam_list(context, spec)
+        ids = [row.seam_id for row in props.seams]
+        if sid is not None:
+            props.seam_index = ids.index(sid) if sid in ids else -1
+        elif index == -1:
+            props.seam_index = -1
+    finally:
+        _seam_sync[0] -= 1
+
+
+def _fill_seam_list(context, spec=None):
     """Mirror the spec's seams into the UIList collection (id, label, lengths, flag)."""
     if spec is None:
         spec, _ = get(context)

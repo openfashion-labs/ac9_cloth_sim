@@ -35,16 +35,18 @@ Each piece has three shapes.
 | Shape | Where it is | What you did to get there |
 |---|---|---|
 | **Flat pattern** | On the floor (the middle view of the Work Screen) | Right after loading or drawing |
-| **Placed shape** | On the cylinders (guides) around the body | After placing with **Place**. The simulation starts from this shape |
+| **Placed shape** | In 3D space, around the body or on the ground | The shape set with **Place** and any hand adjustments. The simulation starts from this shape |
 | **Dressed garment** | On the body | After dressing it with **Live Sim** or similar |
 
-There are three buttons for going back to an earlier shape, and they differ in how far back they go (they are lined up in the **Placement** panel, nearest first).
+The **Placement** panel has three buttons that restore different aspects of a piece.
 
 | Button | Goes back to | What it throws away |
 |---|---|---|
-| **Back to Placed** | The dressed garment or the shape pulled toward the seams -> the prepared shape from before pulling | The dressed result and the effect of pulling toward seams. Hand placement, vertex edits, and folds are kept |
+| **Back to Placed** | After a simulation: the placed shape used to start that run | The dressed result. Fitting with **Part to Seam** and hand adjustments made before the run are kept |
 | **Back to Guide** | -> the placement on the guide | The dressed result and anything you moved by hand |
 | **Back to Flat** | -> flat where it is | The hand edits and the bent shape of the target pieces (their place and turn stay). Patterns and seams are kept |
+
+Before any simulation, **Back to Placed** instead restores the prepared shape from before **Part to Seam**. This differs from the return point after a simulation.
 
 Select pieces and press it to affect only those pieces; press it with nothing selected to affect the whole garment (a confirmation appears for the whole garment).
 Linked mirrored pieces go back together. Even with Back to Flat, the dressed shape of unselected pieces stays.
@@ -65,10 +67,10 @@ When you fix a pattern, by default the placed shape and the dressed garment do n
 |---|---|---|---|
 | **Active** | Yes | Yes | Yes |
 | **Freeze** | No (stays where it is) | Yes | Yes |
-| **Off Pattern** | No (stays where it is) | No (passes through) | Yes (the seams pull) |
-| **Off All** | Not part of the calculation | — | No (the seams go away with it) |
+| **Inactive** | No (stays where it is) | No (passes through) | Yes (the seams pull) |
+| **Off** | Not part of the calculation | — | No (the seams go away with it) |
 
-- For pieces you aren't using, don't hide them (**H**); set them to **Off All**. They show as translucent gray.
+- For pieces you aren't using, don't hide them (**H**); set them to **Off**. They show as translucent gray.
 - States switch for a left and right pair together. To change only one side, **Ctrl**+click.
 
 <!-- figure: Figure 4: a piece's four states -->
@@ -79,7 +81,7 @@ When you fix a pattern, by default the placed shape and the dressed garment do n
 |---|---|---|---|
 | **Live Sim** | Sews from the placed shape (from the current shape once dressed) and keeps running until you stop it. You can pinch the cloth with **Ctrl+drag** | Not kept (last shape only) | Press the button again or **Esc** |
 
-**Live Sim** is both how you dress the garment and how you settle it after fixing. It doesn't stop by itself, so stop it once the garment has settled. **Gravity** can be switched while it runs. To close the seams first, turn gravity off and run, then turn gravity on once they are closed.
+**Live Sim** is both how you dress the garment and how you settle it after fixing. It doesn't stop by itself, so stop it once the garment has settled. With gravity enabled, normal Live Sim first sews placed pieces without gravity and then turns gravity on. You can also switch **Gravity** manually while it runs.
 
 **Phase Sim**, which sews step by step and stops by itself, and **Local Sim**, which moves only the selected pieces, appear only when **Experimental Features** is turned on in the add-on preferences (see "Dress (run)").
 

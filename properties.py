@@ -42,11 +42,61 @@ def _follow_edits_on(context):
 def _seam_picked(self, context):
     # a seam picked in the list or on the pattern: the Properties editor shows it (the last thing touched)
     from . import store
-    if not store._seam_keep[0]:
+    if not store._seam_keep[0] and not store._seam_sync[0]:
         store.seam_more.clear()
     from . import tool_tab
-    tool_tab.set_focus('SEAM')
+    if not store._seam_keep[0] and not store._seam_sync[0]:
+        # UIList's row background and keyboard change the RNA index directly. Internal sync is not input.
+        tool_tab.publish(context, 'SEAM', origin='seam-list')
     _redraw(self, context)
+
+
+# ---- object fields with Blender's eyedropper (user 2026-11-17): the object clicked with the eyedropper is taken
+# whatever tool is on, so objects the Work Screen's 3D view cannot select (it shows only the AC9 tools) are still
+# picked. The two "do it" fields act at once and empty themselves; From Mesh's keeps its mesh for the button.
+
+def _own_mesh(ob):
+    """A mesh that is not a pattern piece, a placed piece or another AC9 object (the garment is allowed)."""
+    return (ob.type == 'MESH' and 'ac9_piece' not in ob and 'ac9_placed' not in ob
+            and (not ob.name.startswith('AC9_') or ob.name.startswith('AC9_Garment_')))
+
+
+def _collider_poll(self, ob):
+    return _own_mesh(ob) and ob != self.body
+
+
+def _collider_picked(self, context):
+    ob = self.collider_pick
+    if ob is None:
+        return
+    from . import dress
+    ob[dress.COLLIDER_PROP] = True
+    self.collider_pick = None
+    _redraw(self, context)
+
+
+def _whole_gizmo_changed(self, context):
+    from . import work_screen
+    work_screen.apply_gizmo(context)
+
+
+def _style_poll(self, ob):
+    from . import button_ui
+    return button_ui.can_be_style(ob)
+
+
+def _style_picked(self, context):
+    ob = self.button_style_pick
+    if ob is None:
+        return
+    from . import button_ui, store
+    if store.get(context)[0] is not None:
+        button_ui.style_from_object(context, ob)
+    self.button_style_pick = None
+
+
+def _from_mesh_poll(self, ob):
+    return _own_mesh(ob) and not ob.name.startswith('AC9_') and ob != self.body
 
 
 def _keep_color(self, context):
@@ -80,10 +130,10 @@ def _ops():
     return operators
 
 
-def _act():
+def _act(context=None):
     """(spec, the active piece's name, the selected pieces)."""
     from . import store
-    ctx = bpy.context
+    ctx = context or bpy.context
     spec = store.get(ctx)[0]
     O = _ops()
     sel = O._sel_pieces(ctx)
@@ -315,7 +365,7 @@ def _set_garment_fabric(self, i):
 
 
 # the Look fields (Pointer properties have no get / set): written from the spec when the selection changes
-# (sync_looks, tool_tab._on_depsgraph); their update writes the spec unless it is that sync writing them
+# (sync_looks, tool_tab.native_selection); their update writes the spec unless it is that sync writing them
 _LOOK_SYNC = {'on': False}
 
 
@@ -346,7 +396,7 @@ def sync_looks(context=None):
     props = getattr(context.scene, 'ac9_cloth_sim', None) if context.scene else None
     if props is None:
         return
-    spec, n, _ = _act()
+    spec, n, _ = _act(context)
     pm = LA.material(LK.piece_look(spec, n)) if spec is not None and n else None
     dm = LA.material(LK.default_look(spec)) if spec is not None else None
     _LOOK_SYNC['on'] = True
@@ -367,6 +417,8 @@ def _thickness_changed(self, context):
         g = bpy.data.objects.get(D.garment_name(spec))
         if D.has_result(g):
             D.refresh_thickness(context, g, spec)
+        from . import placed_view as PV
+        PV.refresh_thickness(context, spec)
     _redraw(self, context)
 
 
@@ -410,6 +462,10 @@ class AC9ClothSimProps(PropertyGroup):
                                      description="Tint each piece by its fabric (the colors are in Lists > "
                                                  "Fabrics)")
     show_names: BoolProperty(name="Piece Names", default=True, update=_redraw)
+    # every internal line drawn on the cloth in 3D, thin; the picked ones are orange whatever this says (user 2026-11-14)
+    show_internal_3d: BoolProperty(name="Internal Lines in 3D", default=True, update=_redraw,
+                                   description="Draw every internal line on the cloth in 3D. The lines picked on the "
+                                               "pattern are drawn orange either way")
     # what the add-on found wrong, red on the cloth (diagnose.py; on by default, Fable review b-1, user 2026-11-02)
     show_problems: BoolProperty(name="Problems", default=True, update=_redraw,
                                 description="Red where the add-on found something wrong: left inside the body or "
@@ -418,6 +474,10 @@ class AC9ClothSimProps(PropertyGroup):
     show_stretch: BoolProperty(name="Stretch", default=False, update=_redraw,
                                description="Color the cloth by how far it is stretched from its pattern: yellow "
                                            "from 1.05, red at 1.5, blue where squashed")
+    # the cloth's face blue and back red (diagnose.py, user 2026-11-17): the thickness does not hide it
+    show_face_side: BoolProperty(name="Face Side", default=False, update=_redraw,
+                                 description="Color the cloth's face blue and its back red. The face is the side the "
+                                             "pattern is seen from")
     show_guides: BoolProperty(name="Guides", default=True, update=_redraw,
                               description="The body's guide cylinders and placement points")
     # Edit Guides (guide_edit.py): a left / right pair follows the one moved as its mirror image (user 2026-10-14)
@@ -447,9 +507,11 @@ class AC9ClothSimProps(PropertyGroup):
     # runs too (core/recipe.live_params)
     fast_live: BoolProperty(name="AC9 Fast Live (Experimental)", default=False, update=_fast_live_choice,
         description="Live Sim with 2 substeps and a correction in each (a test feature). Static body only, with lower contact damping. Native remains the default")
+    accurate_research: BoolProperty(name="Accurate (Research)", default=False,
+        description="Research solver for Live Sim: 2 substeps with a correction. Static body only; may be slower and does not guarantee more realistic drape. Off restores your Native setting. Phase and Local Sim are unchanged")
     # Native 3 is the default Live (user 2026-11-12, 0.2.0); its switch is drawn under Experimental Features only. A
-    # garment it does not take runs the usual Live (core/prepare_plan.resolve). Fast Live is hidden everywhere and
-    # not used by a run (core/presets.resolve); its name stays (kept in files)
+    # garment it does not take runs the usual Live (core/prepare_plan.resolve). The legacy fast_live property is
+    # kept for old files; accurate_research is the explicit opt-in now (core/presets.resolve).
     native_three: BoolProperty(name="Native 3", default=True, update=_native_three_choice,
         description="The faster Live Sim (on by default). Keeps the fabric and time step settings; the body does not move, and Live starts again from the shape on screen. A garment with a piece on a Layer above 0 runs the usual Live")
     # a floor at Z = 0 for every run (user 2026-11-10, DECISIONS cloth-sim-place-beyond-garments-2026-11-10): a
@@ -538,7 +600,7 @@ class AC9ClothSimProps(PropertyGroup):
                                           "tilted out is stretched round. Their pairs follow")
     piece_ring: FloatProperty(name="Ring Size", translation_context=CTX, min=0.5, max=3.0, precision=2, step=1,
                               get=_get_ring, set=_set_ring, options=set(),
-                              description="The selected bands' ring as a share of their own length's (1.00: their "
+                              description="The selected pieces' ring as a share of their own length's (1.00: their "
                                           "own length, not stretched). Set by hand it is kept, what is in the body "
                                           "red; Auto widens it until it clears the body where it is now")
     closure_over: EnumProperty(name="Front Over", translation_context=CTX, get=_get_closure_over,
@@ -594,7 +656,7 @@ class AC9ClothSimProps(PropertyGroup):
     # the cloth drawn with its fabrics' thickness (a Solidify, display only; user 2026-10-21: one switch for the
     # scene in Overlays, inside by default as Blender's Solidify)
     show_thickness: BoolProperty(name="Thickness", default=True, translation_context=CTX, update=_thickness_changed,
-                                 description="Draw the dressed garments with their fabrics' thickness (display only, "
+                                 description="Draw the placed pieces and the dressed garments with their fabrics' thickness (display only, "
                                              "the simulation does not use it; off takes it away, the values stay)")
     thickness_side: EnumProperty(name="Side", default='INSIDE', update=_thickness_changed,
                                  items=[('INSIDE', "Inside", "The thickness goes inward from the cloth (no grooves "
@@ -608,6 +670,21 @@ class AC9ClothSimProps(PropertyGroup):
     body: PointerProperty(type=bpy.types.Object, name="Body",
                           description="The avatar's body mesh the garment is placed round and sewn onto",
                           poll=lambda self, ob: ob.type == 'MESH')
+    collider_pick: PointerProperty(type=bpy.types.Object, name="Add", poll=_collider_poll, update=_collider_picked,
+                                   description="Add a collision object: pick it with the eyedropper or by name")
+    # Whole Pieces' gizmo: one kind at a time, so each is drawn whole (user 2026-11-19: move and rotate together
+    # left only the arrows' tips). W switches it (draft_tool.AC9_WT_TransformPattern)
+    whole_gizmo: EnumProperty(name="Gizmo", default='MOVE', translation_context=CTX, update=_whole_gizmo_changed,
+                              items=[('MOVE', "Move", "Show the move gizmo on what is picked (W: rotate)"),
+                                     ('ROTATE', "Rotate", "Show the rotate gizmo on what is picked (W: move)")])
+    button_style_pick: PointerProperty(type=bpy.types.Object, name="Use Object", poll=_style_poll,
+                                       update=_style_picked,
+                                       description="Your own button: the mesh picked (eyedropper or name) becomes a "
+                                                   "style, drawn as it is: its origin at the middle of its back, +Z "
+                                                   "out of the cloth, in meters")
+    from_mesh_object: PointerProperty(type=bpy.types.Object, name="Mesh", poll=_from_mesh_poll,
+                                      description="The mesh with UV seams From Mesh makes the pattern from (empty: "
+                                                  "the active object)")
 
 
 CLASSES = (AC9ClothSimSeamItem, AC9ClothSimProps)

@@ -24,7 +24,8 @@ sidebar_position: 2
 - シミュレーションは、NVIDIA の Newton という別のプログラムで計算します。Preferences の Add-ons で **AC9 Cloth Sim** を開き、配布版では同梱のものが使われるので、「**Newton の Python**」（Newton Python）の欄は空のままで構いません。開発環境では、この欄に Newton が入った Python を指定します。
 - 指定が足りないと、「**ライブシム**」（Live Sim）を押したときに「Set the Newton Python in the add-on preferences」と出て始まりません。
 - 同じ Preferences の「**ソルバーを待機させておく**」（Keep the Solver Ready）（既定でオン）: 計算の準備を先に済ませて待たせておき、次の実行を 3〜5 秒早く始めます。待っている間は GPU のメモリを約 200 MB 使い、15 分使わないと終わります。オフにすると、その場で終わり、毎回準備から始めます。
-- Windows と NVIDIA の GPU が要ります（入れ方の資料のとおり）。- 同じ設定でも、計算のたびに仕上がりが数 cm 単位で揺れることがあります。1 回の結果だけで良し悪しを決めないでください。
+- Windows と NVIDIA の GPU（GeForce RTX 20・30・40・50 シリーズ）が要ります。ドライバーは最新にしてください（README の「GPU の対応について」）。
+- 同じ設定でも、計算のたびに仕上がりが数 cm 単位で揺れることがあります。1 回の結果だけで良し悪しを決めないでください。
 
 ## 最初にしておくこと
 

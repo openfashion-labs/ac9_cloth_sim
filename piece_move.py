@@ -120,31 +120,35 @@ def pick(context, g, name, extend=False):
 
 
 def _pick(context, g, name, extend):
-    """Prepare the next handle before retiring the current one."""
-    old = handles()
-    names = []
-    if extend and old:
-        names = list(PT.handle_names(old[0]))
-        if name in names:
-            names.remove(name)
-        else:
-            names.append(name)
-    else:
-        names = [name]
-    if not names:
-        clear(context)
+    """The garment's piece `name` picked (Shift: added, or taken out again). The pick goes through the one
+    selection (selection.apply), which marks the piece in every view and puts the handle on the garment's picked
+    pieces. Shift keeps the pieces picked before, placed shapes too (user 2026-11-15, b-4: placed and garment pieces
+    picked together; Blender's own G moved a placed piece and a garment piece together by the same 50 mm)."""
+    if not len(piece_verts(g, [name])):
         return None
+    if extend:
+        on = name in SEL.ids(context)
+        SEL.apply(context, [name], 'SUB' if on else 'ADD', active=None if on else name, view='world')
+    else:
+        SEL.apply(context, [name], 'SET', active=name, view='world')
+    hs = handles()
+    return hs[0] if hs else None
+
+
+def ensure_handle(context, g, names):
+    """The one handle on the garment's pieces `names` (the first named it): kept when it holds them already, else
+    a new one prepared before the old ones retire (a preparation error leaves the current handle as it was). The
+    handle is a way to move the pieces with G / R, not a record of the selection (selection.project makes it)."""
+    names = list(names)
+    old = handles()
+    if len(old) == 1 and list(PT.handle_names(old[0])) == names:
+        return old[0]
     idx = piece_verts(g, names)
     if not len(idx):
         return None
     W = _shown(context, g)[idx]
     h = _new_handle(context, names, W)
-    # All fallible shape reads and handle preparation completed. Retire only
-    # the old handles, never the replacement just linked into the collection.
-    SEL.deselect_all(context)
     _remove_handles(old)
-    h.select_set(True)
-    context.view_layer.objects.active = h
     _state[h.name] = {'idx': idx, 'base': None, 'M0': None, 'last': tuple(map(tuple, h.matrix_world))}
     return h
 

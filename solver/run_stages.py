@@ -67,6 +67,12 @@ if sys.argv[1:2] == ['--standby']:
     _trace('prewarm_import_end')
     _preload_progress(1, 'device')
     import warp as _wp
+    if not _wp.is_cuda_available() and os.environ.get('AC9_ALLOW_CPU') != '1':
+        # no CUDA device: the run itself stops and asks for an NVIDIA driver (newton_vbd.py); the waiting process must
+        # not build the small model's kernels for the CPU in the background meanwhile
+        _preload_progress(1, 'device', 'failed', 'no CUDA device')
+        _trace('prewarm_no_cuda')
+        _end(3)
     _trace('prewarm_gpu_begin')
     _wp.zeros(1, device=_wp.get_preferred_device())      # the CUDA context (the kernels load in ms from warp's cache)
     _trace('prewarm_gpu_end')

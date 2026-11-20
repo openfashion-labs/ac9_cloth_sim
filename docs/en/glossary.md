@@ -37,7 +37,7 @@ These are the terms used in this guide and on screen. Each term is listed under 
 | Phase (段) | One section within **Live Sim**. It goes through the phases in order, such as a phase that closes the seams and a phase that applies gravity to drape the cloth. |
 | Frame (コマ) | One image of the progress. You can play them back in the Timeline. |
 | Progress (cache) (経過、**Delete Cache**) | The record of the simulation's frames. It is stored in a folder next to the saved .blend. |
-| Piece state (ピースの状態) | **Active**, **Freeze**, **Off Pattern**, **Off All**. They decide whether a piece moves, whether it collides with other cloth, and whether its seams are used. |
+| Piece state (ピースの状態) | **Active**, **Freeze**, **Inactive**, **Off**. They decide whether a piece moves, whether it collides with other cloth, and whether its seams are used. |
 | Obstacle (**Collision**, 障害物) | Something the cloth collides with but that doesn't move. Other garments that have finished dressing automatically become obstacles. |
 
 ## Fabric

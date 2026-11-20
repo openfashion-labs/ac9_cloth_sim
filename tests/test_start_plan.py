@@ -18,8 +18,8 @@ def _mapper(Q, V, T, X):
     return np.array([X[np.argmin(np.linalg.norm(V - q, axis=1))] for q in Q])
 
 
-def _src(moved=True, nv=4, made=4, ident=False):
-    return {'moved': moved, 'vertex_count': nv, 'made_vertex_count': made, 'vertex_identity': ident}
+def _src(moved=True, nv=4, made=4):
+    return {'moved': moved, 'vertex_count': nv, 'made_vertex_count': made}
 
 
 class Plan(unittest.TestCase):
@@ -78,13 +78,23 @@ class Take(unittest.TestCase):
         Xs, _m, _t = SP.take(pl, screen, {'A': _src()}, [V], [X], _mapper)
         np.testing.assert_allclose(Xs[0], X + [0, 0, 5.0])
 
-    def test_a_mirrored_half_of_another_mesh_is_left(self):
+    def test_a_mirrored_half_of_another_mesh_is_mapped(self):
+        # a mirrored half carries its own layout points (start_check.read_screen): put on the run's mesh as a
+        # placed piece is, not left to the steps
         V, T, X = _square()
-        screen = {'B': ('mirrored', (V[:3], T[:1], X[:3]), '')}
+        screen = {'B': ('mirrored', (V[:3], T[:1], X[:3] + [0, 0, 7.0]), '')}
+        pl = SP.plan(screen, ['B'], {'B': _src(nv=3, made=3)})
+        Xs, moved, taken = SP.take(pl, screen, {}, [V], [X], _mapper)
+        self.assertEqual(taken, ['B'])
+        self.assertAlmostEqual(float(Xs[0][:, 2].min()), 7.0)
+
+    def test_a_shape_on_screen_without_triangles_is_left(self):
+        V, T, X = _square()
+        screen = {'B': ('mirrored', (V[:3], T[:0], X[:3]), '')}
         pl = SP.plan(screen, ['B'], {'B': _src(nv=3, made=3)})
         Xs, moved, taken = SP.take(pl, screen, {}, [V], [X + 1.0], _mapper)
         np.testing.assert_allclose(Xs[0], X + 1.0)
-        self.assertEqual(pl['B']['source'], 'placement_rule')
+        self.assertEqual(pl['B']['source'], 'prepare')
         self.assertEqual((moved, taken), ({}, []))
 
     def test_results_and_rules_are_not_touched(self):
@@ -99,6 +109,30 @@ class Take(unittest.TestCase):
         self.assertEqual(SP.drop_names("  put back by Reset, from the garment's shape: A, B", {'B'}),
                          "  put back by Reset, from the garment's shape: A")
         self.assertEqual(SP.drop_names("  put back by Reset, from the garment's shape: B", {'B'}), '')
+
+    def test_report_from_plan(self):
+        pl = {'A': {'source': 'placed_object', 'why': ''}, 'A_R': {'source': 'mirrored_object', 'why': ''},
+              'B': {'source': 'screen_result', 'why': ''}, 'C': {'source': 'placement_rule', 'why': ''}}
+        self.assertEqual(SP.report(pl, ['A', 'A_R']),
+                         ["  started as shown on screen: A, A_R (mirrored half)",
+                          "  starts: 2 as shown, 1 from the placement, 1 from the result shown"])
+        self.assertEqual(SP.report({}, []), [])
+
+    def test_a_reset_piece_not_moved_starts_as_written(self):
+        V, T, X = _square()
+        screen = {'A': ('placed', (V, T, X), '')}
+        src = {'A': {'moved': False, 'vertex_count': 4, 'made_vertex_count': 4, 'reset': True}}
+        self.assertEqual(SP.plan(screen, ['A'], src, going_on=True)['A']['source'], 'reset_shown')
+        self.assertEqual(SP.plan(screen, ['A'], src)['A']['source'], 'placement_rule')     # from the start: the rule
+        src['A']['reset'] = False
+        self.assertEqual(SP.plan(screen, ['A'], src, going_on=True)['A']['source'], 'placement_rule')
+
+    def test_drop_from_steps(self):
+        lines = ["  put back by Reset, from the garment's shape: A, B", "  not in the last result, from their "
+                 "placed shapes: A", "  (continued from j; new pieces: A)", "  mirrored start: A_R <- A"]
+        self.assertEqual(SP.drop_from_steps(lines, ['A']),
+                         ["  put back by Reset, from the garment's shape: B", "  (continued from j; new pieces: A)",
+                          "  mirrored start: A_R <- A"])
 
 
 if __name__ == '__main__':

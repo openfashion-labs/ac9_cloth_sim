@@ -110,21 +110,108 @@ def _copy_to(src, dst, M, rev):
     set_shape(dst, N2, C2)
 
 
-def _edit(spec, name, lid, fn):
+def _edit(spec, name, lid, fn, keep=None, flags=None):
     """fn(N, C, closed, R) -> (N, C) on line lid of piece name, its mirror lines given the mirror image. R: the
-    piece's reflection across its center line when the line is its own mirror image, else None. Returns the pieces
-    changed."""
+    piece's reflection across its center line when the line is its own mirror image, else None. The smooth vertices
+    keep their handles on one line afterwards (keep: {vertex: 'in' | 'out'}, the handle that keeps its direction);
+    flags(smooth set, N, R) -> the new smooth set (set_smooth). Returns the pieces changed."""
     pc = D.piece(spec, name)
     it = D.internal(pc, lid)
     targets = _targets(spec, name, lid)
     ms, _ = D.self_mirror_line(pc, lid)
     R = D.self_reflect(pc) if ms == lid else None
     N, C, closed, _ = shape(it)
+    sm = smooth_nodes(it, len(N))
+    N0 = N.copy()
     N, C = fn(N, C, closed, R)
+    if len(N) != len(N0):                         # a vertex added or removed: the others are where they were
+        sm = {int(np.linalg.norm(N - N0[k], axis=1).argmin()) for k in sm
+              if np.linalg.norm(N - N0[k], axis=1).min() < 1e-6}
+    if flags is not None:
+        sm = set(flags(set(sm), N, R))
+    C = list(C)
+    for k in sorted(sm):
+        _align(N, C, closed, k, (keep or {}).get(k))
     set_shape(it, N, C)
+    _set_smooth_nodes(it, sm, len(N))
     for nm, l2, M, rev in targets:
-        _copy_to(it, D.internal(D.piece(spec, nm), l2), M, rev)
+        dst = D.internal(D.piece(spec, nm), l2)
+        _copy_to(it, dst, M, rev)
+        n = len(N)
+        _set_smooth_nodes(dst, {n - 1 - k for k in sm} if rev else sm, n)
     return list(dict.fromkeys([name] + [t[0] for t in targets]))
+
+
+# ---------------------------------------------------------------- smooth vertices (user 2026-11-17)
+# As the outline's smooth corners: a vertex of an internal line may be smooth ('smooth_nodes': its index among the
+# line's vertices), the curve handles either side of it then stay on one line (their lengths free). Sharp by default.
+# An open line's two ends have one side only and are never smooth.
+
+def smooth_nodes(it, n=None):
+    """The smooth vertices of internal line it (indices among its vertices), those still there."""
+    if n is None:
+        n = len(shape(it)[0])
+    closed = bool(it.get('closed'))
+    return {int(k) for k in it.get('smooth_nodes') or () if 0 <= int(k) < n and (closed or 0 < int(k) < n - 1)}
+
+
+def _set_smooth_nodes(it, sm, n):
+    closed = bool(it.get('closed'))
+    sm = sorted(int(k) for k in sm if 0 <= k < n and (closed or 0 < k < n - 1))
+    if sm:
+        it['smooth_nodes'] = sm
+    else:
+        it.pop('smooth_nodes', None)
+
+
+def _align(N, C, closed, k, keep=None):
+    """Put the handles either side of vertex k on one line (D.align_corner on a line's vertex): keep 'in' / 'out' the
+    handle before / after it keeps its direction, None both turn to the mean; a straight side keeps its direction."""
+    n = len(N)
+    sa = (k - 1) % n if closed or k > 0 else None
+    sb = k if closed or k < n - 1 else None
+    if sa is None or sb is None:
+        return
+    ca, cb = C[sa] is not None, C[sb] is not None
+    if not (ca or cb):
+        return
+    P = N[k]
+    ta = P - (C[sa][1] if ca else N[sa])
+    tb = (C[sb][0] if cb else N[(k + 1) % n]) - P
+    ua, ub = D._unit(ta), D._unit(tb)
+    if not ca:
+        d = ua
+    elif not cb:
+        d = ub
+    elif keep == 'in':
+        d = ua if ua is not None else ub
+    elif keep == 'out':
+        d = ub if ub is not None else ua
+    else:
+        d = D._unit(ua + ub) if ua is not None and ub is not None else (ua if ua is not None else ub)
+        if d is None:
+            d = ub
+    if d is None:
+        return
+    la, lb = float(np.linalg.norm(ta)), float(np.linalg.norm(tb))
+    if ca:
+        C[sa] = np.array([C[sa][0], P - d * max(la, D.SMOOTH_MIN)])
+    if cb:
+        C[sb] = np.array([P + d * max(lb, D.SMOOTH_MIN), C[sb][1]])
+
+
+def is_smooth(it, k):
+    return int(k) in smooth_nodes(it)
+
+
+def set_smooth(spec, name, lid, i, on=True):
+    """Make vertex i of internal line lid smooth (its handles turned onto one line at once) or sharp again; its mirror
+    vertex too. Returns the pieces changed."""
+    def flags(sm, N, R):
+        j = _partner(N, i, R)
+        ks = {i} | ({j} if j is not None else set())
+        return (sm | ks) if on else (sm - ks)
+    return _edit(spec, name, lid, lambda N, C, closed, R: (N, C), flags=flags)
 
 
 def _partner(N, i, R):
@@ -158,19 +245,25 @@ def _move(N, C, closed, k, m):
 
 def move_node(spec, name, lid, i, d):
     """Move vertex i of internal line lid by d mm (its handles go along). Returns the pieces changed."""
-    d = np.asarray(d, float)
+    return move_nodes(spec, name, lid, {int(i): d})
+
+
+def move_nodes(spec, name, lid, deltas):
+    """Move vertices of internal line lid by deltas {vertex: (dx, dy) mm} at once (their handles go along). On a line
+    that is its own mirror image each vertex also gives its mirror vertex the mirror-image move, and a vertex that gets
+    two moves (it and its mirror both picked, or one on the center line) takes their mean (as draft._sym_deltas).
+    Returns the pieces changed."""
+    deltas = {int(k): np.asarray(v, float) for k, v in deltas.items()}
 
     def fn(N, C, closed, R):
-        j = _partner(N, i, R)
-        if j is None:
-            _move(N, C, closed, i, d)
-        else:
-            dm = R([N[i] + d])[0] - N[j]
-            if j == i:                                 # on the center line: stays on it
-                _move(N, C, closed, i, 0.5 * (d + dm))
-            else:
-                _move(N, C, closed, i, d)
-                _move(N, C, closed, j, dm)
+        acc = {}
+        for i, d in deltas.items():
+            acc.setdefault(i, []).append(d)
+            j = _partner(N, i, R)
+            if j is not None:
+                acc.setdefault(j, []).append(R([N[i] + d])[0] - N[j])
+        for k, ds in acc.items():
+            _move(N, C, closed, k, np.mean(ds, axis=0))
         return N, C
     return _edit(spec, name, lid, fn)
 
@@ -194,7 +287,11 @@ def set_handle(spec, name, lid, s, w, pos):
                     C[t] = C[t].copy()
                     C[t][w2] = R([pos])[0]
         return N, C
-    return _edit(spec, name, lid, fn)
+    # a smooth vertex beside the handle: the handle dragged keeps its direction, the one across the vertex turns
+    it = D.internal(D.piece(spec, name), lid)
+    n = len(shape(it)[0])
+    keep = {s: 'out'} if w == 0 else {(s + 1) % n: 'in'}
+    return _edit(spec, name, lid, fn, keep=keep)
 
 
 def locate(it, q):

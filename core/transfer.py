@@ -131,14 +131,11 @@ def followers(old_spec, new_spec, reset=()):
     return groups
 
 
-def _rigid_fit(P, Q):
-    """(R, t, rms) of the rotation + shift taking points P to Q best (Kabsch)."""
-    cp, cq = P.mean(0), Q.mean(0)
-    H = (P - cp).T @ (Q - cq)
-    U, _, Vt = np.linalg.svd(H)
-    d = np.sign(np.linalg.det(Vt.T @ U.T))
-    R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T
-    t = cq - R @ cp
+def _rigid_fit(P, Q, normal=None):
+    """(R, t, rms) of the rotation + shift taking points P to Q best (Kabsch; the turn a straight seam leaves open kept
+    as the pieces hang, solver/rigid_fit.py)."""
+    from ..solver.rigid_fit import rigid_fit
+    R, t = rigid_fit(P, Q, 1.0, normal=normal)
     rms = float(np.sqrt(((P @ R.T + t - Q) ** 2).sum(1).mean()))
     return R, t, rms
 
@@ -366,7 +363,9 @@ def _follow(old_spec, new_spec, group, skip, old_pat, old_idx, X_old, new_pat, r
     if not P:
         return None, float('inf')
     P, Q = np.vstack(P), np.vstack(Q)
-    R, t, rms = _rigid_fit(P, Q)
+    from ..solver.rigid_fit import plane_normal
+    hung = [_piece_mesh(old_pat, old_idx, X_old, g)[2] for g in group if g in onames]
+    R, t, rms = _rigid_fit(P, Q, normal=plane_normal(np.vstack(hung)) if hung else None)
     if rms > max(FOLLOW_RMS_MM, FOLLOW_RMS_FRAC * float(np.linalg.norm(Q - P, axis=1).mean())):
         return None, rms
     out = {}
@@ -389,6 +388,94 @@ def tri_areas_3d(X, T):
 
 
 SAME_SHAPE_MM = 0.05   # a pattern within this of a result's mesh (outline both ways, internal lines onto its edges)
+
+
+def _mesh_ring(V, F):
+    """The outline of one piece's flat mesh as a ring of vertex indices, or None when it is not one ring (a hole)."""
+    F = np.asarray(F, np.int64)
+    e = np.sort(np.vstack([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]]), 1)
+    u, c = np.unique(e, axis=0, return_counts=True)
+    b = u[c == 1]
+    if len(b) < 3:
+        return None
+    nxt = {}
+    for a, z in b:
+        nxt.setdefault(int(a), []).append(int(z))
+        nxt.setdefault(int(z), []).append(int(a))
+    if any(len(v) != 2 for v in nxt.values()):
+        return None
+    start = int(b[0, 0])
+    ring, prev, cur = [start], None, start
+    while True:
+        a, z = nxt[cur]
+        step = z if a == prev else a
+        if step == start:
+            break
+        ring.append(step)
+        prev, cur = cur, step
+        if len(ring) > len(nxt):
+            return None
+    return np.array(ring) if len(ring) == len(nxt) else None
+
+
+def piece_from_mesh(piece, V, F):
+    """The piece as its result's mesh shows it: the same edges (ids, order) laid on the mesh's outline, each from the
+    outline point nearest its start corner to the next one's. For a garment whose pattern was edited after it was
+    dressed on another PC (the pattern it was dressed with is not there): the carry then reads how the edited edges
+    moved, as on the PC it was edited on. None when the mesh's outline is not one ring or the corners do not follow
+    it in order (the carry is then not offered for this piece)."""
+    V = np.asarray(V, float)
+    ring = _mesh_ring(V, F)
+    if ring is None:
+        return None
+    R = V[ring]
+    ol = S.Outline(piece)
+    area = lambda P: 0.5 * float(np.sum(P[:, 0] * np.roll(P[:, 1], -1) - np.roll(P[:, 0], -1) * P[:, 1]))
+    if (area(R) > 0) != (area(ol.B) > 0):
+        R = R[::-1]
+    starts = [np.asarray(e['pts'][0], float) for e in piece['edges']]
+    k = [int(np.argmin(np.linalg.norm(R - p, axis=1))) for p in starts]
+    n = len(R)
+    rel = [(x - k[0]) % n for x in k]
+    if len(set(k)) != len(k) or any(b <= a for a, b in zip(rel, rel[1:])):
+        return None
+    out = dict(piece, edges=[])
+    for j, e in enumerate(piece['edges']):
+        a, b = k[j], k[(j + 1) % len(k)]
+        idx = [(a + t) % n for t in range(((b - a) % n) or n)] + [b]
+        out['edges'].append(dict(e, pts=[[round(float(x), 4), round(float(y), 4)] for x, y in R[idx]]))
+    return out
+
+
+def dressed_spec_from_mesh(spec, pat, idx, tol=SAME_SHAPE_MM):
+    """The pattern a garment was dressed with, as far as its mesh shows it (a result folder made from the .blend
+    alone): `spec` with each piece whose outline is not the mesh's laid on the mesh (piece_from_mesh). Returns (spec,
+    [pieces laid on the mesh], [pieces that differ but could not be laid]). The seams, internal lines and folds are
+    the current ones: their edits are not seen (DECISIONS cloth-sim-unsynced-blend-from-mesh-2026-11-15)."""
+    try:
+        changed = [n for n, _ in shape_changed(spec, pat, idx, tol)]
+    except KeyError:                    # a mesh whose outlines are not at the front of its vertices: not compared
+        return spec, [], [str(x) for x in pat['names']]
+    if not changed:
+        return spec, [], []
+    import copy
+    names = [str(x) for x in pat['names']]
+    offs = list(idx['offs']) + [len(idx['flat'])]
+    out = copy.deepcopy(spec)
+    laid, failed = [], []
+    for pc in out['pieces']:
+        if pc['name'] not in changed:
+            continue
+        j = names.index(pc['name'])
+        V = np.asarray(idx['flat'], float)[offs[j]:offs[j + 1]]
+        F = np.asarray(idx['F'])[np.asarray(idx['fp']) == j] - offs[j]
+        new = piece_from_mesh(pc, V, F)
+        if new is None:
+            failed.append(pc['name'])
+            continue
+        pc['edges'] = new['edges']
+        laid.append(pc['name'])
+    return out, laid, failed
 
 
 def shape_changed(spec, pat, idx=None, tol=SAME_SHAPE_MM):

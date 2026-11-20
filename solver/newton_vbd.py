@@ -22,6 +22,8 @@ TIMING = {'wall0': round(time.time() - (time.perf_counter() - _T0), 3)}
 
 
 def _tmark(k):
+    if globals().get('_AC9_CANCEL') is not None:
+        _AC9_CANCEL()
     TIMING[k] = round(time.perf_counter() - _T0, 3)
     _trace('timing_' + k)
     if globals().get('_AC9_PREPARED_GATE') is not None:
@@ -98,13 +100,17 @@ else:
                      f"{os.path.join(_vbd, _f)} differs (install that Newton or update solver/newton_patch)")
 
     class _KernelPatch(importlib.abc.MetaPathFinder):
+        # holds what it needs on itself, not in this script's globals: the Native 3 session runs one job after another
+        # in one process and clears each job's globals when it ends (solver/live_session_worker.py), while this finder
+        # stays first on sys.meta_path. Reading _KMOD from the cleared globals stopped every later import with a
+        # NameError: a second Live in the session that imported a module for the first time failed at stage 1.
+        def __init__(self, paths, spec_from_file):
+            self.paths, self.spec_from_file = paths, spec_from_file
+
         def find_spec(self, fullname, path=None, target=None):
-            if fullname == _KMOD:
-                return importlib.util.spec_from_file_location(fullname, _KPATCH)
-            if fullname == _SMOD:
-                return importlib.util.spec_from_file_location(fullname, _SPATCH)
-            return None
-    sys.meta_path.insert(0, _KernelPatch())
+            p = self.paths.get(fullname)
+            return None if p is None else self.spec_from_file(fullname, p)
+    sys.meta_path.insert(0, _KernelPatch({_KMOD: _KPATCH, _SMOD: _SPATCH}, importlib.util.spec_from_file_location))
 import newton
 _tmark('imported')
 # Newton's self-contact n-ring filters built with numpy (solver/nring_filter.py, sim_latency 2026-10-20): the same lists
@@ -581,6 +587,12 @@ if len(STATIC_TRI):
 _trace('gpu_init_begin')
 wp.init()
 _trace('gpu_init_end')
+# No usable CUDA device (no NVIDIA driver, or one older than Warp accepts): Warp falls back to the CPU, where a garment
+# runs for many minutes without ending (the pants: 93 of 140 frames of one stage in 25 min, 2026-11-13) and the person
+# is told nothing. Stop instead; Blender reads this line and asks for a driver update (core/gpu_failure.py).
+if not wp.is_cuda_available() and os.environ.get('AC9_ALLOW_CPU') != '1':
+    print('AC9: no CUDA device: the solver does not run on the CPU', flush=True)
+    raise SystemExit(3)
 # depenetrate runs before clear_new (2026-10-07): a collar folded at placement started 98 vertices inside the body
 # under the settled bodice; out of the cloth first and then out of the body put it back under the cloth
 # TEST ONLY: cfg 'depenetrate' = {"gap_mm": 3, "sigma_mm": 30, "rounds": 10, "max_depth_mm": 25}: before the stage,
@@ -790,7 +802,11 @@ if cfg.get('carry_to_seam'):
     _nm = [str(x) for x in pat_names] if pat_names is not None else []
     _to = {_nm.index(n) for n in ct_.get('to', []) if n in _nm}
     log['carry_to_seam'] = {}
-    Xc_ = np.asarray(X0, np.float64).copy()
+    _sd = os.path.dirname(os.path.abspath(__file__))
+    if _sd not in sys.path:
+        sys.path.insert(0, _sd)
+    from rigid_fit import rigid_fit, plane_normal
+    Xc_ =np.asarray(X0, np.float64).copy()
     for n in ct_.get('pieces', []):
         if n not in _nm:
             continue
@@ -803,12 +819,11 @@ if cfg.get('carry_to_seam'):
         if len(a_) < 3:
             continue
         P_, Q_ = Xc_[a_], Xc_[b_]
-        pc_, qc_ = P_.mean(0), Q_.mean(0)
-        U_, _, Wt_ = np.linalg.svd((P_ - pc_).T @ (Q_ - qc_))
-        Rk = Wt_.T @ np.diag([1.0, 1.0, np.sign(np.linalg.det(Wt_.T @ U_.T))]) @ U_.T
         vs_ = np.nonzero(_cvp == k_)[0]
+        # the turn a straight seam leaves open kept as placed (rigid_fit.py); meters here: tol 1 mm = 1e-3
+        Rk, tk_ = rigid_fit(P_, Q_, 1e-3, normal=plane_normal(Xc_[vs_]))
         before = float(np.median(np.linalg.norm(P_ - Q_, axis=1))) * 1000
-        Xc_[vs_] = (Xc_[vs_] - pc_) @ Rk.T + qc_
+        Xc_[vs_] = Xc_[vs_] @ Rk.T + tk_
         after = float(np.median(np.linalg.norm(Xc_[a_] - Q_, axis=1))) * 1000
         log['carry_to_seam'][n] = {'stitches': int(len(a_)), 'gap_p50_mm': [round(before, 1), round(after, 1)]}
     X0 = Xc_.astype(np.float32)
@@ -881,7 +896,29 @@ if cfg.get('clear_rigid'):
     X0 = X0.astype(np.float32)
 _tmark('prepared')
 _trace('model_begin')
-builder = newton.ModelBuilder(gravity=(0.0, 0.0, float(cfg.get('gravity_z', -9.81))))
+_FULL_HOST_SELECTION = not SUBSET or (len(sel)==N_FULL and np.array_equal(sel,np.arange(N_FULL)))
+_FAST_HOST_MODEL = NATIVE_THREE and not (not _FULL_HOST_SELECTION or BOUND_COUPLING or WELD is not None or
+    N_MOVE < len(X0) or cfg.get('ghost_pieces') or cfg.get('seam_paths') or cfg.get('fabric_pieces'))
+if _FAST_HOST_MODEL:
+    import native_mesh_prepare as _HOST_MESH
+# cfg 'sew_first' (Live, 2026-11-19; core/recipe.py LIVE_SEW_FIRST): a Live sews apart pieces without gravity, with the
+# stitch cap of the zero-gravity stages (cap_N), until the seams are closed -- the widest stitch gap under gap_max_mm,
+# or p99 under it with the widest gap no longer shrinking (stalled), or max_frames. The velocity is then held at 0 for
+# relax_frames (zero_v) so the sewing's momentum and stretch go without throwing the garment, and the gravity asked
+# for comes on. The bend hysteresis waits until the garment is quiet (quiet_mm) or hyst_after frames: taken at the
+# close it remembered the shape sewn without gravity and walked an open jacket's front up the body. The cap ends with
+# the sewing. A Live going on from a closed result skips all of it. Gravity from the start reeled a long coat in so
+# hard that the body below the shoulders swung up 83 mm; with this 13 mm, crossings 0, the final height the same
+# (experiments/claude_live_two_phase_2026-11-19). air_damp / damp_frames are test options (not in the table): damping
+# held a jacket's front where the sewing left it. Not on the Accurate path (FAST_LIVE).
+SEWF = dict(cfg['sew_first']) if cfg.get('live') and cfg.get('sew_first') and not FAST_LIVE else None
+SEWS = {}            # sew_first's progress in this run (closed frame, gravity frame, quiet count); not checkpointed
+if SEWF:
+    if SEWF.get('air_damp') and 'air_damp' not in cfg:
+        cfg['air_damp'] = float(SEWF['air_damp'])
+    if SEWF.get('cap_N') and not cfg.get('stitch_cap_N'):
+        cfg['stitch_cap_N'] = float(SEWF['cap_N'])
+builder = newton.ModelBuilder(gravity=(0.0, 0.0, 0.0 if SEWF else float(cfg.get('gravity_z', -9.81))))
 _cloth_kw = dict(pos=wp.vec3(0.0, 0.0, 0.0), rot=wp.quat_identity(), scale=1.0, vel=wp.vec3(0.0, 0.0, 0.0),
                  density=cfg.get('density', 0.14),
                  tri_ke=cfg['tri_ke'], tri_ka=cfg['tri_ka'], tri_kd=cfg['tri_kd'],
@@ -905,7 +942,11 @@ if N_MOVE < len(X0):
     builder.end_world()
     log['ghost'] = {'pieces': list(cfg['ghost_pieces']), 'verts': int(len(X0) - N_MOVE), 'tris': int(_fg.sum())}
 else:
-    builder.add_cloth_mesh(vertices=[wp.vec3(*p) for p in X0], indices=F.reshape(-1).tolist(), **_cloth_kw)
+    if _FAST_HOST_MODEL:
+        with _HOST_MESH.bulk_cloth_edges(builder):
+            builder.add_cloth_mesh(vertices=np.asarray(X0,np.float32), indices=F.reshape(-1).tolist(), **_cloth_kw)
+    else:
+        builder.add_cloth_mesh(vertices=[wp.vec3(*p) for p in X0], indices=F.reshape(-1).tolist(), **_cloth_kw)
 for a, b in E:
     builder.add_spring(int(a), int(b), cfg['stitch_ke'], cfg['stitch_kd'], 0.0)
 for a, b in E_OFF:                  # held at no stiffness after the stiffness scaling below (KE_OFF)
@@ -1041,11 +1082,14 @@ SEAM_SET_DEG = {}           # the same keys -> the angle set, in the person's si
 if cfg.get('seam_bend'):
     sb = cfg['seam_bend']
     vpc = v_piece[sel]
-    tri_of_e = {}
-    for t_, (x_, y_, z_) in enumerate(F.tolist()):
-        for e0, e1, op in ((x_, y_, z_), (y_, z_, x_), (z_, x_, y_)):
-            tri_of_e.setdefault(frozenset((e0, e1)), []).append((e0, e1, op))
-    bnd = {e: v[0] for e, v in tri_of_e.items() if len(v) == 1}          # boundary edge -> (e0, e1, opposite) in winding order
+    if _FAST_HOST_MODEL:
+        bnd = _HOST_MESH.boundary_edges(F)
+    else:
+        tri_of_e = {}
+        for t_, (x_, y_, z_) in enumerate(F.tolist()):
+            for e0, e1, op in ((x_, y_, z_), (y_, z_, x_), (z_, x_, y_)):
+                tri_of_e.setdefault(frozenset((e0, e1)), []).append((e0, e1, op))
+        bnd = {e: v[0] for e, v in tri_of_e.items() if len(v) == 1}          # boundary edge -> (e0, e1, opposite) in winding order
     def want(pa, pb):
         if sb['pairs'] == 'all':
             return True
@@ -1076,17 +1120,59 @@ if cfg.get('seam_bend'):
     for eb_, (x_, y_, o_) in bnd.items():
         bnd_at.setdefault(x_, []).append((y_, o_)); bnd_at.setdefault(y_, []).append((x_, o_))
     X0m = X0
+    _hstar_e0 = len(builder.edge_indices)
+    HSTAR_ROWS = bool(cfg.get('hstar_rows')); HSTAR_IDX = {}
+    if HSTAR_ROWS and (rdp or rds or rest_from_drape):
+        # folds / a drape's rest angles: H* rows are not built for them yet -> today's rows, the job is not kept
+        HSTAR_ROWS = False; log['hstar_rows_off'] = 'folds or rest_from_drape'
     for e, (k, l, oA) in bnd.items():
         for bk in partner.get(k, []):
             for bl in partner.get(l, []):
                 if frozenset((bk, bl)) in bnd:
                     oB = bnd[frozenset((bk, bl))][2]
+                    if HSTAR_ROWS:                 # hstar_rows: the facing pair's row always exists, on or off
+                        key = (frozenset((k, l)), bk); k3 = (frozenset((k, l)), bk, oB)
+                        if k3 not in HSTAR_IDX:
+                            for q_ in (oA, oB, k, l):
+                                if not isinstance(builder.particle_q[q_], wp.types.vector(3, wp.float32)):
+                                    builder.particle_q[q_] = wp.vec3(*builder.particle_q[q_])
+                            HSTAR_IDX[k3] = builder.add_edge(oA, oB, k, l, rest=rest_s, edge_ke=0.0, edge_kd=0.0)
+                            SEAM_REST.append(float(rest_s))
+                        if key not in seen:
+                            seen.add(key)
+                            if dihedral(oA, oB, k, l, Xc) > 120:
+                                skipped += 1
+                            else:
+                                builder.edge_bending_properties[HSTAR_IDX[k3]] = (ke_s, cfg['edge_kd']); added += 1
+                        continue
                 else:
                     # the two sides are resampled differently: bk's boundary edge that heads towards bl
                     cand = bnd_at.get(bk, [])
                     if not cand:
                         continue
                     y_, oB = min(cand, key=lambda t: np.linalg.norm(X0m[t[0]] - X0m[bl]))
+                    if HSTAR_ROWS:
+                        # hstar_rows (resident Live, DECISIONS cloth-sim-hstar-resident-2026-11-16): every candidate becomes a
+                        # row once; the start shape only switches rows on.
+                        # Same choice as below: the key is used up when the nearest candidate passes the distance
+                        # cut, the row is on when it also passes the drape-angle check.
+                        key = (frozenset((k, l)), bk)
+                        ok_ = key not in seen and not (np.linalg.norm(X0m[y_] - X0m[bl]) > np.linalg.norm(X0m[bk] - X0m[bl]))
+                        for y2_, oB2 in sorted(cand):
+                            k3 = (frozenset((k, l)), bk, oB2)
+                            if k3 not in HSTAR_IDX:
+                                for q_ in (oA, oB2, k, l):
+                                    if not isinstance(builder.particle_q[q_], wp.types.vector(3, wp.float32)):
+                                        builder.particle_q[q_] = wp.vec3(*builder.particle_q[q_])
+                                HSTAR_IDX[k3] = builder.add_edge(oA, oB2, k, l, rest=rest_s, edge_ke=0.0, edge_kd=0.0)
+                                SEAM_REST.append(float(rest_s))
+                        if ok_:
+                            seen.add(key)
+                            if dihedral(oA, oB, k, l, Xc) > 120:
+                                skipped += 1
+                            else:
+                                builder.edge_bending_properties[HSTAR_IDX[(frozenset((k, l)), bk, oB)]] = (ke_s, cfg['edge_kd']); added += 1
+                        continue
                     if np.linalg.norm(X0m[y_] - X0m[bl]) > np.linalg.norm(X0m[bk] - X0m[bl]):
                         continue
                 key = (frozenset((k, l)), bk)
@@ -1183,7 +1269,8 @@ if cfg.get('seam_bend'):
                 a_, b_ = b_, a_
             prs_[a_] = b_
         added += _chain_hinges(prs_, f"seam:{sid_}", rad_)
-    log['seam_bend'] = {'added': added, 'skipped_opposite': skipped,
+    # with hstar_rows the seam rows at the tail are more than the ones switched on: the code below reads 'added' as the tail's length
+    log['seam_bend'] = {'added': len(builder.edge_indices) - _hstar_e0 if HSTAR_ROWS else added, 'active': added, 'skipped_opposite': skipped, 'hstar_rows': len(HSTAR_IDX) if HSTAR_ROWS else None,
                         'pair_hinges': {k_: len(v_) for k_, v_ in SEAM_PAIR_H.items()},
                         'rest_from_drape': len(rest_list), 'rest_deg_p90': round(float(np.degrees(np.percentile(np.abs(rest_list), 90))), 1) if rest_list else 0}
 body_cfg = builder.default_shape_cfg.copy()
@@ -1255,6 +1342,15 @@ if cfg.get('sym_color') and cfg.get('mirror_map'):
     SYM_COLOR_LOG = {'twin_pairs': int(len(c_tgt)), 'twin_same_colour': int((col[c_tgt] == col[c_src]).sum()),
                      'colours': int(col.max()) + 1, 'recoloured_non_twin': fixed, 'clashes_left': clash,
                      'hinges_out_of_graph': n_straddle}
+elif cfg.get('seam_bend') and HSTAR_ROWS and not cfg.get('hstar_color_active'):   # hstar_color_active: color with the switched-on rows only (test)
+    # hstar_rows: color with every H* row (switched-off rows marked by a damping no kernel can feel), so the
+    # colors follow the rows, not which of them the start shape switches on; then put the switched-off rows back to 0
+    _bp_h = list(builder.edge_bending_properties)
+    _off_h = [i_ for i_, (k_, d_) in enumerate(_bp_h) if k_ == 0.0 and d_ == 0.0 and i_ >= _hstar_e0]
+    for i_ in _off_h: builder.edge_bending_properties[i_] = (0.0, 1e-30)
+    builder.color(include_bending=True)
+    for i_ in _off_h: builder.edge_bending_properties[i_] = (0.0, 0.0)
+    log['hstar_color'] = {'rows_off_in_graph': len(_off_h)}
 else:
     builder.color(include_bending=True)
 if cfg.get('color_dump'):
@@ -1762,7 +1858,11 @@ def poses_from_flat_all(poses):
 
 if cfg.get('rest_from_flat'):
     poses = model.tri_poses.numpy()
-    assert (model.tri_indices.numpy() == F).all()
+    _ti = model.tri_indices.numpy()
+    if _ti.shape != F.shape or not (_ti == F).all():
+        # Newton leaves out a triangle of zero area at the start (add_triangles): said plainly, not a bare assert
+        sys.exit(f"the solver left out {len(F) - len(_ti)} of the garment's {len(F)} triangles: they are squashed "
+                 f"flat in the start shape. Back to Guide on the piece and place it again")
     if os.environ.get('AC9_POSE_FAST', '1') != '0':
         poses_from_flat_all(poses)
         if os.environ.get('AC9_POSE_CHECK') == '1':
@@ -2083,12 +2183,16 @@ log['model'] = {'particles': model.particle_count, 'tris': model.tri_count, 'edg
                 'springs': model.spring_count, 'body_tris': len(Bt) // 3}
 
 # stitched pairs: exclude vertex a vs triangles around b (and b vs around a)
-tri_of = [[] for _ in range(len(X0))]
-for ti, (i, j, k) in enumerate(F):
-    tri_of[i].append(ti); tri_of[j].append(ti); tri_of[k].append(ti)
-ring = [set() for _ in range(len(X0))]
-for i, j, k in F:
-    ring[i].update((j, k)); ring[j].update((i, k)); ring[k].update((i, j))
+tri_of = None
+if _FAST_HOST_MODEL:
+    tri_of,ring = _HOST_MESH.triangle_rows(F,len(X0))
+else:
+    tri_of = [[] for _ in range(len(X0))]
+    for ti, (i, j, k) in enumerate(F):
+        tri_of[i].append(ti); tri_of[j].append(ti); tri_of[k].append(ti)
+    ring = [set() for _ in range(len(X0))]
+    for i, j, k in F:
+        ring[i].update((j, k)); ring[j].update((i, k)); ring[k].update((i, j))
 R = int(cfg.get('filter_rings', 0))      # 0: only the stitched vertex; 1: its one-ring too
 vfilter = {}
 R_int = int(cfg.get('internal_filter_rings', R))   # for seams ending on a piece's inside (pockets on panels)
@@ -2117,12 +2221,15 @@ efilter = {}
 # touching w's set (the same rings as the vertex filter) are taken out too.
 if cfg.get('stitch_edge_filter') and model.edge_count:
     _EIF = model.edge_indices.numpy()[:, 2:].astype(np.int64)
-    _v2e = [[] for _ in range(len(X0))]
-    for _e, (_p, _q) in enumerate(_EIF):
-        if 0 <= _p < len(X0):
-            _v2e[_p].append(_e)
-        if 0 <= _q < len(X0):
-            _v2e[_q].append(_e)
+    if _FAST_HOST_MODEL:
+        _v2e = _HOST_MESH.edge_rows(_EIF,len(X0))
+    else:
+        _v2e = [[] for _ in range(len(X0))]
+        for _e, (_p, _q) in enumerate(_EIF):
+            if 0 <= _p < len(X0):
+                _v2e[_p].append(_e)
+            if 0 <= _q < len(X0):
+                _v2e[_q].append(_e)
     for a, b in E:
         Rs = R_int if (interior[a] or interior[b]) else R
         for u, w in ((int(a), int(b)), (int(b), int(a))):
@@ -2321,13 +2428,12 @@ if cfg.get('layers') and cfg.get('self_contact', True) and pat_names is not None
         # so a side there held them wrong for good (a shirt's placket: 40 stuck vertices, 24 of 47 on a stitch,
         # crossings 23 -> 105, experiments/layer_contact_2026-10-25). They keep the usual two-sided contact
         # (negative layer id), and the triangles touching them have no side.
+        # (solver/layer_reach.py: the same function the add-on calls before a run to say which pieces' Layer reaches
+        # few or none of their vertices)
+        import layer_reach as _LR
         _xs = np.asarray(E, np.int64)
         _xs = _xs[_lay[_xs[:, 0]] != _lay[_xs[:, 1]]] if len(_xs) else _xs
-        _ex = np.zeros(len(_lay), bool)
-        if len(_xs):
-            _ex[_xs.ravel()] = True
-            for _ in range(int(cfg.get('layers_seam_rings', 3))):
-                _ex[_tl[_ex[_tl].any(1)].ravel()] = True
+        _ex = _LR.left_out(_tl, _xs, _lay, int(cfg.get('layers_seam_rings', _LR.SEAM_RINGS)))
         if cfg.get('layers_pair_exclusions', BOUND_COUPLING):
             import layer_pairs as _LP
             _pair_cfg = cfg.get('layers_pair_exclusions', True)
@@ -2400,6 +2506,13 @@ if cfg.get('layers') and cfg.get('self_contact', True) and pat_names is not None
         log['layers'] = {'pieces': {str(n_): int(k_) for n_, k_ in cfg['layers'].items() if n_ in pat_names},
                          'verts_per_layer': {_labels[int(k_)]: int((_lay == k_).sum()) for k_ in np.unique(_lay) if k_ >= 0},
                          'left_out_by_stitches': int(_ex.sum()), 'stitches_across': int(len(_xs)),
+                         # which rule left vertices out: 'rings' (_ex above, counted per piece; the add-on says the
+                         # same before the run when layer_reach.exact(cfg)) or 'pairs' (layer_pairs, by pairs: not
+                         # counted per piece, and the add-on says nothing)
+                         'exclusions': 'pairs' if cfg.get('layers_pair_exclusions', BOUND_COUPLING) else 'rings',
+                         'reached_per_piece': (None if cfg.get('layers_pair_exclusions', BOUND_COUPLING) else
+                                               _LR.per_piece(_ex, np.asarray(v_piece[sel]), pat_names,
+                                                             {n_: k_ for n_, k_ in cfg['layers'].items()})),
                          'sign_minority': _minor,
                          'wrong_per_frame': LAYERS['wrong']}
         log['layers']['recovery_friction_scale'] = float(cfg.get('layers_recovery_friction', 1.0))
@@ -2834,6 +2947,15 @@ def _bf2_update(q: wp.array(dtype=wp.vec3), ei: wp.array(dtype=wp.vec4i), rows: 
     ed = wp.normalize(x3 - x2)
     th = wp.atan2(wp.dot(wp.cross(n1, n2), ed), wp.dot(n1, n2))
     r = rows[i]
+    if thy[i] < 0.0:
+        # sew_first per piece: this hinge's piece is not ready yet -- no hysteresis, the plain elastic hinge
+        st[i] = th
+        if inside == 1:
+            bf[r, 0] = th
+        else:
+            bp[r, 0] = wp.float32(k0[i])
+            ra[r] = wp.float32(ra0[i])
+        return
     if init == 1:
         st[i] = th
     lim = thy[i] / rat
@@ -3218,12 +3340,40 @@ def _stroke_frame(f_, S_):
     log['stroke'].append([f_, int(m_.sum()), round(float(np.linalg.norm(mv_)) * 1000, 2), int(nx_), int(nh_)])
 
 
+@wp.kernel
+def _antigrav(ag: wp.array(dtype=float), mass: wp.array(dtype=float), g: wp.array(dtype=wp.vec3),
+              fext: wp.array(dtype=wp.vec3)):
+    # sew_first: the gravity cancelled on the pieces still floating (ag 1), as an external force each substep
+    i = wp.tid()
+    if ag[i] > 0.0:
+        fext[i] = fext[i] - ag[i] * mass[i] * g[0]
+
+
+PG = None
+if SEWF is not None:
+    from sew_first import PieceSewing as _PieceSewing
+    _vp_g = np.asarray(v_piece[sel][:N_G], np.int64)
+    _vp_all = np.full(model.particle_count, -1, np.int64); _vp_all[:N_G] = _vp_g
+    PG = {'ps': _PieceSewing(E, _vp_g, len(pat_names), gap_mm=float(SEWF.get('gap_max_mm', 3.0)),
+                             max_frames=int(SEWF.get('max_frames', 600))),
+          'np': len(pat_names), 'vp': _vp_all, 'vp_g': _vp_g, 'grav': {}, 'at_start': {}, 'quiet': {},
+          'ag': wp.array(np.zeros(model.particle_count, np.float32), dtype=float),
+          'last_float': np.ones(len(pat_names), bool), 'ready': np.zeros(len(pat_names), bool),
+          'last_ready': np.zeros(len(pat_names), bool)}
+    if BF2 is not None:
+        PG['thy_full'] = BF2['thy'].numpy().copy()
+        PG['row_piece'] = v_piece[sel][model.edge_indices.numpy()[BF2['r_np'], 2]]
+        BF2['thy'].fill_(-1.0)                  # no piece has its hysteresis until it is ready (in the frame loop)
+
+
 def _substep_a(fast=None, d=None):
     global s0, s1
     if GRB is not None and GRAB_MODE == 'rigid':    # a no-op while nothing is held (so the GPU graph keeps it)
         wp.launch(_grab_sub, dim=model.particle_count,
                   inputs=[s0.particle_q, s0.particle_qd, GRB['mask'], GRB['step']])
     s0.clear_forces()
+    if PG is not None:
+        wp.launch(_antigrav, dim=model.particle_count, inputs=[PG['ag'], model.particle_mass, model.gravity, s0.particle_f])
     _fast_sub = (_FAST_SUBSTEP is not None and _FAST_SUBSTEP(s0)) if fast is None else fast
     if GRB is not None and GRAB_MODE != 'rigid' and not _fast_sub:
         wp.launch(_grab_spring, dim=model.particle_count,
@@ -3398,9 +3548,19 @@ else:
 _trace('initial_sync_begin')
 wp.synchronize()
 _trace('initial_sync_end')
-# stitch_ramp_frames N: the stitch rest length starts at the initial gap and shrinks linearly to 0 over N frames,
+# stitch_ramp_frames N: the stitch rest length starts at the initial gap and shrinks to 0 over N frames,
 # so a 100 mm shoulder gap is drawn in instead of snapped shut (jacket fronts flipped over the shoulder, 2026-09-25)
 RAMP = int(cfg.get('stitch_ramp_frames', 0))
+# stitch_ramp_shape: how the rest length shrinks. 'linear' (the default) moves every stitch at the same speed, so
+# all of them arrive together at frame N at full speed -- the cloth near the seams is hit at once (a sleeve's
+# underarm bagged and turned over as the seams met). 'ease_out' shrinks it by (1 - t)^2: each stitch slows to a stop
+# as it arrives, at the price of a stronger pull early. On a test T-shirt in a Live run: triangles turned over at
+# once 24 -> 2, the speed near the seams around the arrival p99 221 -> 122 mm/s, still at frame 283 -> 159; on a
+# sleeveless open coat 4 -> 1-2 and 167 -> 122 mm/s (experiments/claude_seam_ramp_2026-11-18).
+RAMP_SHAPE = str(cfg.get('stitch_ramp_shape', 'linear'))
+if RAMP_SHAPE not in ('linear', 'ease_out'):
+    raise ValueError('stitch_ramp_shape must be linear or ease_out, not ' + RAMP_SHAPE)
+log['stitch_ramp_shape'] = RAMP_SHAPE
 if RAMP and model.spring_count:
     _si = model.spring_indices.numpy().reshape(-1, 2)
     _q = s0.particle_q.numpy()
@@ -3460,10 +3620,19 @@ if cfg.get('live'):
              'seams_off': set(str(x_) for x_ in E_OFF_SEAM),
              'frozen': set(cfg.get('frozen_pieces') or []) - set(cfg.get('ghost_pieces') or []),
              'gravity': float(cfg.get('gravity_z', -9.81)) != 0.0,
+             'sewing': bool(SEWF),          # sew_first: the gravity asked for waits until the stitches close
              'elastic': {ELASTIC_P[k_]: ELASTIC[k_][3] for k_ in range(len(ELASTIC)) if ELASTIC_P[k_]},
              'strengthen_pieces': dict(cfg.get('strengthen_pieces') or {}),
              'ramps': [], 'applied': []}
     LIVEP['terminal']=cfg.get('experimental_fold_terminal')
+    # sew_first 'heavy': the particles made heavy now (saved with a checkpoint, whose model arrays keep the heavy mass)
+    LIVEP['heavy_mask'] = np.zeros(model.particle_count, bool)
+    # sew_first: which pieces are sewn and since when (a resume must not judge it again from the shape it stopped at:
+    # a sewn body's stitch a few mm open while the collar pulled made the whole garment float again)
+    LIVEP['pg_mode'] = ''
+    LIVEP['pg_sewn'] = np.full(len(pat_names), -1, np.int64)
+    LIVEP['pg_first'] = 0
+    LIVEP['pg_start_float'] = False
     if BF2 is not None:
         LIVEP['bf2_row'] = -np.ones(model.edge_count, np.int64)
         LIVEP['bf2_row'][BF2['r_np']] = np.arange(BF2['n'])
@@ -3546,8 +3715,12 @@ def _live_apply(P_, f_):
         LIVEP['strengthen_pieces'] = dict(STRENGTHEN)
     if 'gravity' in P_ and bool(P_['gravity']) != LIVEP['gravity']:
         LIVEP['gravity'] = bool(P_['gravity'])
-        model.set_gravity((0.0, 0.0, -9.81 if LIVEP['gravity'] else 0.0))
-        done_.append(f"gravity {'on' if LIVEP['gravity'] else 'off'}")
+        if LIVEP.get('sewing') and not (PG is not None and PG['ps'].mode == 'per_piece'):
+            done_.append(f"gravity {'on' if LIVEP['gravity'] else 'off'} once the seams close")
+        else:
+            # per piece: the floating pieces' gravity stays cancelled by their external force
+            model.set_gravity((0.0, 0.0, -9.81 if LIVEP['gravity'] else 0.0))
+            done_.append(f"gravity {'on' if LIVEP['gravity'] else 'off'}")
     if 'fold' in P_ or 'fold_terminal' in P_:
         new_ = new_fold
         for k_ in sorted(set(new_) | set(LIVEP['fold']) | terminal_keys):
@@ -3723,6 +3896,7 @@ if SETTLE:
 #     placement) is left out too
 #   reopened: stitches that closed (under 1 mm) and are open again (over 2 mm); recorded at reopen_n or more twice running
 #   crossing: new cloth-through-cloth pairs between pieces (below)
+_trace('guard_prepare_begin')
 GUARD = cfg.get('guard')
 if GUARD:
     from spatial import cKDTree as _KDg
@@ -3804,6 +3978,8 @@ if GUARD:
 # frame (the solve ~78 ms); on the raglan with the 0.1x collar the collar-end cluster came first in stages 2, 4, 5
 # and 6. In the stages that move a lot with no gravity (arms out, sleeves) many vertices are flagged: they move.
 # How to read it: docs/reference/GUIDE_detectors_for_ai.md (2609_Apparel_CAD)
+_trace('guard_prepare_end')
+_trace('jitter_prepare_begin')
 JIT = None
 if cfg.get('jitter'):
     J_ = cfg['jitter'] if isinstance(cfg['jitter'], dict) else {}
@@ -3812,6 +3988,7 @@ if cfg.get('jitter'):
         from mesh_graph import mesh_averages
         _jN = len(X0)
         _jA, _jVF = mesh_averages(_jF, _jN)
+        _trace('jitter_prepare_end')
         JIT = {'rel_mm': float(J_.get('rel_mm', 0.5)), 'flick_deg': float(J_.get('flick_deg', 4.0)),
                'alpha': float(J_.get('alpha', 0.1)), 'tail': int(J_.get('tail', 30)),
                'F': _jF, 'A': _jA,
@@ -4049,17 +4226,26 @@ if NATIVE_COLOR_PLAN is not None:
 _RESUME_FRAME = 0
 _RESUME_FIRST = None
 if cfg.get('experimental_fold_terminal'):
+    _trace('terminal_prepare_begin')
     from terminal_checkpoint import build as _build_terminal_checkpoint
     TERMINAL_INITIAL_PROPS=model.edge_bending_properties.numpy().copy()
     TERMINAL_FIELD_STATE=_build_terminal_checkpoint(globals())
-from live_checkpoint import build_signature as _checkpoint_build_signature
-_trace('checkpoint_build_signature_begin')
-_CHECKPOINT_BUILD = _checkpoint_build_signature(globals())
-_trace('checkpoint_build_signature_end')
-from live_checkpoint import fingerprint as _checkpoint_fingerprint
-_trace('checkpoint_fingerprint_begin')
-_CHECKPOINT_FINGERPRINT = _checkpoint_fingerprint(globals())
-_trace('checkpoint_fingerprint_end')
+    _trace('terminal_prepare_end')
+if NATIVE_THREE:
+    # Native3 rejects checkpoint input before building the model, and save()
+    # refuses it before consuming either signature. Keep shape-only restart.
+    _CHECKPOINT_BUILD = None
+    _CHECKPOINT_FINGERPRINT = None
+    _trace('checkpoint_signature_skipped', reason='native_three_shape_only')
+else:
+    from live_checkpoint import build_signature as _checkpoint_build_signature
+    _trace('checkpoint_build_signature_begin')
+    _CHECKPOINT_BUILD = _checkpoint_build_signature(globals())
+    _trace('checkpoint_build_signature_end')
+    from live_checkpoint import fingerprint as _checkpoint_fingerprint
+    _trace('checkpoint_fingerprint_begin')
+    _CHECKPOINT_FINGERPRINT = _checkpoint_fingerprint(globals())
+    _trace('checkpoint_fingerprint_end')
 if cfg.get('checkpoint_in'):
     if not cfg.get('live'):
         raise ValueError('A Live checkpoint can only resume a Live stage')
@@ -4075,8 +4261,41 @@ if cfg.get('checkpoint_in'):
     _resume_meta = _restore_live_checkpoint(cfg['checkpoint_in'], globals())
     _RESUME_FRAME = int(_resume_meta['frame'])
     _RESUME_FIRST = s0.particle_q.numpy()[:N_G].copy()
+    # sew_first builds the model without gravity; a checkpoint taken after the sewing restores LIVEP['sewing'] False,
+    # so the gravity asked for is set again here (else the resumed Live ran without it)
+    if PG is not None and not LIVEP.get('sewing'):
+        # a checkpoint taken after the sewing: every piece has its gravity and its hysteresis (BF2 restored as saved)
+        model.set_gravity((0.0, 0.0, -9.81 if LIVEP['gravity'] else 0.0))
+        SEWS['sewn_at_start'] = True
+        PG['ag'].zero_(); PG['last_float'][:] = False; PG['ready'][:] = True; PG['last_ready'][:] = True
+        log['sew_first'] = {'resumed_after_sewing': True, 'gravity': LIVEP['gravity']}
+    # a checkpoint taken while a piece still floated saved the sewn pieces' heavy mass: back to their own mass here
+    # (the sewing restarts from the restored shape and makes them heavy again if a piece still floats)
+    if LIVEP is not None and LIVEP.get('heavy_mask') is not None and np.asarray(LIVEP['heavy_mask']).any():
+        _hm = np.asarray(LIVEP['heavy_mask'], bool); _k = float((SEWF or {}).get('heavy') or 1.0)
+        _pm, _pim = model.particle_mass.numpy(), model.particle_inv_mass.numpy()
+        _pm[_hm] /= _k; _pim[_hm] *= _k
+        model.particle_mass.assign(_pm); model.particle_inv_mass.assign(_pim)
+        log.setdefault('sew_first', {'pieces': {}})['heavy_undone_on_resume'] = int(_hm.sum())
+        LIVEP['heavy_mask'] = np.zeros(model.particle_count, bool)
+    if PG is not None and LIVEP.get('sewing') and LIVEP.get('pg_mode'):
+        # stopped while sewing: the pieces sewn then stay sewn (and keep their gravity / hysteresis timing)
+        _ps = PG['ps']; _ps.mode = str(LIVEP['pg_mode']); _ps.first = int(LIVEP['pg_first'])
+        _ps.sewn_frame = np.asarray(LIVEP['pg_sewn'], np.int64).copy()
+        PG['start_float'] = bool(LIVEP['pg_start_float'])
+        for _i in np.nonzero(_ps.sewn_frame >= 0)[0]:
+            _sf = int(_ps.sewn_frame[_i]); PG['at_start'][int(_i)] = _sf <= _ps.first
+            PG['grav'][int(_i)] = _sf if _sf <= _ps.first else _sf + int(SEWF.get('relax_frames', 0))
+        if _ps.mode == 'per_piece':
+            model.set_gravity((0.0, 0.0, -9.81 if LIVEP['gravity'] else 0.0))
+        elif BF2 is not None:
+            BF2['thy'].assign(PG['thy_full'])
+        log.setdefault('sew_first', {'pieces': {}})['resumed_while_sewing'] = {
+            'mode': _ps.mode, 'sewn': [str(pat_names[i]) for i in np.nonzero(_ps.sewn_frame >= 0)[0]]}
     log['checkpoint_resume'] = {'status': 'restored', 'frame': _RESUME_FRAME}
 _trace('start_check_begin')
+if globals().get('_AC9_CANCEL') is not None:
+    _AC9_CANCEL()
 if cfg.get('start_check', True):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import start_check as _SC
@@ -4169,6 +4388,9 @@ log['stroke'] = []                    # [frame, verts, move mm, own crossing edg
 if _PREPARED_GATE is not None:
     _PREPARED_GATE(globals())
 _tmark('loop_start')
+if globals().get('_AC9_LOOP_READY') is not None:
+    _AC9_LOOP_READY()
+_AC9_CANCEL = None  # During simulation, use the existing frame-end Stop path.
 t_all = time.perf_counter()
 f = _RESUME_FRAME
 _trace('loop_ready')
@@ -4187,7 +4409,8 @@ for f in range(_RESUME_FRAME + 1, frames + 1):
             log['checkpoint']={'status':'unavailable','reason':'Fast Live input update rejected'}
             res=res[:f];break
     if RAMP and model.spring_count and f <= RAMP + 1:
-        RL = L0s * max(0.0, 1.0 - (f - 1) / RAMP); upd = True
+        _t = min(1.0, (f - 1) / RAMP)
+        RL = L0s * ((1.0 - _t) ** 2 if RAMP_SHAPE == 'ease_out' else 1.0 - _t); upd = True
     for k_, (ids, st, n_) in enumerate(DELAY):
         # frames count from 1, so "start": 0 comes on at frame 1 (until 2026-10-16 `f == st` never fired for it: a
         # sleeved garment's underarm seams stayed open 34 mm through stage 5 and shut at once in stage 6, the sleeves
@@ -4353,7 +4576,9 @@ for f in range(_RESUME_FRAME + 1, frames + 1):
         if LOCK is not None and (LOCK_F >= 0).any():
             RL = RL.copy(); _lk = np.nonzero(LOCK_F >= 0)[0]; RL[_lk] = LOCK_L[_lk]
         model.spring_rest_length.assign(RL)
-    if STCAP:
+    # sew_first: the cap is the sewing's (zero-gravity stages); under gravity the seams carry the garment and a capped
+    # jacket hung open (10/16), so it ends with the sewing
+    if STCAP and not (SEWF is not None and LIVEP is not None and not LIVEP.get('sewing') and not cfg.get('stitch_cap_N_all')):
         _q = s0.particle_q.numpy(); _L = np.linalg.norm(_q[_SI_CAP[:, 0]] - _q[_SI_CAP[:, 1]], axis=1)
         _k = model.spring_stiffness.numpy()[:N_ST]
         _base = (RL if RL is not None else model.spring_rest_length.numpy())[:N_ST]
@@ -4548,7 +4773,11 @@ for f in range(_RESUME_FRAME + 1, frames + 1):
         # the velocity gone every substep); with init_xv that brake is gone (Fable G-3 review, the first suspect for
         # the bodies folding up in the zero-gravity sewing stage)
         s0.particle_qd.assign(s0.particle_qd.numpy() * VEL_DAMP)
-    if AIR_DAMP != 1.0:
+    # sew_first 'damp_frames': the air damping only while sewing and this many frames after the gravity came on
+    _air_on = AIR_DAMP != 1.0 and not (SEWF is not None and SEWF.get('damp_frames') is not None and LIVEP is not None
+                                       and not LIVEP.get('sewing') and
+                                       f > log.get('sew_first', {}).get('gravity_on_frame', 0) + int(SEWF['damp_frames']))
+    if _air_on:
         # cfg 'air_damp': like air, only the velocity across the cloth (along the vertex normal) x this every frame.
         # VBD has no drag and its membrane damping leaves rigid rotations alone, so the open jacket fronts kept
         # swinging from the shoulders (40 mm per 100 frames after 300, 2026-10-01); vel_damp stopped that but also
@@ -4649,6 +4878,108 @@ for f in range(_RESUME_FRAME + 1, frames + 1):
             arr[_vs] = (_m / _ws[:, None])[_g].astype(np.float32)
         s0.particle_q.assign(_q); s0.particle_qd.assign(_v)
     res[f] = s0.particle_q.numpy()[:N_G]
+    _new0 = None
+    if PG is not None and LIVEP is not None and LIVEP.get('sewing') and PG['ps'].mode is None:
+        # the first frame decides: 'per_piece' when a group of pieces is sewn already (a result with a piece put back)
+        # or there is no seam at all; 'together' when none is (pieces placed apart: as before, below, the gravity of
+        # the whole garment at 0 until every stitch is closed)
+        _new0 = PG['ps'].step(f, res[f])
+        if PG['ps'].mode is None:
+            PG['ps'].mode = 'per_piece'
+        LIVEP['pg_mode'] = PG['ps'].mode; LIVEP['pg_first'] = int(PG['ps'].first)
+        LIVEP['pg_start_float'] = bool(PG['ps'].floating().any())
+        if PG['ps'].mode == 'together':
+            if BF2 is not None:
+                BF2['thy'].assign(PG['thy_full'])     # the hysteresis as before: held back by _bf2_wait below
+        else:
+            model.set_gravity((0.0, 0.0, -9.81 if LIVEP['gravity'] else 0.0))
+            PG['ag'].assign(np.where(PG['vp'] >= 0, 1.0, 0.0).astype(np.float32))   # until the update below
+    if PG is not None and PG['ps'].mode == 'together' and LIVEP.get('sewing'):
+        # sewing -> (closed) relax -> gravity. Closed: the widest stitch gap (gap_max_mm), or the old p95 (gap_mm) when
+        # only that is given: judged at p95 a coat was still 47 mm open at the shoulder when the gravity came on.
+        _sg = np.linalg.norm(res[f][E[:, 0]] - res[f][E[:, 1]], axis=1) * 1000.0 if len(E) else np.zeros(1)
+        _sgm = float(_sg.max()) if SEWF.get('gap_max_mm') is not None else float(np.percentile(_sg, 95))
+        _lim = float(SEWF['gap_max_mm']) if SEWF.get('gap_max_mm') is not None else float(SEWF.get('gap_mm', 2.0))
+        _rx = SEWS.get('relax_from')
+        # stalled: p99 already under the limit and the widest gap no longer shrinking (by 0.5 mm over 30 frames) -- a
+        # few stitches of eased or body-pressed seams stay 3-5 mm open (pants: 7 stitches) and would hold the gravity
+        # back to max_frames
+        _hist = SEWS.setdefault('gap_hist', {})
+        _hist[f] = _sgm
+        _stall = (f - 30 in _hist and _hist[f - 30] - _sgm < 0.5 and len(_sg) and
+                  float(np.percentile(_sg, 99)) < _lim)
+        _hist.pop(f - 31, None)
+        if _rx is None and (_sgm < _lim or _stall or f >= int(SEWF.get('max_frames', 600))):
+            _rx = SEWS['relax_from'] = f
+            SEWS['sewn_at_start'] = f <= _RESUME_FRAME + 1
+            log['sew_first'] = {'mode': 'together', 'closed_frame': f, 'gap_mm': round(_sgm, 2), 'closed': _sgm < _lim,
+                                'stalled': bool(_stall), 'sewn_at_start': SEWS['sewn_at_start']}
+        if _rx is not None:
+            _relax = 0 if SEWS['sewn_at_start'] else int(SEWF.get('relax_frames', 0))
+            if SEWF.get('zero_v') and not SEWS['sewn_at_start'] and f < _rx + max(_relax, 1):
+                # the momentum the sewing gave is not the garment's own: a long coat kept swinging from it. Held at 0
+                # for relax_frames, the stretch the sewing left relaxes without being thrown
+                s0.particle_qd.zero_()
+            if f >= _rx + _relax:
+                LIVEP['sewing'] = False
+                if LIVEP['gravity']:
+                    model.set_gravity((0.0, 0.0, -9.81))
+                SEWS['gravity_on_frame'] = f
+                log['sew_first'].update(gravity_on_frame=f, gravity=LIVEP['gravity'])
+                _trace('sew_first_done', frame=f, gap_mm=round(_sgm, 2))
+    if PG is not None and PG['ps'].mode == 'per_piece' and LIVEP.get('sewing'):
+        # sew_first per piece (solver/sew_first.py): a piece feels the gravity once its group's seams are closed; a
+        # piece that joins after the start is held still for relax_frames first (zero_v: the sewing's momentum and
+        # stretch go without throwing it), one sewn when the Live starts (a result) at once
+        _new = _new0 if _new0 is not None else PG['ps'].step(f, res[f])
+        LIVEP['pg_sewn'] = PG['ps'].sewn_frame.copy()
+        _first = f <= _RESUME_FRAME + 1
+        if _first and 'start_float' not in PG:
+            PG['start_float'] = bool(PG['ps'].floating().any())
+        for _p in _new:
+            PG['grav'][int(_p)] = f if _first else f + int(SEWF.get('relax_frames', 0))
+            PG['at_start'][int(_p)] = _first
+        _gv = np.array([PG['grav'].get(i_, 1 << 30) for i_ in range(PG['np'])])
+        _rel = [i_ for i_ in range(PG['np']) if not PG['at_start'].get(i_, True) and PG['grav'].get(i_, 1 << 30) > f]
+        if SEWF.get('zero_v') and _rel:
+            _qd = s0.particle_qd.numpy(); _qd[np.isin(PG['vp'], _rel)] = 0.0; s0.particle_qd.assign(_qd)
+        _float = _gv > f
+        # sew_first 'heavy' : while a piece still floats, the pieces already sewn weigh heavy x more (the
+        # gravity's acceleration is the same; a stitch pulling them moves them less), so a light piece sewn on later
+        # comes to the garment rather than lifting it; back to their own mass once nothing floats. Not held still: a
+        # neckline that had gone wrong can still follow the collar
+        if SEWF.get('heavy') and float(SEWF['heavy']) != 1.0:
+            _hv = (~_float) & _float.any()
+            if PG.get('last_heavy') is None or not np.array_equal(_hv, PG['last_heavy']):
+                _pm, _pim = model.particle_mass.numpy(), model.particle_inv_mass.numpy()
+                _k = float(SEWF['heavy'])
+                _on = np.isin(PG['vp'], np.nonzero(_hv)[0]) & (_pim > 0)
+                _back = (PG.get('heavy_mask') if PG.get('heavy_mask') is not None else np.zeros(len(_pm), bool)) & ~_on & (_pim > 0)
+                _new_on = _on & ~(PG.get('heavy_mask') if PG.get('heavy_mask') is not None else np.zeros(len(_pm), bool))
+                _pm[_new_on] *= _k; _pim[_new_on] /= _k
+                _pm[_back] /= _k; _pim[_back] *= _k
+                model.particle_mass.assign(_pm); model.particle_inv_mass.assign(_pim)
+                PG['heavy_mask'] = _on; PG['last_heavy'] = _hv.copy()
+                LIVEP['heavy_mask'] = _on.copy()
+                PG['ag_dirty'] = True
+                log.setdefault('sew_first', {'pieces': {}}).setdefault('heavy', []).append([f, int(_on.sum())])
+        if not np.array_equal(_float, PG['last_float']) or PG.pop('ag_dirty', False):
+            # floating pieces: the whole gravity cancelled (a heavy piece keeps its full weight: heavy x the inertia
+            # alone, its weight unchanged, did not hold a garment down)
+            _ag = np.isin(PG['vp'], np.nonzero(_float)[0]).astype(np.float32)
+            PG['ag'].assign(_ag)
+            PG['last_float'] = _float.copy()
+            _sw = log.setdefault('sew_first', {'pieces': {}})
+            for i_ in range(PG['np']):
+                if i_ in PG['grav'] and pat_names[i_] not in _sw['pieces']:
+                    _sw['pieces'][str(pat_names[i_])] = {'joined': int(PG['ps'].sewn_frame[i_]),
+                                                         'gravity': int(PG['grav'][i_]), 'at_start': bool(PG['at_start'][i_])}
+        if not _float.any():
+            LIVEP['sewing'] = False
+            SEWS['gravity_on_frame'] = int(_gv.max())
+            log.setdefault('sew_first', {'pieces': {}}).update(all_gravity_frame=int(_gv.max()), closed_by=PG['ps'].all_closed_by,
+                                                               sewn_at_start=bool(all(PG['at_start'].values())))
+            _trace('sew_first_done', frame=f)
     if FANCH is not None:
         log['fric_anchor']['slid_mm_per_frame'].append(round(float(FANCH['slid'].numpy()[0]) * 1000.0, 3))
         FANCH['slid'].zero_()
@@ -4656,7 +4987,58 @@ for f in range(_RESUME_FRAME + 1, frames + 1):
         DEEP['rows'].append(int(DEEP['n'].numpy()[0])); DEEP['n'].zero_()
         log['deep_push']['per_frame'] = DEEP['rows']
     if BF2 is not None:
-        if BF2['closed'] is None and (FOLD_RAMP is None or f > FOLD_RAMP[3]):
+        # sew_first: the hysteresis waits for the gravity and then hyst_after frames more. Taken when the seams closed
+        # -- the moment the gravity comes on -- it remembered the shape sewn without gravity (an open jacket's front
+        # standing 150 mm ahead of the body) and the stick-slip then walked the garment up the body (+12.5 mm over
+        # 1100 frames; without the hysteresis it fell -12.5 mm and the front came back to 98 mm, the reference 127)
+        # The wait ends once the garment is quiet (vertex speed p99 under quiet_mm per frame for 10 frames) or
+        # hyst_after frames after the gravity, whichever first; not at all for a garment sewn when the Live started.
+        _bf2_wait = False
+        if PG is not None and PG['ps'].mode == 'together' and not SEWS.get('sewn_at_start'):
+            # pieces placed apart (as before): the hysteresis waits for the gravity and then quiet / hyst_after
+            if LIVEP.get('sewing'):
+                _bf2_wait = True
+            else:
+                _g0 = SEWS.get('gravity_on_frame', _RESUME_FRAME)
+                # counted from a second after the gravity: just after it the cloth has barely started to fall
+                if SEWF.get('quiet_mm') is not None and f > _g0 + 60:
+                    _qs = float(np.percentile(np.linalg.norm(res[f] - res[f - 1], axis=1), 99)) * 1000.0
+                    SEWS['quiet_run'] = SEWS.get('quiet_run', 0) + 1 if _qs < float(SEWF['quiet_mm']) else 0
+                _bf2_wait = f < _g0 + int(SEWF.get('hyst_after', 0)) and SEWS.get('quiet_run', 0) < 10
+        elif PG is not None and PG['ps'].mode != 'together':
+            # per piece: on from the first frame for the garment, with the hinges of a piece not ready yet made free
+            # (theta_y 0: the stuck angle follows the hinge, so only its elastic spring acts). A piece gets its own
+            # theta_y back when sewn at the start, or once it is quiet (vertex speed p99 under quiet_mm for 10
+            # frames, counted from a second after its gravity) or hyst_after frames after its gravity. Taken at the
+            # close it remembered the shape sewn without gravity and walked an open jacket's front up the body.
+            if BF2['closed'] is None:
+                BF2['closed'] = f
+            _rdy = PG['ready']
+            for i_ in range(PG['np']):
+                if _rdy[i_] or i_ not in PG['grav'] or f < PG['grav'][i_]:
+                    continue
+                # a piece sewn when the Live starts: its hysteresis at once when nothing floats (a Live continued on a
+                # result stops there); while a piece still floats it waits like the others -- taken at the start it
+                # held the shape the floating piece's stitches pulled and walked a front up the body (+30 mm over 900
+                # frames, a collar put back on a sewn jacket; waiting: -1 mm)
+                if PG['at_start'][i_] and not PG.get('start_float'):
+                    _rdy[i_] = True
+                    continue
+                if SEWF.get('quiet_mm') is not None and f > PG['grav'][i_] + 60:
+                    _m_ = PG['vp_g'] == i_
+                    _qs = float(np.percentile(np.linalg.norm(res[f][_m_] - res[f - 1][_m_], axis=1), 99)) * 1000.0
+                    PG['quiet'][i_] = PG['quiet'].get(i_, 0) + 1 if _qs < float(SEWF['quiet_mm']) else 0
+                if PG['quiet'].get(i_, 0) >= 10 or f >= PG['grav'][i_] + int(SEWF.get('hyst_after', 0)):
+                    _rdy[i_] = True
+            if not np.array_equal(_rdy, PG['last_ready']):
+                PG['last_ready'] = _rdy.copy()
+                _th = np.where(_rdy[PG['row_piece']], PG['thy_full'], -1.0).astype(np.float32)
+                BF2['thy'].assign(_th.astype(np.float32))
+                if BF2['inside'] and BF2['f_on'] is not None:
+                    _bfh = solver.ac9_bend_fric.numpy(); _bfh[BF2['r_np'], 1] = _th; solver.ac9_bend_fric.assign(_bfh)
+                log.setdefault('sew_first', {'pieces': {}}).setdefault('hysteresis', []).append(
+                    [f, [str(pat_names[i_]) for i_ in np.nonzero(_rdy)[0]]])
+        if BF2['closed'] is None and not _bf2_wait and (FOLD_RAMP is None or f > FOLD_RAMP[3]):
             # the stitches sewing now (a delayed one is off: stiffness 0); none = closed
             _act = np.nonzero(model.spring_stiffness.numpy()[:N_ST] > 0)[0] if N_ST else np.zeros(0, np.int64)
             _qb = s0.particle_q.numpy()

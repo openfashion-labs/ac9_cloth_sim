@@ -7,17 +7,18 @@ Fixing a pattern and dressing the avatar again to check it all happens inside Bl
 
 <!-- screenshot: pattern → sewing → dressed garment, as 3 images or a short animation (GIF) -->
 
-- Import patterns: patterns written by 3D garment software (a CLO BOM, `BOM.xml`), DXF, and 3D meshes with UV seams. You can also draw a pattern from scratch.
+- Import patterns: `BOM.xml`, DXF, SVG, and 3D meshes with UV seams. You can also draw a pattern from scratch.
 - Fix and draw patterns: drag corners and edges, darts, slash-and-spread, notches, symmetric editing and more.
-- Sew and dress: lay the pattern pieces round the body, then sew them together in stages to dress the avatar. In the mode that runs until you stop it, you can grab the cloth by hand and fix it.
+- Sew and dress: place the pattern pieces around the body and start Live Sim. It sews the pieces together and lets the garment settle until you stop it. You can grab and adjust the cloth while it runs.
 - Fabrics: choose a fabric (stiffness, weight) for each piece. Interlining, elastic and buttons are supported too.
 - On to the next step: the dressed garment can be handed to [AC9 Cloth Retopo](https://github.com/openfashion-labs/ac9_cloth_retopo) as its Guide.
 
 Free to use, commercial use included (GPL-3.0-or-later).
 
-## About the alpha
+## Before you start
 
-This is an **alpha (0.1)**. Please use it knowing that:
+The current version is **0.3.0**. See the [changelog](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) and [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) for the development stage and changes in each version.
+Please keep in mind that:
 
 - Features are still missing.
 - The screens and steps will keep changing.
@@ -29,16 +30,21 @@ This is an **alpha (0.1)**. Please use it knowing that:
 | Item | What you need |
 |---|---|
 | Computer | Windows (64-bit). **It does not run on a Mac.** |
-| GPU | **NVIDIA** (GeForce RTX and so on). Keep the driver up to date. |
+| GPU | **NVIDIA GeForce RTX 20, 30, 40 or 50 series**. Keep the driver up to date. |
 | Blender | **5.2** |
 | Free disk space | About 1 GB |
 
 Dressing the garment is computed on an NVIDIA GPU. Without one, the run buttons do not work.
 To check your GPU: open Task Manager and see whether "GPU" under "Performance" says "NVIDIA".
 
+About GPU support:
+- The add-on's GPU programs are checked to build for the RTX 20, 30, 40 and 50 series. It has been run on real hardware with the RTX 50 series.
+- NVIDIA GPUs that are not RTX, such as the GTX 10 and 16 series, are not supported (not tested).
+- With an old driver, a message asks you to update it when a run starts. Update it with the NVIDIA App (or from NVIDIA's website).
+
 ## Installation
 
-1. Keep the release ZIP file (`ac9_cloth_sim-…zip`, about 190 MB) as it is, **without extracting it**.
+1. Keep the release ZIP file (`ac9_cloth_sim-…zip`, about 160 MB) as it is, **without extracting it**.
 2. Start Blender 5.2 and open Edit → Preferences.
 3. Choose "Add-ons" in the list on the left, then "Install from Disk..." from the small "∨" at the top right.
 4. Select the ZIP file and press "Install from Disk" at the bottom right. It is a large file, so wait a little until it finishes.
@@ -48,29 +54,36 @@ To check that it is installed, press **N** in the 3D viewport and look for the "
 
 - After installing a new version, **close Blender and start it again.** If you keep using it without restarting, parts of the previous version can remain and cause errors.
 - To use it in Japanese, choose Japanese under Preferences → Interface → Translation. This add-on's buttons switch to Japanese too (some stay in English).
-- The first time you dress a garment, the GPU is prepared before the run starts, so it takes a while (some tens of seconds; it depends on the computer). Later runs start faster.
+- The first run needs time to prepare the GPU. The wait depends on your computer.
 
 ## Your first garment (outline)
 
 The button names are the ones shown in the English interface. The detailed steps are in the [user guide](#user-guide).
 
-1. **Save the .blend first.** The run's frames are written to a folder next to the saved .blend (without saving, they go to a temporary folder and cannot be played back later).
+1. **Save the .blend first.** Live Sim keeps the shape when you stop it. It does not save intermediate frames for animation playback.
 2. Import the avatar (the body). It is expected to stand straight, facing −Y. If you have none, **Add Avatar** under **Setup** adds the bundled avatar (CC0).
 3. In the sidebar's "AC9 Cloth Sim" tab, press **Work Screen** under **Setup** to switch to a screen laid out for the work.
 4. Import the pattern: **Import BOM**, **Import DXF**, **Import SVG**, or **From Mesh** for a 3D mesh. DXF and SVG files carry no seams, so add them with **Add Seam** after importing.
-5. Under **Placement**, pick the body mesh as **Body** and press **Detect Guides**. Guides for placing the pieces appear round the body's torso, neck, arms and legs.
+5. Under **Placement**, pick the body mesh as **Body** and press **Detect Guides**. Guides for placing the pieces appear around the body's torso, neck, arms and legs.
 6. With the **Place** tool, select pattern pieces, press on a guide, drag to set the position and release.
 7. In the **Tool** tab of the Properties editor at the bottom right (AC9 Run, at the top), press **Live Sim**. The seams pull together and the garment settles on the body. It does not stop by itself: press **Esc** once it has settled.
-8. Where you don't like the result, fix the pattern and press Live Sim again (it goes on from the current shape). While it runs, **Ctrl+drag** the cloth to pull it into place. To dress the avatar again from the start, press **Back to Placed** with nothing selected, then Live Sim.
+8. Where you don't like the result, fix the pattern and press Live Sim again (it goes on from the current shape). While it runs, **Ctrl+drag** the cloth to pull it into place. To restart from the placed shape used before the simulation, press **Back to Placed** with nothing selected, then Live Sim.
 9. The dressed garment is saved in the .blend (**Ctrl+S**).
 
 <!-- screenshot: the whole Work Screen (sidebar, pattern view, Tool tab) -->
+
+### Research features
+
+With **Experimental Features** enabled in the add-on preferences, **Accurate (Research)** is available in **AC9 Run** for Live Sim. It is off by default and hidden in the normal interface. Stop the simulation before switching it; turning it off restores the previous solver setting. The choice is saved in the .blend.
+
+This solver is for research on drape with a static body. It does not guarantee better results or faster calculation. Phase Sim and Local Sim keep their existing solvers. Folded double layers still have unresolved behavior; see the user guide for limitations.
 
 ### Common stumbling points
 
 - **The run buttons are not in the sidebar but in the Tool tab of the Properties editor at the bottom right.** If the Properties editor shows another tab (Render and so on), you won't find them.
 - **Patterns cannot be fixed with Blender's usual editing (Edit Mode, G/R/S).** Use the **Whole Pieces** tool to move whole pieces and the **Edit Pieces** tool to fix corners and edges.
-- **A piece's role** (front, placket, collar stand, sleeve, cuff ...) decides the order it is sewn in, how it is placed (bands as a ring, sleeve panels side by side round the arm) and its start shape. After checking the seams and before placing, press **Propose Roles** in the **Piece Roles** panel and look again at the pieces marked for checking. See [Piece Roles and What Gets Decided Automatically](https://openfashion-labs.github.io/ac9_cloth_sim/features/roles/) in the user guide.
+- **A piece's role** (front, placket, collar stand, sleeve, cuff ...) decides the order it is sewn in, how it is placed (bands as a ring, sleeve panels side by side around the arm) and its start shape. After checking the seams and before placing, press **Propose Roles** in the **Piece Roles** panel and look again at the pieces marked for checking. See [Piece Roles and What Gets Decided Automatically](https://openfashion-labs.github.io/ac9_cloth_sim/features/roles/) in the user guide.
+- To adjust a placed piece by hand, select it in the 3D view with **Whole Pieces** and use the move or rotate gizmo.
 - **Hover over a button that cannot be pressed (gray) to see why.**
 - On a **laptop** without a middle button or numpad, turning on "Emulate 3 Button Mouse" and "Emulate Numpad" under Preferences → Input makes moving the view easier.
 - **Keyboard shortcuts don't work while a Japanese (or other) input method (IME) is on.**
@@ -83,7 +96,7 @@ The button names are the ones shown in the English interface. The detailed steps
 | "○ piece(s) not placed yet" appears in red | Some pieces are not placed. Place them with **Place**, or turn off the pieces you don't use. |
 | "Set the Newton Python in the add-on preferences" appears | Did you install from the release ZIP? A development setup needs that preference field filled in. |
 | The screen differs from the guide, or "cannot import name …" appears | Did you restart Blender after installing a new version? |
-| The result differs a little every time | In the alpha the result varies even with the same settings. Run it a few times and compare. |
+| The result differs a little every time | Results can vary even with the same settings. Run it a few times and compare. |
 
 For other symptoms, see [Troubleshooting](https://openfashion-labs.github.io/ac9_cloth_sim/troubleshooting/) in the user guide.
 
