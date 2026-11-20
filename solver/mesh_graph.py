@@ -3,9 +3,25 @@
 import numpy as np
 
 
+def _unique_pairs(rows, columns, return_counts=False):
+    pairs = np.column_stack([rows, columns])
+    # Nonnegative mesh indices can be sorted as one integer without changing
+    # the lexicographic pair order. Fall back before any overflow or narrowing.
+    if (np.issubdtype(pairs.dtype, np.integer) and len(pairs)
+            and int(pairs.min()) >= 0):
+        width = int(pairs[:, 1].max()) + 1
+        limit = np.iinfo(np.intp).max
+        if width <= limit and int(pairs[:, 0].max()) <= (limit - width + 1) // width:
+            code = pairs[:, 0].astype(np.intp) * width + pairs[:, 1].astype(np.intp)
+            keys, counts = np.unique(code, return_counts=True)
+            result = np.column_stack([keys // width, keys % width]).astype(pairs.dtype, copy=False)
+            return (result, counts) if return_counts else result
+    return np.unique(pairs, axis=0, return_counts=return_counts)
+
+
 class RowMean:
     def __init__(self, rows, columns, nrows):
-        pairs, multiplicity=np.unique(np.column_stack([rows,columns]),axis=0,return_counts=True)
+        pairs, multiplicity=_unique_pairs(rows,columns,return_counts=True)
         self.rows=pairs[:,0];self.columns=pairs[:,1];self.nrows=nrows
         degree=np.bincount(self.rows,weights=multiplicity,minlength=nrows)
         self.weights=multiplicity/np.maximum(degree[self.rows],1.)
@@ -53,8 +69,8 @@ class RowMean:
 
 def mesh_averages(faces,nvertices):
     faces=np.asarray(faces,np.intp)
-    edges=np.unique(np.sort(np.concatenate([faces[:,[0,1]],faces[:,[1,2]],faces[:,[2,0]]]),axis=1),axis=0)
-    directed=np.unique(np.concatenate([edges,edges[:,::-1]]),axis=0)
+    edges=np.concatenate([faces[:,[0,1]],faces[:,[1,2]],faces[:,[2,0]]])
+    directed=_unique_pairs(np.r_[edges[:,0],edges[:,1]],np.r_[edges[:,1],edges[:,0]])
     adjacency=RowMean(directed[:,0],directed[:,1],nvertices)
     face_mean=RowMean(faces.ravel(),np.repeat(np.arange(len(faces)),3),nvertices)
     return adjacency,face_mean

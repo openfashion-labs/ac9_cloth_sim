@@ -145,12 +145,15 @@ def _pieces(bom):
     return [p['uname'] if cnt[p['uname']] == 1 else f"{p['uname']}@{p['idx']}" for p in P]
 
 
-def convert(bom_path, name=None):
+def convert(bom_path, name=None, drape=None):
     """BOM -> spec with every piece (all enabled), split into garments (garments_from_bom), and no seams yet.
+    drape: the 3D drape's answer to keep (core/bom_drape.py; it decides the garments and the seams' partners).
     Returns (spec, report lines)."""
     bom = B.load_bom(bom_path)
     spec = S.new_spec(name or os.path.splitext(os.path.basename(bom_path))[0],
                       {'kind': 'bom', 'path': bom_path})
+    if drape:
+        spec['source']['drape'] = drape
     for p, lab in zip(bom['pieces'], _pieces(bom)):
         edges, _, _ = _piece_outline(p)
         internals, _ = _internals(p)
@@ -171,7 +174,7 @@ def convert(bom_path, name=None):
 SHAKY = 2.0       # a seam joined to the nearest garment in the layout when the next one is less than this much farther
 
 
-def garments_from_bom(bom):
+def garments_from_bom(bom, drape=None):
     """[(piece indices, shaky piece indices)] the BOM's pieces split into garments, largest first: 1) pieces sewn by a
     seam whose both sides name one piece each are one garment; 2) a seam with one side on one piece and the other on
     several: the family (copies of one piece) nearest to that piece in the 2D layout joins its garment (shaky when the
@@ -192,11 +195,16 @@ def garments_from_bom(bom):
     for oa, ob in own:
         if len(oa) == 1 and len(ob) == 1:
             par[find(oa[0])] = find(ob[0])
+    if drape:                                  # pieces that meet on the 3D drape are one garment (core/bom_drape.py)
+        for ps in drape.get('pairs', {}).values():
+            for a, b in ps:
+                par[find(a)] = find(b)
     shaky = set()
+    on3d = set(drape.get('on', [])) if drape else set()     # pieces the drape holds: grouped by it alone
     for _ in range(5):                       # a join can bring a later seam's partner into the garment
         changed = False
         for oa, ob in own:
-            if (len(oa) == 1) == (len(ob) == 1) or not oa or not ob:
+            if (len(oa) == 1) == (len(ob) == 1) or not oa or not ob or on3d & set(oa + ob):
                 continue
             u, cands = (oa[0], ob) if len(oa) == 1 else (ob[0], oa)
             if any(find(c) == find(u) for c in cands):
@@ -230,7 +238,7 @@ def assign_garments(spec, bom=None):
     spec['garments'] = []
     k = 0
     loose = 0
-    for idx, shaky in garments_from_bom(bom):
+    for idx, shaky in garments_from_bom(bom, (spec.get('source') or {}).get('drape')):
         pcs = [by_idx[i] for i in sorted(idx) if i in by_idx]
         if not pcs:
             continue
@@ -320,13 +328,75 @@ def garment_pieces(spec, only=None):
     return out.get(only, [])
 
 
+def apply_drape(spec, drape):
+    """Return a copy of a BOM spec that uses the 3D drape's answer (core/bom_drape.py): the pieces the drape holds
+    are grouped into garments by where they are sewn in 3D (a hand-made group that held them gives way: the drape
+    knows better), and every BOM seam is made again. Everything else stays (the dressed shape, placement, pieces'
+    settings, a person's seams, a remade seam's settings). Unlike Update BOM Seams the pattern may have been edited
+    since the import: a BOM line no longer on its piece leaves its seam out (counted). Raises ValueError when a seam
+    with references would go."""
+    result = copy.deepcopy(spec)
+    result['source']['drape'] = drape
+    on = set(drape.get('on', []))
+    by_idx = {pc['bom']['idx']: pc for pc in result['pieces'] if 'bom' in pc}
+    old_members = garment_pieces(spec)
+    old_info = {g['id']: g for g in spec.get('garments', [])}
+    used = set(old_info)
+    groups = []
+    for idx, _ in garments_from_bom(B.load_bom(spec['source']['path']), drape):
+        idx = {i for i in idx if i in by_idx}
+        if not idx or not idx & on:
+            continue
+        names = {by_idx[i]['name'] for i in idx}
+        same = next((k for k, ns in old_members.items() if set(ns) == names), None)
+        if same is not None:
+            g = dict(old_info[same], check='', source='bom')
+        else:
+            k = 1
+            while f'G{k}' in used:
+                k += 1
+            g = {'id': f'G{k}', 'name': next(iter(names)) if len(names) == 1 else f'Garment {k}', 'source': 'bom',
+                 'check': ''}
+        used.add(g['id'])
+        groups.append(g)
+        for i in idx:
+            by_idx[i]['garment'] = g['id']
+    regrouped = {g['id'] for g in groups}
+    keep = [dict(g) for g in spec.get('garments', []) if g['id'] not in regrouped
+            and any(pc.get('garment') == g['id'] for pc in result['pieces'])]
+    result['garments'] = keep + groups
+    # a group a person made whose pieces the drape regrouped is said so, not replaced without a word
+    replaced = [g for g in spec.get('garments', []) if g.get('source') == 'user'
+                and set(old_members.get(g['id'], [])) != {pc['name'] for pc in result['pieces']
+                                                          if pc.get('garment') == g['id']}]
+    old_ids = {sm['id'] for sm in spec['seams']}
+    report = [tx("Hand-made garment {0} ({1}) regrouped by the 3D drape", g['id'], g.get('name', ''))
+              for g in replaced]
+    report += rebuild_seams(result)
+    gone = old_ids - {sm['id'] for sm in result['seams']}
+
+    def refs(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ('seam', 'seam_id') and isinstance(item, str) and item in gone:
+                    yield item
+                yield from refs(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from refs(item)
+    held = sorted(set(refs({k: v for k, v in spec.items() if k != 'seams'})))
+    if held:
+        raise ValueError(tx('BOM update would remove seams with settings or references: {0}', ', '.join(held[:8])))
+    return result, report
+
+
 def refresh_seams(spec, fresh=None):
     """Return an updated copy, never changing the input. Only compatible BOM patterns may keep a drape.
 
     Manual groups and seam references take precedence over new automatic ownership. This is deliberately
     separate from rebuild_seams: callers that explicitly regroup pieces keep that function's contract.
     """
-    fresh = fresh if fresh is not None else convert(spec['source']['path'])[0]
+    fresh = fresh if fresh is not None else convert(spec['source']['path'], drape=spec['source'].get('drape'))[0]
     if spec.get('units') != fresh.get('units'):
         raise ValueError(tx('BOM units changed; use Import BOM instead'))
     before = {p['name']: p for p in spec['pieces']}
@@ -422,7 +492,12 @@ def refresh_seams(spec, fresh=None):
             for item in value:
                 yield from refs(item)
     protected = set(refs({k: v for k, v in spec.items() if k != 'seams'}))
-    protected |= {sid for sid in gone if not old_by[sid].get('enabled', True) or set(old_by[sid]) - ordinary}
+    # a seam the import switched off itself (its lengths differ, flagged so) is not a person's setting: a better answer
+    # (the 3D drape) may drop it
+    def set_by_person(sm):
+        auto_off = sm.get('check', '').startswith('lengths differ')
+        return (not sm.get('enabled', True) and not auto_off) or set(sm) - ordinary
+    protected |= {sid for sid in gone if set_by_person(old_by[sid])}
     if protected:
         raise ValueError(tx('BOM update would remove seams with settings or references: {0}', ', '.join(sorted(protected)[:8])))
     issues = S.check(result)
@@ -467,9 +542,19 @@ def seams_from_bom(spec, bom_path=None, names=None):
         _, rmaps = _internals(P[i])
         outl[i] = (edges, flip, fwd, rmaps)
     outlines = {pc['name']: S.Outline(pc) for pc in spec['pieces'] if 'bom' in pc and pc['bom']['idx'] in on}
+    inner = {pc['name']: {it['id'] for it in pc.get('internals', [])} for pc in spec['pieces'] if pc['name'] in outlines}
+
+    def here(x):
+        """The side's lines are still on the piece: an edit can renumber a piece's lines away from its BOM's (the
+        seam is left out and counted, not a KeyError for the whole garment)."""
+        if 'line' in x:
+            return x['line'] in inner[x['piece']]
+        E = outlines[x['piece']].edges
+        return x['from'][0] in E and x['to'][0] in E
     mirrored = {i: np.linalg.det(P[i]['R']) < 0 for i in on}
     family = {i: _copy_family(P[i]) for i in on}
     n_copies = collections.Counter(family.values())
+    drape = ((spec.get('source') or {}).get('drape') or {}).get('pairs')
     stats = collections.Counter()
     seams = []
     for sm in bom['seams']:
@@ -481,15 +566,42 @@ def seams_from_bom(spec, bom_path=None, names=None):
             xa = _side(label[pa], sa, outl[pa])
             if xa is None:
                 continue
+            if not here(xa):
+                stats['left out: BOM line no longer on the piece (edited)'] += 1
+                continue
             for pb in Bo:
                 xb = _side(label[pb], sb, outl[pb])
                 if xb is None or (pa == pb and xa == xb):
+                    continue
+                if not here(xb):
+                    stats['left out: BOM line no longer on the piece (edited)'] += 1
                     continue
                 la, lb = S.side_length(spec, xa, outlines), S.side_length(spec, xb, outlines)
                 r = la / max(lb, 1e-9)
                 cand.append((pa, pb, xa, xb, r))
         if not cand:
             continue
+        # the 3D drape's answer (core/bom_drape.py), when the BOM was read with it: the pieces that meet there, the
+        # lengths and the rules below not asked. A seam it places on pieces of another garment is not this one's.
+        on3d = drape.get(str(sm['gid'])) if drape is not None else None
+        if on3d:
+            want = {tuple(p) for p in on3d}             # [piece of side a, piece of side b]: copies carry both
+            picked = [c for c in cand if (c[0], c[1]) in want]
+            if not picked:
+                continue
+            stats['BOM seams used'] += 1
+            stats['partners from the 3D drape'] += len(picked)
+            for j, c in enumerate(picked):
+                seams.append({'id': f"S{sm['gid']}" + (f".{j}" if len(picked) > 1 else ''),
+                              'a': c[2], 'b': c[3], 'source': 'bom', 'enabled': True, 'check': '',
+                              'bom': {'gid': sm['gid'], 'pieces': [int(c[0]), int(c[1])], 'group': sm.get('group')}})
+            continue
+        missed = on3d is not None                  # read with a drape that did not show this seam
+        if drape is not None:                      # two pieces both on the drape that do not meet there are not sewn
+            held = set(spec['source']['drape'].get('on', []))
+            cand = [c for c in cand if not (c[0] in held and c[1] in held)]
+            if not cand:
+                continue
         # the lengths: a pair within LEN_RATIO is preferred over one past it (the copies of a piece, Line GIDs reused
         # across outfits), but a seam whose every pair is past it is kept, switched off and marked (user 2026-11-02,
         # DECISIONS cloth-sim-no-auto-judgment-default-rules-2026-11-02: a gather, a tuck's mouth or a sleeve cap
@@ -535,9 +647,12 @@ def seams_from_bom(spec, bom_path=None, names=None):
                 continue
             stats['flagged: line shared with other pieces'] += int(shared)
             stats['off: lengths differ past 1:1.43 (check it)'] += int(far)
+            if missed:
+                stats['not found on the 3D drape (check it)'] += 1
             seams.append({'id': f"S{sm['gid']}" + (f".{j}" if len(picked) > 1 else ''),
                           'a': c[2], 'b': c[3], 'source': 'bom', 'enabled': not far,
                           'check': (f'lengths differ x{max(c[4], 1 / c[4]):.2f}: switched off, check it' if far else
+                                    'not found on the 3D drape: check it' if missed else
                                     'shared line: other pieces use the same line number' if shared else ''),
                           'bom': {'gid': sm['gid'], 'pieces': [int(c[0]), int(c[1])],
                                   'group': sm.get('group')}})   # one BOM group = one M:N seam (core/seam_edit.py)

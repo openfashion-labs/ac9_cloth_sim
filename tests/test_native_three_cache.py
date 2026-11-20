@@ -48,7 +48,7 @@ class PlanCacheTests(unittest.TestCase):
         self.assertEqual(actual.dtype, np.int32)
 
     def test_same_size_connectivity_and_support_changes_miss(self):
-        for field in ['tri_indices', 'edge_indices', 'spring_indices']:
+        for field in ['tri_indices', 'spring_indices']:
             model = copy.deepcopy(self.model)
             a = getattr(model, field).values
             a.flat[0] = (int(a.flat[0]) + 1) % 4
@@ -69,8 +69,17 @@ class PlanCacheTests(unittest.TestCase):
         with patch.object(C, 'algorithm_id', lambda: 'changed-test-algorithm'):
             self.assertNotEqual(C.input_key(self.model, self.bound), self.key)
 
+    def test_bending_hinges_are_not_keyed(self):
+        # seam hinges come and go with the start shape: the same plan is offered, and certified against the hinges
+        # by the plan constructor (test_native_three_cache_plan)
+        model = copy.deepcopy(self.model)
+        model.edge_indices.values = model.edge_indices.values[:1].copy(); model.edge_count = 1
+        self.assertEqual(C.input_key(model, self.bound), self.key)
+        model.edge_indices.values[0, 0] = (int(model.edge_indices.values[0, 0]) + 1) % 4
+        self.assertEqual(C.input_key(model, self.bound), self.key)
+
     def test_full_triangle_and_edge_ranges_match_consumers(self):
-        for name, count_name in [('tri_indices', 'tri_count'), ('edge_indices', 'edge_count')]:
+        for name, count_name in [('tri_indices', 'tri_count')]:
             first = copy.deepcopy(self.model); setattr(first, count_name, 1)
             second = copy.deepcopy(first)
             values = getattr(second, name).values

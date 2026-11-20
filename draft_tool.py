@@ -19,8 +19,9 @@ Shift+click picks more corners, edges and internal lines; a drag on one of them 
 """
 from . import prepare_build as PB
 import copy
+import json
 import math
-from .i18n import CTX, F9, rpt, tx
+from .i18n import CTX, rpt, tx
 
 import blf
 import bpy
@@ -64,6 +65,9 @@ _imore = []                   # [(piece, line id)]
 # corners picked (user 2026-10-25): a click picks one, Shift+click adds or takes it out; kept by the id of the edge
 # that starts at the corner, so a split elsewhere (K) keeps it
 _csel = []                    # [(piece, edge id)]
+# points of internal lines picked (user 2026-11-17: as corners, one by one): (piece, line id, vertex index among the
+# line's vertices, IL.shape). In picked_lines they are ('ipoint', piece, "<line id>|<vertex>")
+_psel = []                    # [(piece, line id, vertex)]
 ISEL = (1.0, 0.55, 0.1, 1.0)
 # the outline edges picked on the pattern (user 2026-10-22, DECISIONS cloth-sim-edge-select-2026-10-22): a click on
 # an edge picks it, Shift+click adds or takes it out (across pieces); the Tool tab shows their lengths and total
@@ -94,9 +98,9 @@ def select_internal(context, piece=None, line=None, extend=False):
     _isel.update(piece=piece, line=line)
     from . import tool_tab
     if piece:
-        tool_tab.set_focus('INTERNAL')
+        tool_tab.publish(context, 'INTERNAL')
     else:
-        tool_tab._tag_properties()
+        tool_tab.release(context, 'INTERNAL')
     for win in context.window_manager.windows:
         for area in win.screen.areas:
             if area.type == 'VIEW_3D':
@@ -121,9 +125,9 @@ def select_edge(context, piece=None, eid=None, extend=False):
         _esel[:] = [k]
     from . import tool_tab
     if _esel:
-        tool_tab.set_focus('EDGES')
+        tool_tab.publish(context, 'EDGES')
     else:
-        tool_tab._tag_properties()
+        tool_tab.release(context, 'EDGES')
     for win in context.window_manager.windows:
         for area in win.screen.areas:
             if area.type == 'VIEW_3D':
@@ -157,15 +161,116 @@ def select_corner(context, piece=None, eid=None, extend=False):
             _csel.append(k)
     else:
         _csel[:] = [k]
+    _focus_outline(context)
     for win in context.window_manager.windows:
         for area in win.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
 
 
+def ipoint_key(lid, k):
+    return f"{lid}|{int(k)}"
+
+
+def ipoint_of(key):
+    """(line id, vertex) of an ipoint key."""
+    lid, k = str(key).rsplit('|', 1)
+    return lid, int(k)
+
+
+def select_ipoint(context, piece=None, lid=None, k=None, extend=False):
+    """Pick vertex k of internal line lid (None: drop the points picked); extend: add it, or take it out."""
+    x = (piece, lid, None if k is None else int(k))
+    if piece is None:
+        _psel.clear()
+    elif extend:
+        if x in _psel:
+            _psel.remove(x)
+        else:
+            _psel.append(x)
+    else:
+        _psel[:] = [x]
+    _focus_outline(context)
+    for win in context.window_manager.windows:
+        for area in win.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+
+def ipoint_index(spec, h):
+    """The vertex index (IL.shape) of an internal line's end or vertex hit h ('iend' / 'inode')."""
+    if h[0] == 'inode':
+        return int(h[3])
+    n = len(IL.shape(D.internal(D.piece(spec, h[1]), h[2]))[0])
+    return 0 if h[3] == 'start' else n - 1
+
+
+def ialign_points(spec, g):
+    """The points a dragged internal line's end or vertex g ('iend' / 'inode') lines up with across and up and down:
+    the piece's corners, the other lines' points, and its own line's points that stay (not its mirror vertex, which
+    moves with it; for an end, which drags its line along, only the other end)."""
+    pc = D.piece(spec, g[1])
+    out = [D.corners(pc)]
+    for it in pc.get('internals', []):
+        if it.get('kind') == 'baseline' or len(it['pts']) < 2:
+            continue
+        N, _, closed, _ = IL.shape(it)
+        if it['id'] != g[2]:
+            out.append(N)
+            continue
+        if g[0] == 'iend':
+            out.append(N[[-1 if g[3] == 'start' else 0]])
+            continue
+        k = int(g[3])
+        R = None
+        ms, _ = D.self_mirror_line(pc, g[2])
+        if ms == g[2]:
+            R = D.self_reflect(pc)
+        j = IL._partner(N, k, R)
+        out.append(N[[i for i in range(len(N)) if i not in (k, j)]])
+    P = np.vstack([np.asarray(x, float).reshape(-1, 2) for x in out]) if out else np.zeros((0, 2))
+    return P
+
+
+def ipoint_pos(spec, nm, key):
+    lid, k = ipoint_of(key)
+    return IL.shape(D.internal(D.piece(spec, nm), lid))[0][k]
+
+
+def _focus_outline(context):
+    """Picked corners and internal lines' points give the Tool tab to AC9 Edges (their Numeric Input, user
+    2026-11-17)."""
+    from . import tool_tab
+    if _csel or _psel:
+        tool_tab.publish(context, 'EDGES')
+    else:
+        tool_tab.release(context, 'EDGES')
+
+
 def corner_eid(spec, piece, k):
     """The id of the edge starting at corner k of piece."""
     return D.piece(spec, piece)['edges'][k]['id']
+
+
+def shown_handles(spec):
+    """{(piece, edge id, which)}: the curve handles drawn and grabbed, those either side of a picked corner and at both
+    ends of a picked edge (user 2026-11-13: as Blender shows only the selected points' handles; drawn for the piece
+    under the cursor, a handle sticking out of it went away as the mouse went to it)."""
+    out = set()
+    if spec is None:
+        return out
+    for kind, nm, eid in picked_lines(spec):
+        if kind not in ('corner', 'edge'):
+            continue
+        pc = D.piece(spec, nm)
+        es, i = pc['edges'], D.edge_index(pc, eid)
+        for k in ((i,) if kind == 'corner' else (i, i + 1)):
+            a, b = es[(k - 1) % len(es)], es[k % len(es)]
+            if a.get('ctrl'):
+                out.add((nm, a['id'], 1))
+            if b.get('ctrl'):
+                out.add((nm, b['id'], 0))
+    return out
 
 
 def picked_lines(spec):
@@ -180,6 +285,9 @@ def picked_lines(spec):
         pc = next((x for x in spec['pieces'] if x['name'] == nm), None) if nm and spec else None
         if pc is not None and any(it['id'] == lid for it in pc.get('internals', [])):
             out.append(('iline', nm, lid))
+    for nm, lid, k in _psel:
+        if spec is not None and _exists(spec, ('ipoint', nm, ipoint_key(lid, k))):
+            out.append(('ipoint', nm, ipoint_key(lid, k)))
     return out
 
 
@@ -227,6 +335,10 @@ def edit_item(spec, h):
         return ('corner', h[1], corner_eid(spec, h[1], h[2]))
     if h[0] == 'edge':
         return ('edge', h[1], h[2])
+    if h[0] in ('iend', 'inode'):                 # a line's point: that point (user 2026-11-17), if it has points
+        x = ('ipoint', h[1], ipoint_key(h[2], ipoint_index(spec, h)))
+        if _exists(spec, x):
+            return x
     if h[0] in ('iline', 'iend', 'inode', 'ihandle'):
         return ('iline', h[1], h[2])
     return None
@@ -261,34 +373,49 @@ def box_points(context, rect, mode='SET'):
         return 0
     inside = _in_rect(context, M, rect)
     objs = PV.piece_objects()
-    cs, ls = [], []
+    cs, ls, ps = [], [], []
     for pc in spec['pieces']:
         ob = objs.get(pc['name'])
         if ob is None or not VV.object_allowed(context, ob) or not pc.get('enabled', True):
             continue
         cs += [(pc['name'], pc['edges'][k]['id']) for k in np.nonzero(inside(D.corners(pc)))[0]]
-        ls += [(pc['name'], it['id']) for it in pc.get('internals', [])
-               if it.get('kind') != 'baseline' and len(it['pts']) >= 2 and inside(it['pts']).all()]
+        for it in pc.get('internals', []):
+            if it.get('kind') == 'baseline' or len(it['pts']) < 2:
+                continue
+            if inside(it['pts']).all():               # the whole line inside: the line, as before
+                ls.append((pc['name'], it['id']))
+            elif IL.editable(it):                     # else its points inside (user 2026-11-17)
+                ps += [(pc['name'], it['id'], int(k)) for k in np.nonzero(inside(IL.shape(it)[0]))[0]]
     if mode == 'SET':
         select_corner(context)
         select_edge(context)
         select_internal(context)
+        _psel.clear()
     for k in cs:
         if mode == 'SUB' and k in _csel:
             _csel.remove(k)
         elif mode != 'SUB' and k not in _csel:
             _csel.append(k)
+    for x in ps:
+        if mode == 'SUB' and x in _psel:
+            _psel.remove(x)
+        elif mode != 'SUB' and x not in _psel:
+            _psel.append(x)
     _pick_lines(context, ls, mode)
+    if cs or ps:
+        _focus_outline(context)
     for win in context.window_manager.windows:
         for area in win.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
-    return len(cs) + len(ls)
+    return len(cs) + len(ls) + len(ps)
 
 
-def box_transform(context, rect, mode='SET'):
+def box_transform(context, rect, mode='SET', extra=(), lines=True):
     """Whole Pieces' box (user 2026-10-28): the pieces with an outline point inside the region rectangle rect,
-    and the internal lines all inside it on the other pieces, picked; mode 'SET', 'ADD', 'SUB'. Returns the pieces."""
+    and the internal lines all inside it on the other pieces, picked; mode 'SET', 'ADD', 'SUB'. extra: more pieces
+    boxed in the 3D view (box_pieces.world_names: placed pieces, the dressed garment's pieces). lines: False leaves
+    the internal lines as they are. Returns the pieces."""
     from . import view_visibility as VV
     spec, _ = store.get(context)
     M = PV.layout_matrix(context)
@@ -306,15 +433,12 @@ def box_transform(context, rect, mode='SET'):
             continue
         ls += [(pc['name'], it['id']) for it in pc.get('internals', [])
                if it.get('kind') != 'baseline' and len(it['pts']) >= 2 and inside(it['pts']).all()]
-    if mode == 'SET':
-        SEL.deselect_all(context)
+    hit += [n for n in extra if n not in hit]
+    if lines and mode == 'SET':
         select_internal(context)
-    for nm in hit:
-        objs[nm].select_set(mode != 'SUB')
-    act = context.view_layer.objects.active
-    if hit and mode != 'SUB' and (act is None or not act.select_get()):
-        context.view_layer.objects.active = objs[hit[0]]
-    _pick_lines(context, ls, mode)
+    SEL.apply(context, hit, mode, active='KEEP', view='world' if extra else 'pattern', interaction=True)
+    if lines:
+        _pick_lines(context, ls, mode)
     return hit
 
 
@@ -350,7 +474,44 @@ def move_lines(sp, items, d):
             done.add(tw)
         done.add(nm)
         changed += D.move_corners(sp, nm, {k: tuple(d) for k in cs})
+    changed += move_ipoints(sp, [x for x in items if x[0] == 'ipoint'], moved, lambda p: d)
     return list(dict.fromkeys(changed))
+
+
+def move_ipoints(sp, items, skip, move):
+    """Move internal lines' points `items` ('ipoint' picked_lines items) of spec sp (in place): move(p) the shift of
+    the point at p (mm). A line in skip (moved whole already, or its mirror line) is left; a point and its twin line's
+    mirror point both picked move once (the twin follows its line). One picked end of an open line alone moves as a
+    drag of that end does (the line follows it, D.move_internal); else the points move one by one (IL.move_nodes).
+    Returns the pieces changed."""
+    per = {}
+    for _, nm, key in items:
+        lid, k = ipoint_of(key)
+        if (nm, lid) not in skip:
+            per.setdefault((nm, lid), set()).add(k)
+    changed, done = [], set()
+    for (nm, lid), ks in per.items():
+        if (nm, lid) in done:
+            continue
+        it = D.internal(D.piece(sp, nm), lid)
+        N0 = IL.shape(it)[0]
+        for tnm, tlid, M in D.mirror_lines(sp, nm, lid):      # its twin's / mirror line's picked points: these
+            done.add((tnm, tlid))
+            if (tnm, tlid) in per:
+                Q = IL.shape(D.internal(D.piece(sp, tnm), tlid))[0]
+                MN = np.asarray(M(N0), float)
+                for j in per[(tnm, tlid)]:
+                    dd = np.linalg.norm(MN - Q[j], axis=1)
+                    if dd.min() < IL.NEAR:
+                        ks.add(int(dd.argmin()))
+        done.add((nm, lid))
+        n = len(N0)
+        if len(ks) == 1 and not it.get('closed') and next(iter(ks)) in (0, n - 1):
+            k = next(iter(ks))
+            changed += D.move_internal(sp, nm, lid, 'start' if k == 0 else 'end', tuple(move(N0[k])))
+        else:
+            changed += IL.move_nodes(sp, nm, lid, {k: tuple(move(N0[k])) for k in ks})
+    return changed
 
 
 def edge_length(spec, piece, eid):
@@ -417,6 +578,8 @@ def _draw_csel(context):
     M = PV.layout_matrix(context)
     pts = [tuple(to_world(M, [D.piece(spec, nm)['edges'][D.edge_index(D.piece(spec, nm), eid)]['pts'][0]])[0])
            for kind, nm, eid in picked_lines(spec) if kind == 'corner' and nm in visible]
+    pts += [tuple(to_world(M, [ipoint_pos(spec, nm, x)])[0])          # internal lines' points, the same mark
+            for kind, nm, x in picked_lines(spec) if kind == 'ipoint' and nm in visible]
     _dots(pts, ((13.0, DARK), (9.0, ISEL)))
 
 
@@ -430,6 +593,40 @@ def _draw_all_corners(context):
     visible = VV.pattern_names(context, spec)
     pts = [tuple(w) for pc in spec['pieces'] if pc['name'] in visible for w in to_world(M, D.corners(pc))]
     _dots(pts, ((7.0, DARK), (4.0, (1.0, 1.0, 1.0, 0.85))))
+
+
+def _draw_shown_handles(context):
+    """The curve handles of the picked corners and edges (shown_handles), whichever piece is under the cursor; while
+    a drag runs, where they go."""
+    dr = _state['drag']
+    spec = (dr['preview'] or dr['spec']) if dr is not None else store.get(context)[0]
+    shown = shown_handles(spec)
+    if not shown:
+        return
+    M = PV.layout_matrix(context)
+    visible = VV.pattern_names(context, spec)
+    segs, tips = [], []
+    for nm, eid, w in shown:
+        if nm not in visible:
+            continue
+        pc = D.piece(spec, nm)
+        e = pc['edges'][D.edge_index(pc, eid)]
+        a, b = to_world(M, [e['pts'][-1 if w else 0], e['ctrl'][w]])
+        segs += [tuple(a), tuple(b)]
+        tips.append(tuple(b))
+    if not segs:
+        return
+    region = context.region
+    gpu.state.blend_set('ALPHA')
+    gpu.state.depth_test_set('NONE')
+    sh = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+    sh.bind()
+    sh.uniform_float('viewportSize', (region.width, region.height))
+    sh.uniform_float('lineWidth', 1.5)
+    sh.uniform_float('color', (0.6, 0.85, 1.0, 0.9))
+    batch_for_shader(sh, 'LINES', {'pos': segs}).draw(sh)
+    _dots(tips, ((8.0, DARK), (5.0, (0.6, 0.85, 1.0, 1.0))))
+    gpu.state.blend_set('NONE')
 
 
 def _draw_all_internals(context):
@@ -580,6 +777,15 @@ def hover_piece(context, event):
 
 # ---------------------------------------------------------------- mouse <-> layout mm
 
+def _mark_flat(context, piece, p_mm):
+    """The point clicked on the flat pattern shown on the cloth too (garment_mark.mark_flat); never in the way."""
+    try:
+        from . import garment_mark as GM
+        GM.mark_flat(context, piece, p_mm)
+    except Exception as exc:                     # a dot not drawn is no reason to fail the click
+        print("AC9 Cloth Sim: no dot on the cloth:", exc)
+
+
 def mouse_mm(context, M, mx, my):
     region, rv3d = context.region, context.region_data
     if rv3d is None:
@@ -659,6 +865,7 @@ def pick_any(context, spec, outlines, M, mx, my):
     names = frozenset(n for n in names if VV.object_allowed(context, objects.get(n)))
     if not names:
         return None
+    shown = shown_handles(spec)          # only the handles drawn can be grabbed
     # Filter a read-only view of the piece list; shared selection and the source
     # spec stay intact. Width estimation must use the same visible candidates.
     spec = dict(spec, pieces=[pc for pc in spec['pieces'] if pc['name'] in names])
@@ -684,7 +891,8 @@ def pick_any(context, spec, outlines, M, mx, my):
                     notches.append((float(np.linalg.norm(p - q)), ('notch', pc['name'], n['id'])))
         for e in pc['edges']:
             for w, h in enumerate(e.get('ctrl') or []):
-                handles.append((float(np.linalg.norm(np.asarray(h) - q)), ('handle', pc['name'], e['id'], w)))
+                if (pc['name'], e['id'], w) in shown:
+                    handles.append((float(np.linalg.norm(np.asarray(h) - q)), ('handle', pc['name'], e['id'], w)))
         d = np.linalg.norm(D.corners(pc) - q, axis=1)
         k = int(d.argmin())
         cors.append((float(d[k]), ('corner', pc['name'], k)))
@@ -853,9 +1061,9 @@ def gap_probe(spec, g, frame=None):
             n = len(pc['edges'])
             A, B = SN.piece_segments(pc, skip_edges=((g[2] - 1) % n, g[2]))
             return SN.point_probe(D.corners(pc)[g[2]]), A, B
-        if g[0] in ('iend', 'iline'):
+        if g[0] in ('iend', 'inode', 'iline'):
             A, B = SN.piece_segments(pc, skip_lines=(g[2],))
-            if g[0] == 'iend':
+            if g[0] in ('iend', 'inode'):
                 return SN.point_probe(hot_point(spec, g)), A, B
             return SN.line_probe(D.internal(pc, g[2])['pts'], frame), A, B
         if g[0] == 'edge':
@@ -923,8 +1131,8 @@ def commit(context, spec, names, old_spec=None, rigid=None, sources=None, owner=
         msg = carry_to_3d(context, old_spec, sp, rigid, sources)
         if context.scene.ac9_cloth_sim.sync_pending:   # the edits deferred before went with this carry
             drop_pending(context)
-    except ValueError as exc:
-        msg = tx("3D not updated: {0}", exc)
+    except Exception as exc:                        # noqa: BLE001 -- not only a refusal: a result folder missing a file
+        msg = tx("3D not updated: {0}", DR.refusal(exc))
     msg = "; ".join(x for x in (msg, note, saved_note) if x)
     if msg:                                         # kept where it is seen after the report line is gone (Fable a-1)
         context.scene.ac9_cloth_sim.dress_status = tx("Pattern edit: {0}", msg)
@@ -978,23 +1186,22 @@ def _record_dressed(context, old_spec):
     import os
     from . import dress as DR
     from .core import transfer as TR
+    from . import result_reference as RR
     g = bpy.data.objects.get(DR.garment_name(old_spec))
     job = DR.job_of(g)
-    if not job or not os.path.exists(os.path.join(job, 'job.json')):
-        return
-    sj = os.path.join(job, 'ac9_spec.json')
-    if os.path.exists(sj):
+    res = RR.open_result(job) if job else None
+    if res is None or not res.exists() or res.has_dressed_spec():
         return
     try:
-        pat = np.load(os.path.join(job, 'pattern.npz'), allow_pickle=True)
-        idx = np.load(os.path.join(job, 'scene.idx.npz'))
-    except (OSError, ValueError):
+        pat = res.pattern()
+        idx = res.index
+    except ValueError:
         return
     base = S.loads(S.dumps(old_spec))
     if [str(n) for n in pat['names']] != [p['name'] for p in base['pieces'] if p.get('enabled', True)] or \
             TR.shape_changed(base, pat, idx):
         return
-    open(sj, 'w', encoding='utf-8').write(S.dumps(base))
+    res.write_dressed_spec(S.dumps(base))
 
 
 def _pending_hints(base):
@@ -1040,8 +1247,8 @@ def sync_3d(context):
     if g is not None and DR.job_of(g):
         try:
             notes.append(_carry_pending(context, g, spec))
-        except ValueError as exc:
-            notes.append(pending_refused(exc))
+        except Exception as exc:                    # noqa: BLE001 -- a result folder missing a file is said too
+            notes.append(pending_refused(exc if isinstance(exc, ValueError) else ValueError(DR.refusal(exc))))
             msg = "; ".join(x for x in notes if x)
             props.dress_status = tx("Pattern edit: {0}", msg)
             return msg
@@ -1052,7 +1259,7 @@ def sync_3d(context):
 
 
 def refresh_placed(context, spec, names):
-    """The placed objects (Move by Hand, Part to Seam, Fold...) of the pieces `names` given the edited pattern's mesh,
+    """The placed objects (Place, Part to Seam, Fold...) of the pieces `names` given the edited pattern's mesh,
     their shape carried over (placed_view.remesh, extended past the old outline): until 2026-10-26 they kept the old
     shape until the next Phase Sim (Fable review REVIEW_fable_drafting_from_scratch §2.3). Once per edit, not during
     a drag. Returns a report line ('' when all were updated or none had an object)."""
@@ -1073,7 +1280,7 @@ def refresh_placed(context, spec, names):
             continue
         i = nm.index(n)
         V = np.asarray(pat[f"V{i}"], float)
-        if ob.get(PLV.KEY_PROP) != PLV.layout_key(V):
+        if not PLV.layout_matches(ob, V):
             if not PLV.is_moved(ob):
                 # placed by the rule, not by hand: placed again on the new pattern, where the run will start it
                 # (user 2026-11-13, DECISIONS cloth-sim-start-from-screen-2026-11-13), not its old shape carried
@@ -1094,29 +1301,26 @@ def _last_result(job, shown=None):
     garment as on screen, dress.shown_shape: a frame picked on the timeline, or the mesh edited by hand after Edit
     Frame) when it has the result's vertex count -- what Continue starts from too -- else the last frame written: a
     job stopped on an anomaly has frames only up to the stage it stopped in. None when there are no frames."""
-    import json
-    import os
-    info = json.load(open(os.path.join(job, 'job.json'), encoding='utf-8'))
-    idx = np.load(os.path.join(job, 'scene.idx.npz'))
+    from . import result_reference as RR
+    res = RR.open_result(job)                    # unreadable: ResultUnreadable (a ValueError), said in one line
+    info, idx = res.info, res.index
     if shown is not None and len(shown) == len(idx['flat']):
         X = np.asarray(shown, float)
     else:
-        from . import dress as D
-        X = D.job_last_frame(job)                 # final.npy once its frames were dropped
+        X = res.last_shape()                     # final.npy once its frames were dropped
         if X is None:
             return None
         X = X * 1000.0
-    return np.load(os.path.join(job, 'pattern.npz'), allow_pickle=True), idx, X, info
+    return res.pattern(), idx, X, info
 
 
 def _simulated_root(job):
     """The simulated result a chain of carried edits (job.json 'from') started from, or None."""
-    import json
-    import os
+    from . import result_reference as RR
     for _ in range(50):
         try:
-            info = json.load(open(os.path.join(job, 'job.json'), encoding='utf-8'))
-        except (OSError, ValueError):
+            info = RR.open_result(job).info
+        except ValueError:
             return None
         if not str(info.get('kind', '')).startswith('pattern edit carried'):
             return job
@@ -1134,11 +1338,12 @@ def carry_to_3d(context, old_spec, new_spec, rigid=None, sources=None):
     import os
     import time
     from . import dress as DR
+    from . import result_reference as RR
     from .core import pattern_build
     from .core import transfer as TR
     g = bpy.data.objects.get(DR.garment_name(new_spec))
     job = DR.job_of(g)
-    if not job or not os.path.exists(os.path.join(job, 'job.json')):
+    if not job or not RR.open_result(job).exists():
         return ''
     t0 = time.time()
     shown = DR.shown_shape(context, g) if hasattr(DR, 'shown_shape') else None
@@ -1151,16 +1356,16 @@ def carry_to_3d(context, old_spec, new_spec, rigid=None, sources=None):
     # this edit, checked against the result's mesh by its shape (core/transfer.shape_changed: the outline and the
     # internal lines, not the mesh remade, as _carry_pending does), so a garment dressed with an older mesher or
     # another mesh size is carried, not stopped (it stopped with "simulate first" once the mesher changed, 2026-10-23)
-    sj = os.path.join(job, 'ac9_spec.json')
-    if os.path.exists(sj):
-        base = S.loads(open(sj, encoding='utf-8').read())
+    dressed = RR.open_result(job).dressed_spec_text()
+    if dressed is not None:
+        base = S.loads(dressed)
     else:
         base = S.loads(S.dumps(old_spec))
         if [str(n) for n in old_pat['names']] != [p['name'] for p in base['pieces'] if p.get('enabled', True)] or \
                 TR.shape_changed(base, old_pat, old_idx):
             raise ValueError("the pattern differs from the dressed one since the garment was dressed. Ctrl+Z, or "
                              "Back to Placed with nothing selected")
-        open(sj, 'w', encoding='utf-8').write(S.dumps(base))
+        RR.open_result(job).write_dressed_spec(S.dumps(base))
     new_pat, _ = DR._build_cached(new_spec, h)
     tris, bad = DR.triangulate(new_pat)
     if bad:
@@ -1175,13 +1380,16 @@ def carry_to_3d(context, old_spec, new_spec, rigid=None, sources=None):
         # not (a hem let down on the front leg first held at the unchanged turn-up, then the back leg folded;
         # both together carry the turn-up along, 2026-10-08): carry everything since that result in one go
         root = _simulated_root(job)
-        rsj = os.path.join(root, 'ac9_spec.json') if root else None
-        last = _last_result(root, None) if rsj and root != job and os.path.exists(rsj) else None
+        rsj = RR.open_result(root).dressed_spec_text() if root and root != job else None
+        try:
+            last = _last_result(root, None) if rsj is not None else None
+        except ValueError:
+            last = None
         if last is None:
             raise _with_seam_hint(exc, base, new_spec) from None
         old_pat, old_idx, X_old, _ = last
         try:
-            Xs, rep = TR.carry(S.loads(open(rsj, encoding='utf-8').read()), new_spec, old_pat, old_idx, X_old,
+            Xs, rep = TR.carry(S.loads(rsj), new_spec, old_pat, old_idx, X_old,
                                new_pat, tris, reset=reset, sources=sources)
         except ValueError:
             raise _with_seam_hint(exc, base, new_spec) from None
@@ -1210,41 +1418,33 @@ def carry_to_3d(context, old_spec, new_spec, rigid=None, sources=None):
     while os.path.exists(d):
         k += 1
         d = os.path.join(os.path.dirname(job), time.strftime("%Y%m%d_%H%M%S") + f"_edit{k}")
-    os.makedirs(os.path.join(d, 's1'))
-    np.savez(os.path.join(d, 'pattern.npz'), **sub)
     # the stitches too (as Dress writes them): the garment's seam lines are drawn from them, and an edit's result
     # without them showed no seam lines on the garment until the next Simulate (user 2026-10-20)
-    extra = {}
+    E_st = E_seam = None
     if 'stitch' in new_pat.files if hasattr(new_pat, 'files') else 'stitch' in new_pat:
         col = {allnames.index(n): k for k, n in enumerate(names)}
         st = np.asarray(new_pat['stitch'])
         keep = np.array([int(a) in col and int(b) in col for a, b in st[:, [0, 2]]], bool) if len(st) else np.zeros(0, bool)
         st = st[keep]
         oo = np.array(offs)
-        extra['E_st'] = (np.stack([oo[[col[int(a)] for a in st[:, 0]]] + st[:, 1],
-                                   oo[[col[int(b)] for b in st[:, 2]]] + st[:, 3]], 1) if len(st)
-                         else np.zeros((0, 2), int))
+        E_st = (np.stack([oo[[col[int(a)] for a in st[:, 0]]] + st[:, 1],
+                          oo[[col[int(b)] for b in st[:, 2]]] + st[:, 3]], 1) if len(st) else np.zeros((0, 2), int))
         if 'stitch_seam' in (new_pat.files if hasattr(new_pat, 'files') else new_pat):
-            extra['E_seam'] = np.asarray(new_pat['stitch_seam'])[keep]
-    np.savez(os.path.join(d, 'scene.idx.npz'), offs=np.array(offs), F=F, fp=fp, flat=flat, Xinit=X, **extra)
-    np.save(os.path.join(d, 's1', 'frames.npy'), (X[None] * 0.001).astype(np.float32))
-    open(os.path.join(d, 'ac9_spec.json'), 'w', encoding='utf-8').write(S.dumps(new_spec))
+            E_seam = np.asarray(new_pat['stitch_seam'])[keep]
     secs = round(time.time() - t0, 2)
     # a garment dressed with another mesher, remade here: said in one line as a Continue says it (design review
     # 2026-10-28; the Continue after this edit reads this job and no longer sees the change)
     mesh, report = {'h_mm': round(float(h), 3), 'mesher': pattern_build.MESHER_VERSION}, []
     try:
-        prev_m = json.load(open(os.path.join(job, 'job.json'), encoding='utf-8')).get('mesh', {}).get('mesher', 1)
-    except (OSError, ValueError):
+        prev_m = RR.open_result(job).info.get('mesh', {}).get('mesher', 1)
+    except ValueError:
         prev_m = None
     if prev_m is not None and prev_m != pattern_build.MESHER_VERSION:
         mesh['from_mesher'] = prev_m
         report.append(f"  mesh remade (mesher {prev_m} -> {pattern_build.MESHER_VERSION}), the last shape carried onto it")
-    json.dump({'kind': 'pattern edit carried over (no simulation)', 'from': job, 'names': names,
-               'stages': ['carried'], 'verts': int(len(flat)), 'tris': int(len(F)), 'carry_s': secs,
-               'pieces': rep['pieces'], 'mesh': mesh, 'report': report},
-              open(os.path.join(d, 'job.json'), 'w', encoding='utf-8'),
-              ensure_ascii=False, indent=1)
+    RR.write_result(d, 'carried', names, offs, F, fp, flat, X, S.dumps(new_spec), pattern=sub, stitches=E_st,
+                    seams=E_seam, info={'from': job, 'carry_s': secs, 'pieces': rep['pieces'], 'mesh': mesh,
+                                        'report': report})
     ob = DR.garment_object(context, DR.garment_name(new_spec), flat, F, fp, X, names)
     ob['ac9_job'] = d
     DR.refresh_thickness(context, ob, new_spec)
@@ -1265,7 +1465,7 @@ def _outline_segs(M, spec, names):
 
 
 # ---------------------------------------------------------------- a dialog's ghost
-# While a dialog that takes numbers is open (Parallel Line, Move by Number, Slash and Spread), where the result would
+# While a dialog that takes numbers is open (Parallel Line, Numeric Input, Slash and Spread), where the result would
 # go is drawn on the pattern, made again when a value changes; nothing is applied until OK (user 2026-11-12).
 
 _ghost = {'key': None, 'spec': None, 'names': (), 'lines': [], 'why': "", 'live': None}
@@ -1326,7 +1526,7 @@ GHOST = (0.55, 0.8, 1.0, 0.95)
 
 # A dialog opens under the cursor and hid most of the ghost (user 2026-11-12): the cursor is moved beside the piece
 # first, so the dialog opens there, and goes back where it was when the dialog closes.
-DLG_SIZE = (312.0, 210.0)        # px at UI scale 1: the largest of these dialogs (Move by Number, 312 x 206)
+DLG_SIZE = (312.0, 270.0)        # px at UI scale 1: the largest of these dialogs (Numeric Input with a size, about 312 x 265, guessed)
 DLG_GRIP = (126.0, 46.0)         # where Blender puts the cursor in an opened dialog: right of its left side, below
                                  # its top (px at UI scale 1; the same for all three, measured on screen)
 _aside = {'xy': None}
@@ -1440,6 +1640,8 @@ def _draw_view():
             _draw_all_internals(context)
         if PV.layout_empty(context) is not None and tool_active(context) and _state['drag'] is None:
             _draw_all_corners(context)
+        if PV.layout_empty(context) is not None and (tool_active(context) or _state['drag'] is not None):
+            _draw_shown_handles(context)
         _draw_hover(context)
     except Exception:
         pass
@@ -1450,7 +1652,7 @@ def _draw_view():
             _draw_isel(context)
         if PV.layout_empty(context) is not None and _esel:
             _draw_esel(context)
-        if PV.layout_empty(context) is not None and _csel:
+        if PV.layout_empty(context) is not None and (_csel or _psel):
             _draw_csel(context)
     except Exception:
         pass
@@ -1558,14 +1760,6 @@ def _draw_hover(context):
         sh.uniform_float('color', (0.45, 1.0, 0.85, 1.0))
         batch_for_shader(sh, 'LINES', {'pos': hot_segs}).draw(sh)
     hl, hp = [p for ab in ihl for p in ab], [ab[1] for ab in ihl]
-    for nm in names:
-        for e in D.piece(spec, nm)['edges']:
-            if e.get('ctrl'):
-                ends = [e['pts'][0], e['pts'][-1]]
-                for w in range(2):
-                    a, b = to_world(M, [ends[w], e['ctrl'][w]])
-                    hl += [tuple(a), tuple(b)]
-                    hp.append(tuple(b))
     if hl:
         sh.uniform_float('lineWidth', 1.5)
         sh.uniform_float('color', (0.6, 0.85, 1.0, 0.9))
@@ -1663,22 +1857,42 @@ def _draw_gap_labels(context, M):
 def draw_gap_labels(context, M, lines):
     """Each gap's length at its middle (pink when a snap matched it). lines: [(a, b, mm, hot)]."""
     from .shape_tool import num
-    draw_labels(context, M, [((a + b) / 2, num(context, mm), hot) for a, b, mm, hot in lines if mm is not None])
+    keep = [(a, b, mm, hot) for a, b, mm, hot in lines if mm is not None]
+    draw_labels(context, M, [((a + b) / 2, num(context, mm), hot) for a, b, mm, hot in keep],
+                along=[(a, b) for a, b, _mm, _hot in keep])
 
 
-def draw_labels(context, M, items):
+def _overlaps(r, boxes):
+    return any(r[0] < b[2] and b[0] < r[2] and r[1] < b[3] and b[1] < r[3] for b in boxes)
+
+
+def _clear_spot(x, y, w, h, taken, step):
+    """(x, y) moved by whole steps (+1, -1, +2, -2, ... times `step`, a pixel vector) until the box clears `taken`;
+    unmoved when nothing near is free (the box would leave its line)."""
+    for k in (0, 1, -1, 2, -2, 3, -3, 4, -4):
+        cx, cy = x + k * step[0], y + k * step[1]
+        if not _overlaps((cx - 3, cy - 3, cx + w + 3, cy + h + 3), taken):
+            return cx, cy
+    return x, y
+
+
+def draw_labels(context, M, items, along=None):
     """The numbers on the pattern, one look (DECISIONS cloth-sim-dimension-display-2026-10-23 b-2): a dark box, white,
     pink when a snap matched it. items: [(point mm, text, hot)] centered on the point, or [(point, text, hot, away
     mm)] set off 14 px from the point, away from `away` (an edge's length outside its piece), or [(point, text, hot,
     away, row)]: `row` boxes further out, stacked (the seams on an edge under its length). hot: True (pink), False
-    (white) or a color."""
+    (white) or a color. A box landing on a piece's name (or on a box already placed) moves off it: along its line
+    when `along` gives the line's ends [(a, b) mm] per item (a gap's number slides along the gap), else up or down
+    (user 2026-11-17: the gap across the piece sat on the piece's name)."""
     if not items:
         return
     region, rv3d = context.region, context.region_data
+    from . import overlay as OV
+    taken = list(OV.name_boxes(context))
     fid = 0
     blf.size(fid, 13)
     boxes, texts = [], []
-    for it in items:
+    for i, it in enumerate(items):
         p, txt, hot = it[0], it[1], it[2]
         xy = location_3d_to_region_2d(region, rv3d, to_world(M, [p])[0])
         if xy is None:
@@ -1693,6 +1907,18 @@ def draw_labels(context, M, items):
             y += dv[1] * (14 + h / 2)
             if len(it) > 4 and it[4]:
                 y += it[4] * (h + 8) * (1 if dv[1] >= 0 else -1)
+        step = (0.0, h + 8)
+        if along is not None and i < len(along):
+            ends = [location_3d_to_region_2d(region, rv3d, to_world(M, [q])[0]) for q in along[i]]
+            if None not in ends:
+                d = np.array([ends[1][0] - ends[0][0], ends[1][1] - ends[0][1]])
+                n = np.linalg.norm(d)
+                if n > 1e-6:
+                    d = d / n                        # a step that clears the box along the line
+                    s = min((w + 8) / max(abs(d[0]), 1e-6), (h + 8) / max(abs(d[1]), 1e-6))
+                    step = (d[0] * s, d[1] * s)
+        x, y = _clear_spot(x, y, w, h, taken, step)
+        taken.append((x - 3, y - 3, x + w + 3, y + h + 3))
         boxes += [(x - 3, y - 3), (x + w + 3, y - 3), (x + w + 3, y + h + 3),
                   (x - 3, y - 3), (x + w + 3, y + h + 3), (x - 3, y + h + 3)]
         texts.append((x, y, txt, hot))
@@ -1996,13 +2222,7 @@ def box_select(context, rect, mode='SET'):
             inside = bool(cr.sum() % 2)
         if inside:
             hit.append(pc['name'])
-    if mode == 'SET':
-        SEL.deselect_all(context)
-    for nm in hit:
-        objs[nm].select_set(mode != 'SUB')
-    act = context.view_layer.objects.active
-    if hit and mode != 'SUB' and (act is None or not act.select_get()):
-        context.view_layer.objects.active = objs[hit[0]]
+    SEL.apply(context, hit, mode, active='KEEP', view='pattern', interaction=True)
     return hit
 
 
@@ -2104,6 +2324,17 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
             if kind is not None:
                 self.snapped = ('point', p)
                 return p - self.grab_pt
+        if g[0] in ('iend', 'inode') and self.ialign is not None and len(self.ialign):
+            # in line with another point of its piece across or up and down, as a corner (user 2026-11-17): the
+            # other points of its line, the piece's corners, the other lines' points
+            shift, lines = SN.align_snap(self.grab_pt + d, self.ialign, SN.GAP_PX * mmpx)
+            if along is not None:
+                keep = [ax for ax in (0, 1) if abs(along[ax]) > 0.99]
+                shift = np.array([shift[ax] if ax in keep else 0.0 for ax in (0, 1)])
+                lines = [x for x in lines if x[0] in keep]
+            if lines:
+                self.snapped = ('align', [(ax, self.grab_pt + d + shift, self.ialign[j]) for ax, i, j in lines])
+                return d + shift
         if g[0] == 'piece':
             if self.others is None or not len(self.others):
                 return d
@@ -2126,13 +2357,13 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                 self.snapped = ('point', p)
                 return p - self.grab_pt
             return d
-        if g[0] in ('corner', 'iend', 'iline', 'edge'):
+        if g[0] in ('corner', 'iend', 'inode', 'iline', 'edge'):
             # what the rays meet does not move with the thing (gap_probe leaves its moving lines out): the lines
             # gathered when the drag started, the thing moved by d, no copy of the pattern per mouse move
             if self.still is None:
                 return d
             A, B, P0 = self.still
-            if g[0] in ('corner', 'iend'):
+            if g[0] in ('corner', 'iend', 'inode'):
                 pr = (SN.point_probe(self.grab_pt + d), A, B)
             elif g[0] == 'iline':
                 pr = (SN.line_probe(P0 + d, self.frame), A, B)
@@ -2229,20 +2460,43 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         spec, outlines, self._owner = store.begin_edit(context)
         self.M = PV.layout_matrix(context)
         kind, ob, idx = TB.under(context, event.mouse_region_x, event.mouse_region_y)
+        # A click (nothing moved) leaves no undo step: it only picks and drops the dot (user 2026-11-17: a click is
+        # not work to undo, and "Move Pattern" in the history said a piece had moved). CANCELLED keeps what it did
+        # (Blender reverts nothing) and, without PASS_THROUGH, the click goes to no other key.
+        if tool_mode(context) == 'TRANSFORM':
+            center = TB.center_under(context, event.mouse_region_x, event.mouse_region_y)
+            if center is not None:
+                # the garment's mirror center (drawn in front of the pieces, so it wins): picked alone, to move it
+                # with the gizmo or G (its rotation and scale are locked; a move is read back into the spec,
+                # user 2026-11-19)
+                TB.select_object(context, center, extend=event.shift)
+                return {'CANCELLED'}
         if kind == 'PLACED':                     # a placed piece's object: select it, to move it with G / R
             from . import garment_mark as GM     # and the point clicked shown on the pattern too
             GM.mark(context, ob, event.mouse_region_x, event.mouse_region_y)
-            return {'FINISHED'} if TB.select_object(context, ob, extend=event.shift, face_index=idx) else {'CANCELLED'}
+            TB.select_object(context, ob, extend=event.shift, face_index=idx)
+            return {'CANCELLED'}
         if kind == 'GARMENT':                    # the dressed garment: pick the piece clicked (the Tool tab shows it)
             from . import garment_mark as GM     # and the point clicked shown on the pattern too
             GM.mark(context, ob, event.mouse_region_x, event.mouse_region_y)
             name = TB.garment_piece(ob, idx)
-            return {'FINISHED'} if name and TB.pick_garment_piece(context, ob, name, extend=event.shift) else {'CANCELLED'}
-        if kind not in ('PATTERN', 'PLANE', 'NONE'):
+            if name:
+                TB.pick_garment_piece(context, ob, name, extend=event.shift)
             return {'CANCELLED'}
+        self.mode = tool_mode(context)
+        if kind == 'OBSTACLE' and self.mode == 'TRANSFORM':
+            # a collision object of the list: picked as Blender's click picks it, to move it with the gizmo or G / R
+            # (the Work Screen's 3D view shows no other select tool, user 2026-11-17)
+            TB.select_object(context, ob, extend=event.shift)
+            return {'CANCELLED'}
+        if kind not in ('PATTERN', 'PLANE', 'NONE'):
+            if self.mode != 'TRANSFORM':
+                return {'CANCELLED'}
+            # Whole Pieces in the 3D view: a drag from the body, the ground or another object boxes pieces, a click
+            # drops the selection (user 2026-11-17, DECISIONS cloth-sim-place-click-drag-box-2026-11-17)
+            kind = 'NONE'
         g = None if kind == 'NONE' else pick(context, spec, outlines, self.M, event.mouse_region_x,
                                               event.mouse_region_y)
-        self.mode = tool_mode(context)
         self.box_piece = None
         if g is None and self.mode == 'EDIT' and kind != 'NONE':
             # Edit Pieces inside a piece: a drag boxes corners and lines, a click still picks the piece (its Tool tab)
@@ -2255,13 +2509,16 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                 select_edge(context)
             if _csel and not event.shift:
                 select_corner(context)
+            if _psel and not event.shift:
+                select_ipoint(context)
             return self._box_start(context, event)
         self.spec = spec
         self.grab = g
         # a picked edge or internal line grabbed while more are picked (Shift+click): they all move (user 2026-10-25)
-        sel = (picked_lines(self.spec) if g[0] in ('edge', 'iline', 'corner') and not event.shift
+        sel = (picked_lines(self.spec) if g[0] in ('edge', 'iline', 'corner', 'iend', 'inode') and not event.shift
                and self.mode != 'TRANSFORM' else [])
-        me = ('corner', g[1], corner_eid(self.spec, g[1], g[2])) if g[0] == 'corner' else tuple(g[:3])
+        me = (('corner', g[1], corner_eid(self.spec, g[1], g[2])) if g[0] == 'corner' else
+              edit_item(self.spec, g) if g[0] in ('iend', 'inode') else tuple(g[:3]))
         self.group = sel if len(sel) > 1 and in_picked(self.spec, me, sel) else []
         # Whole Pieces: a picked piece or line grabbed while more are picked: they all move (user 2026-10-28)
         self.tgroup = None
@@ -2274,19 +2531,22 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         self.axis, self.typed, self.delta, self.rigid = None, '', np.zeros(2), None
         self.snapped, self.frame, self.refs, self.ptargets, self.others = None, None, None, None, None
         self.still = None
-        if g[0] in ('corner', 'iend', 'iline', 'edge'):
+        if g[0] in ('corner', 'iend', 'inode', 'iline', 'edge'):
             self.frame = gap_frame(self.spec, g)
             pr = gap_probe(self.spec, g, self.frame)
             if pr is not None:
-                self.refs = SN.same_refs(D.piece(self.spec, g[1]), pr[0], g[2] if g[0] in ('iend', 'iline') else None)
+                self.refs = SN.same_refs(D.piece(self.spec, g[1]), pr[0],
+                                         g[2] if g[0] in ('iend', 'inode', 'iline') else None)
                 pc = D.piece(self.spec, g[1])
                 P0 = (np.asarray(D.internal(pc, g[2])['pts'], float) if g[0] == 'iline' else
                       np.asarray(pc['edges'][D.edge_index(pc, g[2])]['pts'], float) if g[0] == 'edge' else None)
                 self.still = (pr[1], pr[2], P0)
+        self.ialign = None
         if g[0] in ('iend', 'inode'):            # its piece's outline and other lines (not its own line)
             pc = copy.deepcopy(D.piece(self.spec, g[1]))
             pc['internals'] = [it for it in pc.get('internals', []) if it['id'] != g[2]]
             self.ptargets = SN.Targets({'pieces': [pc]})
+            self.ialign = ialign_points(self.spec, g)
         if g[0] == 'piece':
             visible = VV.pattern_names(context, self.spec)
             cs = [D.corners(pc) for pc in self.spec['pieces']
@@ -2299,7 +2559,11 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         # an internal line too: a click picks it (its fold, elastic and seams in the Tool tab), a drag moves it
         # an outline edge too: a click picks it (its length in the Tool tab; Shift adds), a drag moves it (2026-10-22)
         # a corner too: a click picks it (Shift adds), a drag moves it (user 2026-10-25)
-        self.dragging = g[0] not in ('piece', 'iline', 'edge', 'corner')
+        # a line's point too, when it can be picked: a click picks it (Shift adds), a drag moves it (user 2026-11-17)
+        self.ipoint = edit_item(self.spec, g) if g[0] in ('iend', 'inode') else None
+        if self.ipoint is not None and self.ipoint[0] != 'ipoint':
+            self.ipoint = None
+        self.dragging = g[0] not in ('piece', 'iline', 'edge', 'corner') and self.ipoint is None
         _state['drag'] = {'spec': self.spec, 'preview': None, 'names': [g[1]], 'grab': g, 'bad': []}
         _state['drag']['owner'] = self._owner
         _state['drag']['area'] = context.area.as_pointer() if context.area else None
@@ -2317,6 +2581,7 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
     # ---- the box (Shift: add, Ctrl: take out; as Blender's Select Box)
     def _box_start(self, context, event):
         self.box = [(event.mouse_region_x, event.mouse_region_y)] * 2
+        self.box_mm = mouse_mm(context, self.M, event.mouse_region_x, event.mouse_region_y)
         self.box_mode = 'ADD' if event.shift else ('SUB' if event.ctrl else 'SET')
         self._box_h = bpy.types.SpaceView3D.draw_handler_add(self._box_draw, (), 'WINDOW', 'POST_PIXEL')
         context.window_manager.modal_handler_add(self)
@@ -2353,13 +2618,15 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                         SEL._drop_seam(context)
                 if getattr(self, 'box_piece', None):            # Edit Pieces, a click inside a piece: the piece
                     TB.select_piece(context, self.box_piece, extend=self.box_mode == 'ADD')
-                return {'FINISHED'}
+                    _mark_flat(context, self.box_piece, getattr(self, 'box_mm', None))
+                return {'CANCELLED'}                             # a click: no undo step (see invoke)
             r = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
             mode = getattr(self, 'mode', None)
             if mode == 'EDIT':
                 box_points(context, r, self.box_mode)
             elif mode == 'TRANSFORM':
-                box_transform(context, r, self.box_mode)
+                from . import box_pieces as BX     # in the 3D view the placed and dressed pieces too
+                box_transform(context, r, self.box_mode, extra=BX.world_names(context, r))
             else:
                 box_select(context, r, self.box_mode)
             return {'FINISHED'}
@@ -2381,33 +2648,46 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                 event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS'):
             dr = _state['drag']
             if not self.dragging:                    # a click on a piece: select it; on an internal line: pick it
+                # a click: no undo step (see invoke), and the point clicked shown on the cloth too
                 self._end(context)
+                if self.grab[0] == 'handle':         # a click on a handle: the corner and edges picked stay
+                    return {'CANCELLED'}
+                _mark_flat(context, self.grab[1], self.grab_mm)
                 # Shift: adds or takes out, the edges, the internal lines and the corners together (user 2026-10-25)
                 if not event.shift:
                     select_corner(context)
+                if not event.shift:
+                    _psel.clear()
                 if self.grab[0] == 'corner':
                     if not event.shift:
                         select_internal(context)
                         select_edge(context)
                     select_corner(context, self.grab[1], corner_eid(self.spec, self.grab[1], self.grab[2]),
                                   extend=event.shift)
-                    return {'FINISHED'}
+                    return {'CANCELLED'}
+                if self.ipoint is not None:          # a line's point: picked as a corner is
+                    if not event.shift:
+                        select_internal(context)
+                        select_edge(context)
+                    lid, k = ipoint_of(self.ipoint[2])
+                    select_ipoint(context, self.grab[1], lid, k, extend=event.shift)
+                    return {'CANCELLED'}
                 if self.grab[0] == 'edge':
                     if not event.shift:
                         select_internal(context)
                     select_edge(context, self.grab[1], self.grab[2], extend=event.shift)
-                    return {'FINISHED'}
+                    return {'CANCELLED'}
                 if not event.shift:
                     select_edge(context)
                 if self.grab[0] == 'iline':
                     if self.mode == 'TRANSFORM' and not event.shift:     # a line alone: the pieces dropped
                         SEL.deselect_all(context)
                     select_internal(context, self.grab[1], self.grab[2], extend=event.shift)
-                    return {'FINISHED'}
+                    return {'CANCELLED'}
                 if not event.shift:
                     select_internal(context)
                 TB.select_piece(context, self.grab[1], extend=event.shift)
-                return {'FINISHED'}
+                return {'CANCELLED'}
             if dr['bad'] or np.linalg.norm(self.delta) < 1e-6:
                 if dr['bad']:
                     self.report({'WARNING'}, rpt("Not applied: ") + dr['bad'][0])
@@ -2422,11 +2702,20 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
             # the line or edge moved stays picked: its gaps can be typed in the Tool tab (2026-10-23, b-2)
             if self.group or self.tgroup:            # the things moved together stay picked as they were
                 pass
+            elif self.ipoint is not None:            # the point moved stays picked, as a corner
+                select_internal(context)
+                select_edge(context)
+                select_corner(context)
+                lid, k = ipoint_of(self.ipoint[2])
+                select_ipoint(context, self.grab[1], lid, k)
             elif self.grab[0] in ('iend', 'iline', 'inode', 'ihandle'):
+                _psel.clear()
                 select_internal(context, self.grab[1], self.grab[2])
             elif self.grab[0] == 'edge':
+                _psel.clear()
                 select_edge(context, self.grab[1], self.grab[2])
             elif self.grab[0] == 'corner':
+                _psel.clear()
                 select_internal(context)
                 select_edge(context)
                 # the corner where it was let go (dropped on the next one: the corner it became, 2026-10-27)
@@ -2549,6 +2838,10 @@ class AC9_OT_SimPatternEdit(bpy.types.Operator):
             self.report({'INFO'}, msg)
         if notch_only:
             self.report({'INFO'}, walk_text(sp, h[1]))
+        if self.action == 'CURVE' and h[0] == 'edge':      # the edge made a curve picked: its handles are shown
+            select_internal(context)
+            select_corner(context)
+            select_edge(context, h[1], h[2])
         _state['hover'] = None
         return {'FINISHED'}
 
@@ -2602,6 +2895,63 @@ def _corner_rows(spec, hit):
     on = D.is_smooth(pc, k)
     return [("Sharp Corner" if on else "Smooth Corner", "ac9_cloth_sim.corner_smooth", "",
              {'piece': hit[1], 'corner': k, 'smooth': not on})]
+
+
+def _ipoint_smooth_rows(spec, hit):
+    """Smooth Corner / Sharp Corner for an internal line's vertex or the handle beside it (not an open line's ends:
+    they have one side)."""
+    try:
+        it = D.internal(D.piece(spec, hit[1]), hit[2])
+        N, _, closed, _ = IL.shape(it)
+        n = len(N)
+        k = int(hit[3]) if hit[0] == 'inode' else (int(hit[3]) if hit[4] == 0 else (int(hit[3]) + 1) % n)
+    except (StopIteration, IndexError, KeyError, ValueError):
+        return []
+    if not IL.editable(it) or not (closed or 0 < k < n - 1):
+        return []
+    on = IL.is_smooth(it, k)
+    return [("Sharp Corner" if on else "Smooth Corner", "ac9_cloth_sim.ipoint_smooth", "",
+             {'piece': hit[1], 'line': hit[2], 'vertex': k, 'smooth': not on})]
+
+
+class AC9_OT_SimIPointSmooth(bpy.types.Operator):
+    """Make the point of the internal line smooth (the curve handles either side of it stay on one line, so the line does not kink there) or sharp again"""
+    bl_idname = "ac9_cloth_sim.ipoint_smooth"
+    bl_label = "Smooth Corner"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    piece: bpy.props.StringProperty(options={'SKIP_SAVE'})
+    line: bpy.props.StringProperty(options={'SKIP_SAVE'})
+    vertex: bpy.props.IntProperty(options={'SKIP_SAVE'})
+    smooth: bpy.props.BoolProperty(default=True, options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return ("Make the point smooth: the curve handles either side of it stay on one line (their lengths free), so the line does not kink there"
+                if props.smooth else "Make the point sharp again: each handle moves on its own")
+
+    @classmethod
+    def poll(cls, context):
+        return AC9_OT_SimPatternDrag.poll(context)
+
+    def execute(self, context):
+        spec, _ = store.get(context)
+        old = S.loads(S.dumps(spec))
+        sp = S.loads(S.dumps(spec))
+        try:
+            ch = IL.set_smooth(sp, self.piece, self.line, self.vertex, self.smooth)
+        except (StopIteration, IndexError, KeyError, ValueError):
+            self.report({'WARNING'}, rpt("That point is no longer there"))
+            return {'CANCELLED'}
+        bad = D.problems(sp, ch) + D.internal_problems(sp, self.piece, [self.line])
+        if bad:
+            self.report({'WARNING'}, bad[0])
+            return {'CANCELLED'}
+        msg = commit(context, sp, ch, old_spec=old)
+        if msg:
+            self.report({'INFO'}, msg)
+        _state['hover'] = None
+        return {'FINISHED'}
 
 
 class AC9_OT_SimPatternRotate(bpy.types.Operator):
@@ -2797,7 +3147,7 @@ class AC9_OT_SimPatternScale(bpy.types.Operator):
             return {'CANCELLED'}
         msg = commit(context, sp, names, old_spec=old)
         self.report({'INFO'}, rpt("Scaled {0} x{1:.3f}", self.piece, self.factor) + (rpt("; {0}", msg) if msg else "")
-                    + rpt(F9))
+                   )
         return {'FINISHED'}
 
     def modal(self, context, event):
@@ -2815,7 +3165,7 @@ class AC9_OT_SimPatternScale(bpy.types.Operator):
                 return {'CANCELLED'}
             msg = commit(context, dr['preview'], dr['names'], old_spec=self.spec, owner=self._owner)
             self.report({'INFO'}, rpt("Scaled {0} x{1:.3f}", self.piece, self.factor) + (rpt("; {0}", msg) if msg else "")
-                        + rpt(F9))
+                       )
             return {'FINISHED'}
         elif event.value == 'PRESS' and event.type in {'ESC', 'RIGHTMOUSE'}:
             self._end(context)
@@ -2854,7 +3204,7 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
         self.tool = tool_mode(context) or 'TRANSFORM'
         h = pick(context, spec, outlines, self.M, event.mouse_region_x, event.mouse_region_y, mode=self.tool)
         self.spec = spec
-        self.items, self.cpts, self.P, self.L = None, {}, [], []
+        self.items, self.cpts, self.P, self.L, self.ipts = None, {}, [], [], []
         if self.pieces:
             import json
             have = {pc['name'] for pc in self.spec['pieces']}
@@ -2883,9 +3233,11 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
                     k = D.edge_index(pc, x)
                     self.cpts.setdefault(n, set()).update({k, (k + 1) % len(pc['edges'])} if kind == 'edge' else {k})
             self.L = [(n, x) for kind, n, x in items if kind == 'iline']
+            self.ipts = [x for x in items if x[0] == 'ipoint']        # internal lines' points (user 2026-11-17)
             pts = [D.corners(D.piece(self.spec, n))[sorted(ks)] for n, ks in self.cpts.items()]
+            pts += [np.atleast_2d(ipoint_pos(self.spec, n, x)) for _, n, x in self.ipts]
             self.c = D.group_center(self.spec, [], self.L, np.vstack(pts) if pts else ())
-            names = set(self.cpts) | {n for n, _ in self.L}
+            names = set(self.cpts) | {n for n, _ in self.L} | {n for _, n, _ in self.ipts}
         self.names = names | {t for t in (D.twin_of(self.spec, n) for n in names) if t}
         q = mouse_mm(context, self.M, event.mouse_region_x, event.mouse_region_y)
         self.q0 = np.asarray(q if q is not None else self.c, float)
@@ -2988,6 +3340,8 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
                     C = D.corners(D.piece(self.spec, n))
                     ch += D.move_corners(sp, n, {j: tuple(fm(C[j])[0] - C[j]) for j in ks})
                 ch += D.transform_group(sp, [], self.L, deg, k, center=self.c)[0]
+                moved = set(self.L) | {(m, l) for n, x in self.L for m, l, _ in D.mirror_lines(self.spec, n, x)}
+                ch += move_ipoints(sp, self.ipts, moved, lambda p: fm(p)[0] - p)
                 self.rigid = None
             bad = D.problems(sp, ch)
         except ValueError as exc:
@@ -3057,7 +3411,10 @@ class AC9_WT_TransformPattern(bpy.types.WorkSpaceTool):
                       "rotate or scale them together. G: move, R: rotate, S: scale about the middle of what is picked, "
                       "Shift+D: copy pieces, F2: name a piece. Corners, edges and the points of a line: Edit Pieces")
     bl_icon = "ops.transform.transform"
-    bl_widget = None
+    # Blender's move or rotate gizmo on what is picked (user 2026-11-17): on a placed piece, on a dressed piece's
+    # handle; none on the flat pattern (locked). Shown where the view's Object Gizmos are on (the Work Screen turns
+    # them on), one kind at a time: the Gizmo switch in the header, W (user 2026-11-19). A click off the gizmo also runs Blender's select as the fallback: selection.watch puts it back.
+    bl_widget = "VIEW3D_GGT_xform_gizmo"
     bl_keymap = (
         ("ac9_cloth_sim.pattern_hover", {"type": 'MOUSEMOVE', "value": 'ANY'}, None),
         ("ac9_cloth_sim.pattern_drag", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
@@ -3073,6 +3430,9 @@ class AC9_WT_TransformPattern(bpy.types.WorkSpaceTool):
         ("ac9_cloth_sim.duplicate_pieces", {"type": 'D', "value": 'PRESS', "shift": True},
          {"properties": [("follow", True)]}),
         ("ac9_cloth_sim.piece_label", {"type": 'F2', "value": 'PRESS'}, None),
+        ("wm.context_toggle_enum", {"type": 'W', "value": 'PRESS'},
+         {"properties": [("data_path", 'scene.ac9_cloth_sim.whole_gizmo'), ("value_1", 'MOVE'),
+                         ("value_2", 'ROTATE')]}),
         ("ac9_cloth_sim.context_menu", {"type": 'RIGHTMOUSE', "value": 'PRESS'},
          {"properties": [("tool", 'TRANSFORM_PATTERN')]}),
     )
@@ -3081,6 +3441,9 @@ class AC9_WT_TransformPattern(bpy.types.WorkSpaceTool):
         if context.scene.ac9_cloth_sim.sync_pending:    # 3D Follows Edits off and edits waiting (AC9 Run)
             layout.label(text=tx("3D not updated"), icon='ERROR')
         layout.label(text=tx("Works on: ") + tx("pieces and internal lines"), icon='INFO')
+        row = layout.row(align=True)
+        row.label(text="Gizmo (W):")
+        row.prop(context.scene.ac9_cloth_sim, "whole_gizmo", expand=True, text_ctxt=CTX)
         layout.label(text="click: select (Shift adds)  drag: move  G move  R rotate  S scale")
         layout.label(text="right-click: menu   corners and points: Edit Pieces")
 
@@ -3095,6 +3458,7 @@ TRANSFORM_KEYS = (
     ("S", "scale what is picked about its middle (X/Y: one direction, type a factor)"),
     ("Shift+D", "copy the selected pieces"),
     ("F2", "name the piece"),
+    ("W", "gizmo: move or rotate"),
     ("X / Del", "delete what is picked"),
 )
 
@@ -3179,7 +3543,6 @@ ALL_KEYS = (
     ("N", "put a notch on the edge"),
     ("Shift+D", "copy the selected pieces (or the one under the cursor)"),
     ("X / Del", "delete the corner, notch or line"),
-    ("F9", "adjust the last action's numbers (dart, spread, length)"),
 )
 
 
@@ -3464,22 +3827,54 @@ class AC9_OT_SimMatchLength(bpy.types.Operator):
         spec = store.get(context)[0]
         return spec is not None and store.active_seam(context, spec) is not None
 
-    def execute(self, context):
-        spec, _ = store.get(context)
-        old = S.loads(S.dumps(spec))
+    def invoke(self, context, event):
+        # the numbers first, in a dialog with the changed side drawn on the pattern (user 2026-11-17)
+        spec = store.get(context)[0]
+        sm = store.active_seam(context, spec)
+        names = sorted({sm[k]['piece'] for k in ('a', 'b') if isinstance(sm.get(k), dict) and 'piece' in sm[k]})
+        if names:
+            dialog_aside(context, event, names, spec)
+        ghost_open(self)
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "ease")
+        col.prop(self, "end")
+        spec = store.get(context)[0]
+        if spec is not None:
+            sm = store.active_seam(context, spec)
+            draw_why(col, ghost(self, ("match", sm['id'] if sm else None, self.side, self.ease, self.end),
+                                lambda: self._make(context, spec)[:2] + ([],)))
+
+    def _make(self, context, spec):
+        """(the copy, pieces changed, seam, lengths before and after); a ValueError when it cannot be done."""
         sp = S.loads(S.dumps(spec))
         sm = store.active_seam(context, sp)
+        if sm is None:
+            raise ValueError(rpt("No active seam"))
+        ch, l0, l1, tg = D.match_side_length(sp, sm['id'], self.side, self.ease * 1000.0, self.end)
+        bad = D.problems(sp, ch)
+        if bad:
+            raise ValueError(bad[0])
+        return sp, ch, sm, l0, l1
+
+    def cancel(self, context):
+        clear_ghost()
+        dialog_back(context)
+
+    def execute(self, context):
+        clear_ghost()
+        dialog_back(context)
+        spec, _ = store.get(context)
+        old = S.loads(S.dumps(spec))
         try:
-            ch, l0, l1, tg = D.match_side_length(sp, sm['id'], self.side, self.ease * 1000.0, self.end)
+            sp, ch, sm, l0, l1 = self._make(context, spec)
         except ValueError as exc:
             self.report({'WARNING'}, str(exc))
             return {'CANCELLED'}
-        bad = D.problems(sp, ch)
-        if bad:
-            self.report({'WARNING'}, bad[0])
-            return {'CANCELLED'}
         msg = commit(context, sp, ch, old_spec=old)
-        self.report({'INFO'}, rpt("{0} side {1}: {2} -> {3}", sm['id'], self.side.upper(), U.fmt(context, l0), U.fmt(context, l1)) + (rpt("; {0}", msg) if msg else "") + rpt(F9))
+        self.report({'INFO'}, rpt("{0} side {1}: {2} -> {3}", sm['id'], self.side.upper(), U.fmt(context, l0), U.fmt(context, l1)) + (rpt("; {0}", msg) if msg else ""))
         return {'FINISHED'}
 
 
@@ -3626,8 +4021,8 @@ class AC9_OT_SimNewPattern(bpy.types.Operator):
 
 
 def _selected_piece(context):
-    ob = context.active_object
-    return ob[PV.PIECE_PROP] if ob is not None and PV.PIECE_PROP in ob else None
+    """The piece the menus and the Tool tab act on: the first picked one (selection.lead)."""
+    return SEL.lead(context)
 
 
 def _drop_placed(spec, names):
@@ -3810,7 +4205,6 @@ class AC9_OT_SimCloneShape(bpy.types.Operator):
             self.report({'WARNING'}, rpt("Not applied: ") + bad[0])
             return {'CANCELLED'}
         commit(context, sp, [nm])
-        SEL.deselect_all(context)
         TB.select_piece(context, nm)
         frame_pieces(context, [name, nm])
         self.report({'INFO'}, rpt("Added piece {0} from {1} on {2}", nm, lid, name))
@@ -3834,20 +4228,12 @@ def frame_pieces(context, names):
                  and a.spaces.active.region_3d.lock_rotation), None)
     if area is None:
         return
-    vl = context.view_layer
-    sel, act = SEL.objects(context), vl.objects.active
-    for o in vl.objects:
-        o.select_set(o in obs)
     try:
         reg = next(r for r in area.regions if r.type == 'WINDOW')
-        with context.temp_override(window=win, area=area, region=reg):
+        with SEL.borrow(context, obs), context.temp_override(window=win, area=area, region=reg):
             bpy.ops.view3d.view_selected()
     except (RuntimeError, TypeError, StopIteration):
         pass
-    finally:
-        for o in vl.objects:
-            o.select_set(o in sel)
-        vl.objects.active = act
 
 
 class AC9_OT_SimPickSeam(bpy.types.Operator):
@@ -4170,23 +4556,100 @@ def draw_gaps(layout, context, spec, g):
     # INVOKE: the dialog asks for the numbers first. An EXEC row drawn before it in the same panel (Cut) reaches this
     # button too (user 2026-11-11)
     col.operator_context = 'INVOKE_DEFAULT'
-    op = col.operator("ac9_cloth_sim.set_gap", text=tx("Move by Number..."), icon='DRIVER_DISTANCE')
-    op.piece, op.kind, op.thing = g[1], g[0].upper(), g[2]
+    op = col.operator("ac9_cloth_sim.set_gap", text=tx(NUMERIC_INPUT), icon='DRIVER_DISTANCE')
+    # a corner is kept by the id of the edge starting at it (as picked), the probe takes its index
+    op.piece, op.kind = g[1], g[0].upper()
+    op.thing = (corner_eid(spec, g[1], g[2]) if g[0] == 'corner' else
+                ipoint_key(g[2], g[3]) if g[0] == 'inode' else g[2])
+    if g[0] == 'inode':
+        op.kind = 'IPOINT'
+
+
+NUMERIC_INPUT = "Numeric Input..."     # the button and the right-click row: one name
+
+
+def draw_move_by_number(layout, context, spec):
+    """Numeric Input for what is picked on the pattern (user 2026-11-17): one thing (an edge, a corner, an internal
+    line) with its gaps, or several (any mix, across pieces) moved together by X / Y."""
+    its = picked_lines(spec)
+    if len(its) == 1:
+        k, nm, x = its[0]
+        draw_gaps(layout, context, spec, ('corner', nm, D.edge_index(D.piece(spec, nm), x)) if k == 'corner'
+                  else ('inode', nm) + ipoint_of(x) if k == 'ipoint' else its[0])
+    elif its:
+        col = layout.column(align=True)
+        col.operator_context = 'INVOKE_DEFAULT'
+        op = col.operator("ac9_cloth_sim.set_gap", text=tx(NUMERIC_INPUT), icon='DRIVER_DISTANCE')
+        op.kind, op.items = 'MULTI', json.dumps([list(x) for x in its])
+
+
+def numeric_row(spec, hit):
+    """The right-click row Numeric Input for hit (an edge, a corner, an internal line), as a menu_items row: the
+    picked things together when hit is one of several picked, else hit alone. A whole piece: its move and size."""
+    if hit[0] == 'piece':
+        return (NUMERIC_INPUT, "ac9_cloth_sim.set_gap", "", {'kind': 'PIECE', 'piece': hit[1], '_invoke': True})
+    me = edit_item(spec, hit) if hit[0] in ('corner', 'edge', 'iline', 'iend', 'inode') else None
+    if me is None:
+        return None
+    sel = picked_lines(spec)
+    if len(sel) > 1 and in_picked(spec, me, sel):
+        return (NUMERIC_INPUT, "ac9_cloth_sim.set_gap", "",
+                {'kind': 'MULTI', 'items': json.dumps([list(x) for x in sel]), '_invoke': True})
+    return (NUMERIC_INPUT, "ac9_cloth_sim.set_gap", "",
+            {'kind': me[0].upper(), 'piece': me[1], 'thing': me[2], '_invoke': True})
+
+
+def _exists(spec, item):
+    """Whether the picked_lines item (an edge, a corner, an internal line) is still in spec."""
+    kind, nm, x = item
+    pc = next((p for p in spec['pieces'] if p['name'] == nm), None)
+    if pc is None:
+        return False
+    if kind == 'iline':
+        return any(it['id'] == x for it in pc.get('internals', []))
+    if kind == 'ipoint':
+        try:
+            lid, k = ipoint_of(x)
+        except ValueError:
+            return False
+        it = next((i for i in pc.get('internals', []) if i['id'] == lid), None)
+        return it is not None and IL.editable(it) and 0 <= k < len(IL.shape(it)[0])
+    return any(e['id'] == x for e in pc['edges'])
+
+
+def _touched(spec, items):
+    """The pieces a move of items changes: theirs and their twins' (each follows as its mirror image)."""
+    out = set()
+    for kind, nm, x in items:
+        out.add(nm)
+        try:
+            if kind == 'iline':
+                out.add(D._twin_internal(spec, nm, x)[0])
+            else:
+                out.add(D.twin_corner_map(spec, nm)[0])
+        except Exception:
+            pass
+    out.discard(None)
+    return sorted(out)
 
 
 GAP_MAX = 8          # the gaps the dialog lists (one each way of the probe)
 
 
 class AC9_OT_SimSetGap(bpy.types.Operator):
-    """Move the picked internal line or edge by a number: how far along X and Y from where it is, or the distance a
-    gap should be (along that gap's arrow)"""
+    """Move the picked edges, corners and internal lines by a number: how far along X and Y from where they are, or
+    for one of them, the distance a gap should be (along that gap's arrow). A whole piece or a closed internal shape:
+    its width and height too"""
     bl_idname = "ac9_cloth_sim.set_gap"
-    bl_label = "Move by Number"
+    bl_label = "Numeric Input"
     bl_options = {'REGISTER', 'UNDO'}
 
     piece: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
-    kind: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})        # 'ILINE' / 'EDGE'
-    thing: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})       # the line id / the edge id
+    # 'ILINE' / 'EDGE' / 'CORNER' (one thing), 'MULTI' (the things in items, any pieces; user 2026-11-17)
+    kind: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    thing: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})       # the line id / the edge id (a corner: of
+                                                                           # the edge starting at it)
+    items: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})       # MULTI: JSON [[kind, piece, id], ...]
     move_x: bpy.props.FloatProperty(name="X", precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP,      # m
                                     description="How far to move it to the right (left: below 0)")
     move_y: bpy.props.FloatProperty(name="Y", precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP,
@@ -4194,17 +4657,73 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
     gaps: bpy.props.FloatVectorProperty(size=GAP_MAX, min=0.0, precision=1, subtype='NONE', unit='LENGTH', step=U.LEN_STEP)    # m
     gaps0: bpy.props.FloatVectorProperty(size=GAP_MAX, options={'HIDDEN'})
     rays: bpy.props.IntVectorProperty(size=GAP_MAX, default=[-1] * GAP_MAX, options={'HIDDEN'})
+    # a whole piece ('PIECE') or a closed internal shape: its size too, the width and height of its bounding box,
+    # scaled about its middle (user 2026-11-17: a rectangle drawn roughly, then its size typed)
+    width: bpy.props.FloatProperty(name="Width", min=0.001, precision=1, subtype='DISTANCE', unit='LENGTH',
+                                   step=U.LEN_STEP, description="The width of its bounding box")
+    height: bpy.props.FloatProperty(name="Height", min=0.001, precision=1, subtype='DISTANCE', unit='LENGTH',
+                                    step=U.LEN_STEP, description="The height of its bounding box")
+    size0: bpy.props.FloatVectorProperty(size=2, options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
         return store.get(context)[0] is not None
 
-    def _g(self):
-        return (self.kind.lower(), self.piece, self.thing)
+    def _sizable(self, spec):
+        """Whether it is one whole piece or one closed internal shape (it has a size to type)."""
+        if self.kind == 'PIECE':
+            return True
+        if self.kind != 'ILINE':
+            return False
+        try:
+            return bool(D.internal(D.piece(spec, self.piece), self.thing).get('closed'))
+        except (StopIteration, KeyError, ValueError):
+            return False
+
+    def _box(self, spec):
+        """Its bounding box size (mm)."""
+        if self.kind == 'PIECE':
+            A = D.corners_all(D.piece(spec, self.piece))
+        else:
+            A = np.asarray(D.internal(D.piece(spec, self.piece), self.thing)['pts'], float)
+        return A.max(0) - A.min(0)
+
+    def _scale(self):
+        """The scale the width and height ask for (1, 1 when not sizable or unchanged)."""
+        if self.size0[0] <= 0 or self.size0[1] <= 0:
+            return np.array([1.0, 1.0])
+        k = np.array([self.width / self.size0[0], self.height / self.size0[1]])
+        return np.where(np.abs(k - 1.0) < 1e-6, 1.0, k)
+
+    def _g(self, spec):
+        """The one thing as gap_probe takes it (a corner by its index), None for several or a whole piece."""
+        k = self.kind.lower()
+        if k in ('multi', 'piece'):
+            return None
+        if k == 'corner':
+            try:
+                return ('corner', self.piece, D.edge_index(D.piece(spec, self.piece), self.thing))
+            except Exception:
+                return None
+        if k == 'ipoint':                             # a line's point: probed as its vertex
+            try:
+                return ('inode', self.piece) + ipoint_of(self.thing)
+            except ValueError:
+                return None
+        return (k, self.piece, self.thing)
+
+    def _items(self):
+        """The things moved, as picked_lines items."""
+        if self.kind == 'MULTI':
+            try:
+                return [tuple(x) for x in json.loads(self.items or '[]')]
+            except ValueError:
+                return []
+        return [(self.kind.lower(), self.piece, self.thing)]
 
     def _hit(self, spec, ray):
         """(the gap along ray now in mm, its direction) or (None, None)."""
-        pr = gap_probe(spec, self._g())
+        pr = gap_probe(spec, self._g(spec)) if self._g(spec) is not None else None
         if pr is None or ray < 0 or ray >= len(pr[0].rays) or pr[0].rays[ray] is None:
             return None, None
         r = pr[0].rays[ray]
@@ -4213,16 +4732,30 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
 
     def invoke(self, context, event):
         spec, _ = store.get(context)
-        pr = gap_probe(spec, self._g())
-        if pr is None:
+        if spec is None:
             return {'CANCELLED'}
-        gl = SN.gaps(pr[0], SN.gauge(*pr))[:GAP_MAX]
         rays, gaps = [-1] * GAP_MAX, [0.0] * GAP_MAX
-        for k, (a, b, mm, i) in enumerate(gl):
-            rays[k], gaps[k] = i, mm / 1000.0
+        if self.kind == 'MULTI':                      # several: X / Y only (each has its own gaps)
+            if not self._items():
+                return {'CANCELLED'}
+        elif self.kind == 'PIECE':                    # a whole piece: X / Y and its size
+            if not any(p['name'] == self.piece for p in spec['pieces']):
+                return {'CANCELLED'}
+        else:
+            g = self._g(spec)
+            pr = gap_probe(spec, g) if g is not None else None
+            if pr is None:
+                return {'CANCELLED'}
+            for k, (a, b, mm, i) in enumerate(SN.gaps(pr[0], SN.gauge(*pr))[:GAP_MAX]):
+                rays[k], gaps[k] = i, mm / 1000.0
         self.rays, self.gaps, self.gaps0 = rays, gaps, gaps
         self.move_x = self.move_y = 0.0
-        dialog_aside(context, event, [self.piece], spec)     # beside the piece: the dialog does not cover the ghost
+        self.size0 = (0.0, 0.0)
+        if self._sizable(spec):
+            w, h = self._box(spec) / 1000.0
+            self.size0, self.width, self.height = (w, h), w, h
+        names = sorted({x[1] for x in self._items()})
+        dialog_aside(context, event, names, spec)     # beside the pieces: the dialog does not cover the ghost
         ghost_open(self)
         return context.window_manager.invoke_props_dialog(self)
 
@@ -4230,10 +4763,17 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
         spec, _ = store.get(context)
         layout = self.layout
         col = layout.column(align=True)
-        col.label(text=tx("Move from where it is"))
+        n = len(self._items())
+        col.label(text=tx("Move from where it is") if n == 1 else tx("Move the {0} picked from where they are", n))
         col.prop(self, "move_x")
         col.prop(self, "move_y")
-        pr = gap_probe(spec, self._g()) if spec is not None else None
+        if self.size0[0] > 0:
+            col = layout.column(align=True)
+            col.label(text=tx("Size (about its middle)"))
+            col.prop(self, "width")
+            col.prop(self, "height")
+        g = self._g(spec) if spec is not None else None
+        pr = gap_probe(spec, g) if g is not None else None
         shown = [k for k in range(GAP_MAX) if self.rays[k] >= 0]
         if pr is not None and shown:
             col = layout.column(align=True)
@@ -4243,8 +4783,9 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
                 if r is not None:
                     col.prop(self, "gaps", index=k, text=arrow(r[1]))
         if spec is not None:            # where it would go, drawn on the pattern while the values change
-            draw_why(layout, ghost(self, ("set_gap", self.kind, self.piece, self.thing, self.move_x, self.move_y,
-                                    tuple(self.gaps)), lambda: self._ghost(spec)))
+            draw_why(layout, ghost(self, ("set_gap", self.kind, self.piece, self.thing, self.items, self.move_x,
+                                    self.move_y, tuple(self.gaps), self.width, self.height),
+                                   lambda: self._ghost(spec)))
 
     def _delta(self, spec):
         """How far the values move it (mm), or a ValueError saying why not."""
@@ -4259,25 +4800,54 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
         return d
 
     def _apply(self, spec, d, light=False):
-        """(the moved copy, pieces changed); a ValueError when it may not go there."""
-        g = self._g()
-        sp = light_copy(spec, [g[1]]) if light else S.loads(S.dumps(spec))
-        if g[0] == 'iline':
-            ch = D.move_internal(sp, g[1], g[2], 'all', tuple(d))
-        else:
-            ch = D.move_edge(sp, g[1], g[2], tuple(d))
-        bad = D.problems(sp, ch) + (D.internal_problems(sp, g[1], [g[2]]) if g[0] == 'iline' else [])
+        """(the moved copy, pieces changed); a ValueError when it may not go there. The things move as a drag of them
+        does (move_lines): a corner shared by two picked edges once, a twin as the mirror image. A whole piece or a
+        closed shape with a size changed is scaled about its middle and moved as Whole Pieces' S and G do
+        (transform_group: a twin follows as its mirror image, a piece edited symmetrically stays so)."""
+        k = self._scale()
+        if self.kind == 'PIECE' or (self.size0[0] > 0 and np.abs(k - 1.0).max() > 0):
+            P = [self.piece] if self.kind == 'PIECE' else []
+            L = [] if P else [(self.piece, self.thing)]
+            if P and not any(p['name'] == self.piece for p in spec['pieces']):
+                raise ValueError(rpt("Not applied: ") + rpt("it is not there any more"))
+            names = set(P) | {n for n, _ in L}
+            for n in list(names):
+                tw = D.twin_of(spec, n)
+                if tw:
+                    names.add(tw)
+            sp = light_copy(spec, sorted(names)) if light else S.loads(S.dumps(spec))
+            ch, _rigid = D.transform_group(sp, P, L, 0.0, tuple(k), tuple(d))
+            bad = D.problems(sp, ch)
+            if L:
+                bad += D.internal_problems(sp, self.piece, [self.thing])
+            if bad:
+                raise ValueError(rpt("Not applied: ") + bad[0])
+            return sp, ch
+        its = [x for x in self._items() if _exists(spec, x)]
+        if not its:
+            raise ValueError(rpt("Not applied: ") + rpt("it is not there any more"))
+        sp = light_copy(spec, _touched(spec, its)) if light else S.loads(S.dumps(spec))
+        ch = move_lines(sp, its, d)
+        bad = D.problems(sp, ch)
+        lines = {}
+        for k, nm, x in its:
+            if k == 'iline':
+                lines.setdefault(nm, []).append(x)
+        for nm, ls in lines.items():
+            bad += D.internal_problems(sp, nm, ls)
         if bad:
             raise ValueError(rpt("Not applied: ") + bad[0])
         return sp, ch
 
+    def _unchanged(self, d):
+        return np.linalg.norm(d) < 1e-6 and np.abs(self._scale() - 1.0).max() == 0
+
     def _ghost(self, spec):
         d = self._delta(spec)
-        if np.linalg.norm(d) < 1e-6:
+        if self._unchanged(d):
             return None, (), []
         sp, ch = self._apply(spec, d, light=True)
-        g = self._g()
-        return sp, ch, ([D.internal(D.piece(sp, g[1]), g[2])['pts']] if g[0] == 'iline' else [])
+        return sp, ch, [D.internal(D.piece(sp, nm), x)['pts'] for k, nm, x in self._items() if k == 'iline']
 
     def cancel(self, context):
         clear_ghost()
@@ -4289,7 +4859,7 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
         spec, _ = store.get(context)
         try:
             d = self._delta(spec)
-            if np.linalg.norm(d) < 1e-6:
+            if self._unchanged(d):
                 return {'CANCELLED'}
             sp, ch = self._apply(spec, d)
         except ValueError as exc:
@@ -4302,20 +4872,29 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
 
 
 def draw_edges_tab(layout, context):
-    """The Tool tab's AC9 Edges: the picked outline edges, each with its length, and their total."""
-    sel = selected_edges(store.get(context)[0])
-    if not sel:
+    """The Tool tab's AC9 Edges: the picked outline edges, each with its length, and their total; the picked corners;
+    Numeric Input for all that is picked."""
+    spec = store.get(context)[0]
+    sel = selected_edges(spec)
+    kinds = [x[0] for x in picked_lines(spec)] if spec is not None else []
+    ncor, npts = kinds.count('corner'), kinds.count('ipoint')
+    if not sel and not ncor and not npts:
         return
     col = layout.column()
     from .shape_tool import fmt
-    col.label(text=tx("Edges: {0}   total {1}", len(sel), fmt(context, sum(x[2] for x in sel))), icon='IPO_LINEAR')
-    box = col.column(align=True)
-    for nm, eid, L in sel[:12]:
-        box.label(text=f"{nm[:14]}  {eid}   {fmt(context, L)}")
-    if len(sel) > 12:
-        box.label(text=tx("... and {0} more", len(sel) - 12))
-    if len(sel) == 1:
-        draw_gaps(col, context, store.get(context)[0], ('edge', sel[0][0], sel[0][1]))
+    if sel:
+        col.label(text=tx("Edges: {0}   total {1}", len(sel), fmt(context, sum(x[2] for x in sel))),
+                  icon='IPO_LINEAR')
+        box = col.column(align=True)
+        for nm, eid, L in sel[:12]:
+            box.label(text=f"{nm[:14]}  {eid}   {fmt(context, L)}")
+        if len(sel) > 12:
+            box.label(text=tx("... and {0} more", len(sel) - 12))
+    if ncor:
+        col.label(text=tx("Corners: {0}", ncor), icon='VERTEXSEL')
+    if npts:                                       # internal lines' points (user 2026-11-17)
+        col.label(text=tx("Points: {0}", npts), icon='VERTEXSEL')
+    draw_move_by_number(col, context, spec)
     col.label(text="Shift+click: add / take out", icon='INFO')
 
 
@@ -4330,16 +4909,22 @@ def draw_internal_tab(layout, context):
     from .shape_tool import fmt
     col.label(text=f"{name[:16]}  {lid}  ({fmt(context, S.polyline_len(it['pts']))})", icon='IPO_LINEAR')
     hole = bool(it.get('hole'))
+    # while Live / Local Sim runs it takes the fold angle, its direction and end taper at once; Turns, Layers, the
+    # line's elastic and a hole are read when a run starts, so they are grayed (user 2026-11-16)
+    from . import ui as U
+    L = U.live_running()
     if it.get('closed'):            # a closed shape: a hole or not, pressed while it is one (user 2026-10-28)
         # a hole or not is the shape's state, kept here; Clone as Pattern is a right-click item (the Tool tab holds
         # values, the menu the verbs; user 2026-11-11)
-        op = col.operator("ac9_cloth_sim.cut_out", text=tx("Convert to Hole"), icon='SELECT_SUBTRACT', depress=hole)
+        hr = col.row()
+        hr.enabled = not L
+        op = hr.operator("ac9_cloth_sim.cut_out", text=tx("Convert to Hole"), icon='SELECT_SUBTRACT', depress=hole)
         op.piece, op.line = name, lid
     f = col.column()
     f.enabled = not hole            # a hole has no cloth to fold or shrink
     f.use_property_split = True
     f.use_property_decorate = False
-    f.prop(context.scene, "ac9_iline_fold_angle", text=tx("Fold Angle"))
+    f.prop(context.scene, "ac9_iline_fold_angle", text=tx("Fold Angle"), icon=U.live_icon(L))
     if _taper_ends(spec,s):
         taper=f.row();taper.enabled=abs(context.scene.ac9_iline_fold)>1e-6
         taper.prop(context.scene,"ac9_iline_end_taper",text=tx("Taper"))
@@ -4351,22 +4936,30 @@ def draw_internal_tab(layout, context):
     partial = FS.partial(context, name, lid) if abs(context.scene.ac9_iline_fold) > 1e-6 else False
     if abs(context.scene.ac9_iline_fold) > 1e-6:
         f.row(align=True).prop(context.scene, "ac9_iline_fold_dir", expand=True)
-        _draw_side_choices(f, context.scene, "ac9_iline_fold_side", "Turns", 'NONE', not partial)
+        _draw_side_choices(f, context.scene, "ac9_iline_fold_side", "Turns", 'NONE', not partial and not L)
     # the placed shape follows the fields at once, the first time too (user 2026-10-24: no Fold button); a line it
     # cannot fold says why, with Local Sim to see it
     from . import place_fold as PF
     if abs(context.scene.ac9_iline_fold) > 1e-6:
         PF.draw_why(f, context, name, lid)
         # one layer (user 2026-10-24): never refused, what looks wrong is said under it
-        _draw_side_choices(f, context.scene, "ac9_iline_fold_layers", "Layers", 'BOTH', not partial)
+        _draw_side_choices(f, context.scene, "ac9_iline_fold_layers", "Layers", 'BOTH', not partial and not L)
         if partial:
             f.label(text=tx("Stops inside the piece: no A / B"), icon='INFO')
+        elif PF.named_apart(spec, name, lid):
+            # a file from before the mirror's A was the mirror image of A here: the same side has the other letter
+            # there until matched (nothing changes on opening a file)
+            f.label(text=tx("A / B named apart on its mirror"), icon='INFO')
+            op = f.operator("ac9_cloth_sim.fold_match_mirror", icon='MOD_MIRROR')
+            op.piece, op.line = name, lid
         if _flayers_get(None):
             import textwrap
             nc = f.column(align=True)
             for k, t in enumerate(t_ for n_ in notes_for(name, lid) for t_ in textwrap.wrap(n_, 34)):
                 nc.label(text=t, icon='INFO' if k == 0 else 'BLANK1')
-    f.prop(context.scene, "ac9_iline_elastic", text=tx("Elastic"))
+    er = f.row()
+    er.enabled = not L              # a line's elastic is read when a run starts (a whole piece's acts at once)
+    er.prop(context.scene, "ac9_iline_elastic", text=tx("Elastic"))
     sewn = [sm['id'] for sm in spec['seams'] if any(sm[k]['piece'] == name and sm[k].get('line') == lid
                                                     for k in ('a', 'b'))]
     if sewn:
@@ -4375,7 +4968,9 @@ def draw_internal_tab(layout, context):
         for sid in sewn[:9]:
             g.operator("ac9_cloth_sim.pick_seam", text=sid).seam = sid
     # Cut and Delete are right-click items and keys (X): the Tool tab holds the line's values (user 2026-11-11)
-    draw_gaps(col, context, spec, ('iline', name, lid))
+    gc = col.column()
+    gc.enabled = not L              # moving the line is a pattern edit, read when a run starts
+    draw_move_by_number(gc, context, spec)       # the line, or it with the other things picked
 
 
 def _draw_side_choices(layout, scene, prop, label, neutral, enabled):
@@ -4422,7 +5017,7 @@ class AC9_OT_SimRestorePieces(bpy.types.Operator):
 
 
 def missing_pieces(context, spec):
-    """The pieces whose flat pattern objects are gone (every piece has one, Off All too), [] when no pattern is
+    """The pieces whose flat pattern objects are gone (every piece has one, Off too), [] when no pattern is
     shown."""
     if spec is None or PV.layout_empty(context) is None:
         return []
@@ -4439,8 +5034,8 @@ class AC9_OT_SimMirrorCopy(bpy.types.Operator):
     # the pair's mirror plane (user 2026-11-11): left / right beside the piece, front / back turned upside down above
     # it; changed later in Tool tab > AC9 Piece > Pair
     plane: bpy.props.EnumProperty(name="Mirror Plane", items=[
-        ('x', "Left / Right", "Mirror left to right: the copy beside the piece, its 3D mirror image across the body's center (X)"),
-        ('y', "Front / Back", "Mirror front to back: the copy upside down beside the piece; in 3D a piece laid flat is mirrored where it is, one on the body across its center (Y)")],
+        ('x', "Left / Right", "Mirror left to right: the copy beside the piece; in 3D a piece laid flat is mirrored about the garment's center, one on the body across the body's center (X)"),
+        ('y', "Front / Back", "Mirror front to back: the copy upside down beside the piece; in 3D a piece laid flat is mirrored about the garment's center (where it is, for the first pair), one on the body across the body's center (Y)")],
         default='x')
 
     # the right-click menu: the copies follow the mouse until a click, as Duplicate (Shift+D)
@@ -4454,9 +5049,7 @@ class AC9_OT_SimMirrorCopy(bpy.types.Operator):
         r = self.execute(context)
         if r == {'FINISHED'} and self.follow and getattr(self, 'made', None) and context.region is not None                 and context.region.type == 'WINDOW' and AC9_OT_SimPatternDrag.poll(context):
             import json
-            SEL.deselect_all(context)               # the copies selected, as Duplicate's
-            for c in self.made:
-                TB.select_piece(context, c, extend=True)
+            SEL.apply(context, self.made, 'SET', active=self.made[0], interaction=True)
             bpy.ops.ac9_cloth_sim.pattern_transform('INVOKE_DEFAULT', mode='MOVE', pieces=json.dumps(self.made))
         return r
 
@@ -4483,17 +5076,12 @@ class AC9_OT_SimMirrorCopy(bpy.types.Operator):
         for n in placed:
             # a new pair starts linked ('unlinked' left on the original by a pair deleted before would set it apart)
             pl[n].pop('unlinked', None)
-            if self.plane == 'y' and S.is_flat(pl[n]):
-                # a piece laid flat: its front / back copy where it is, mirrored about its own middle (user
-                # 2026-11-12); moving one apart in y moves the other the opposite way
-                from . import placed_view as PLV
-                ob = PLV.objects(spec).get(n)
-                if ob is not None and ob.get(PLV.PROP) == n:          # where it is shown (moved by hand too)
-                    W = PLV._world_co(ob)
-                    mid = 0.5 * (W[:, 1].min() + W[:, 1].max()) * 1000.0
-                else:
-                    mid = S.flat_center(pl[n], S.Outline(D.piece(spec, n)))[1]
-                S.set_mirror_at(spec, (n, made[n]), mid)
+            if S.is_flat(pl[n]):
+                # a piece laid flat mirrors about the garment's center, made here when there is none yet: a front /
+                # back copy where it is (user 2026-11-12), a left / right one across the body's center (user
+                # 2026-11-17: one center per garment, moved as an empty)
+                from . import placement as PLC
+                PLC.set_pair_middle(spec, n, made[n], self.plane)
             pl[made[n]] = S.mirrored_placement(pl[n], S.Outline(D.piece(spec, n)), S.Outline(D.piece(spec, made[n])),
                                                pose='mirror', cx=S.mirror_center(spec, self.plane, n))
         commit(context, spec, list(made.values()))
@@ -4615,7 +5203,7 @@ class AC9_OT_SimParallelLine(bpy.types.Operator):
         select_internal(context, self.piece, lids[-1])
         self.report({'INFO'}, rpt("Added line {0} on {1}, {2} apart", ', '.join(lids), self.piece,
                                   U.fmt(context, self.distance * 1000.0))
-                    + (rpt("; {0}", msg) if msg else "") + rpt(F9))
+                    + (rpt("; {0}", msg) if msg else ""))
         return {'FINISHED'}
 
 
@@ -4668,15 +5256,14 @@ class AC9_OT_SimDuplicatePieces(bpy.types.Operator):
             D.transform_group(spec, list(made.values()), (), 0.0, (1.0, 1.0), tuple(d))
         self.made = list(made.values())
         commit(context, spec, list(made.values()))
-        SEL.deselect_all(context)                   # the copies selected: Place, G or S goes on with them
-        for c in made.values():
-            TB.select_piece(context, c, extend=True)
+        # the copies selected: Place, G or S goes on with them
+        SEL.apply(context, list(made.values()), 'SET', active=next(iter(made.values())), interaction=True)
         self.report({'INFO'}, rpt("Copied {0} ({1}), {2} seams", len(made), ', '.join(made.values()), len(ids)))
         return {'FINISHED'}
 
 
 class AC9_OT_SimSymmetrize(bpy.types.Operator):
-    """Make the selected piece symmetric about its center line: the left half stays and the right is made again as its mirror image (F9: keep the right half instead). Symmetric Edit is switched on"""
+    """Make the selected piece symmetric about its center line: the half you choose stays and the other is made again as its mirror image. Symmetric Edit is switched on"""
     bl_idname = "ac9_cloth_sim.symmetrize"
     bl_label = "Symmetrize"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4706,7 +5293,7 @@ class AC9_OT_SimSymmetrize(bpy.types.Operator):
         msg = commit(context, sp, ch, old_spec=old)
         self.report({'INFO'}, (rpt("{0}: symmetric, the left half kept", name) if self.keep == 'LEFT'
                                else rpt("{0}: symmetric, the right half kept", name))
-                    + (rpt("; {0}", msg) if msg else "") + rpt(F9))
+                    + (rpt("; {0}", msg) if msg else ""))
         return {'FINISHED'}
 
 
@@ -4726,7 +5313,7 @@ def _show_placed(context, spec, made, placed, *, preparation=None):
         PLV.build(context, sp, res['pat'], res['tris'], res['X'], res['pairs'], only={made[n] for n in placed})
     except ValueError as exc:
         PB.cancel(preparation)
-        return [tx("placed object not made again ({0}): Move by Hand", exc)]
+        return [tx("placed object not made again ({0}): place the piece again", exc)]
     return []
 
 
@@ -4807,11 +5394,13 @@ def _carry_pending(context, g, spec):
     import json
     import os
     from . import dress as DR
+    from . import result_reference as RR
     job = DR.job_of(g)
-    sj = os.path.join(job, 'ac9_spec.json') if job else None
-    if not sj:
+    if not job:
         return ''
-    if not os.path.exists(sj):
+    res = RR.open_result(job)
+    dressed = res.dressed_spec_text()
+    if dressed is None:
         # a dressed result no edit has been carried from yet (a job from before 2026-10-10 wrote no record): the
         # pattern's shape against the result's mesh (core/transfer.shape_changed: the outline and internal lines,
         # not the mesh remade, so an older mesher or another mesh size still matches). A pattern changed some other
@@ -4819,9 +5408,9 @@ def _carry_pending(context, g, spec):
         # the old edge, 1366 triangles of no area, and the solver stopped)
         from .core import transfer as TR
         try:
-            old = np.load(os.path.join(job, 'pattern.npz'), allow_pickle=True)
-            idx = np.load(os.path.join(job, 'scene.idx.npz'))
-        except (OSError, ValueError):
+            old = res.pattern()
+            idx = res.index
+        except ValueError:
             return ''
         changed = TR.shape_changed(spec, old, idx)
         if not changed:
@@ -4829,13 +5418,20 @@ def _carry_pending(context, g, spec):
         raise ValueError(f"{', '.join(n for n, _ in changed[:3])} changed outside the drafting tools since the "
                          "garment was simulated, so there is no record to carry from: undo the change, or Back to "
                          "Placed with nothing selected")
-    base = S.loads(open(sj, encoding='utf-8').read())
+    base = S.loads(dressed)
     if cloth_key(base) == cloth_key(spec):
         drop_pending(context)
         return ''
     rigid, sources = _pending_hints(base)          # edits made with 3D Follows Edits off: told as they were made
     msg = carry_to_3d(context, base, spec, rigid, sources) or ''
     drop_pending(context)
+    # a .blend from another PC whose pattern was edited after the garment was dressed (dress.job_from_mesh): said
+    try:
+        since = res.info.get('edited_since') or []
+    except ValueError:
+        since = []
+    if since and msg:
+        msg = tx("pattern edits made after the garment was dressed carried to it ({0})", ", ".join(since)) + "; " + msg
     return msg
 
 
@@ -4896,7 +5492,9 @@ def cloth_key(spec):
     cloth). Notches, roles, measures, the mesh size and the rest are left out (Continue re-meshes for a new mesh size
     itself)."""
     import json
-    return json.dumps([[{k: p.get(k) for k in ('name', 'edges', 'internals', 'enabled')} for p in spec['pieces']],
+    from .core import fold_hand as FH       # a line's hand moves no cloth
+    return json.dumps([[{k: p.get(k) for k in ('name', 'edges', 'internals', 'enabled')}
+                        for p in map(FH.shape_only, spec['pieces'])],
                        [{k: v for k, v in sm.items() if k not in ('check', 'source', 'when')}
                         for sm in spec.get('seams', [])]], sort_keys=True)
 
@@ -4960,17 +5558,30 @@ def _menu_hit(context, event, tool):
     if tool == 'EDIT_SEAMS':
         from . import seam_edit_tool as SET
         h = SET.seam_hit(context, event, kind)
-        return ('seam', h[1], h[2]) if h else None
+        if h:
+            return ('seam', h[1], h[2])
     if tool == 'EDIT_MEASURE':                    # a measured line or a tape
         from . import measure_edit as MEE
         key = MEE.pick(context, (event.mouse_region_x, event.mouse_region_y), kinds=MEE.EDIT_KINDS)
-        return ('measure', key) if key else None
-    if tool == 'PLACE':                           # a flat piece to place, or a placed piece's object
-        if kind == 'PATTERN':
-            return ('placed', ob[PV.PIECE_PROP], ob)
-        if kind == 'PLACED':
-            return ('placed', ob[TB.PLACED_PROP], ob)
+        if key:
+            return ('measure', key)
+    if kind == 'PLACED':                          # a placed piece's object, in every tool (user 2026-11-17: its menu
+        return ('placed', ob[TB.PLACED_PROP], ob)  # was there with Place alone, and read as empty elsewhere)
+    if tool in ('EDIT_SEAMS', 'EDIT_MEASURE'):
         return None
+    if tool == 'PLACE':                           # a flat piece to place
+        return ('placed', ob[PV.PIECE_PROP], ob) if kind == 'PATTERN' else None
+    if tool == 'DRAW':                            # a drawing tool: the closed internal shape or the piece under it
+        if kind not in ('PATTERN', 'PLANE'):
+            return None
+        h = pick(context, spec, outlines, PV.layout_matrix(context), event.mouse_region_x, event.mouse_region_y)
+        if h and h[0] == 'iline':
+            it = next((x for x in D.piece(spec, h[1]).get('internals', []) if x['id'] == h[2]), None)
+            if it is not None and it.get('closed'):
+                return h
+        if kind == 'PATTERN' and ob is not None and PV.PIECE_PROP in ob:
+            return ('piece', ob[PV.PIECE_PROP])
+        return ('piece', h[1]) if h and len(h) > 1 and isinstance(h[1], str) else None
     if tool not in ('EDIT_PATTERN', 'TRANSFORM_PATTERN') or kind not in ('PATTERN', 'PLANE'):
         return None
     return pick(context, spec, outlines, PV.layout_matrix(context), event.mouse_region_x, event.mouse_region_y)
@@ -4979,24 +5590,64 @@ def _menu_hit(context, event, tool):
 def _menu_select(context, hit):
     """What the menu's verbs act on (the selected pieces or seams): the thing right-clicked, unless it is picked."""
     from . import placement as PL
-    if hit[0] == 'piece' and hit[1] != _selected_piece(context):
-        TB.select_piece(context, hit[1])
+    from . import tool_tab as TT
+    if hit[0] == 'piece':
+        if hit[1] in SEL.ids(context):
+            SEL.apply(context, SEL.ids(context), active=hit[1])
+            TT.piece_clicked(context)
+        else:
+            TB.select_piece(context, hit[1])
     elif hit[0] == 'seam':
         from . import seam_edit_tool as SET
         spec = store.get(context)[0]
-        if hit[1] not in {sm['id'] for sm in store.selected_seams(context, spec)}:
+        picked = {sm['id'] for sm in store.selected_seams(context, spec)}
+        if hit[1] not in picked:
             SET.select_seam(context, hit[1])
+        else:
+            SET.activate_seam(context, hit[1])
     elif hit[0] == 'measure':
         from . import measure_edit as MEE
-        if MEE.sel(context) != hit[1]:
-            MEE.select(context, hit[1])
-    elif hit[0] == 'placed' and not hit[2].select_get():
-        TB.select_object(context, hit[2])
-    elif hit[0] == 'garment' and hit[1] not in PL.selected_pieces(context):
+        MEE.select(context, hit[1])
+    elif hit[0] in ('edge', 'corner', 'iline', 'iend', 'inode', 'ihandle'):
+        item = edit_item(store.get(context)[0], hit)
+        if item is not None:
+            kind, name, iid = item
+            if item in picked_lines(store.get(context)[0]):
+                if kind == 'iline':
+                    old = (_isel['piece'], _isel['line'])
+                    if old != (name, iid):
+                        _imore.remove((name, iid))
+                        if old[0]:
+                            _imore.append(old)
+                        _isel.update(piece=name, line=iid)
+                    _companion_scope(context, 'internal')
+                    TT.publish(context, 'INTERNAL')
+                else:
+                    TT.publish(context, 'EDGES')
+            elif kind == 'edge':
+                select_edge(context, name, iid)
+            elif kind == 'corner':
+                select_corner(context, name, iid)
+            elif kind == 'ipoint':
+                lid, index = ipoint_of(iid)
+                select_ipoint(context, name, lid, index)
+            else:
+                select_internal(context, name, iid)
+    elif hit[0] == 'placed':
+        if hit[2].select_get():
+            SEL.apply(context, SEL.ids(context), active=SEL._names(hit[2])[0], view='world')
+            TT.piece_clicked(context)
+        else:
+            TB.select_object(context, hit[2])
+    elif hit[0] == 'garment':
         from . import dress as DR
         g = bpy.data.objects.get(DR.garment_name(store.get(context)[0]))
         if g is not None:
-            TB.pick_garment_piece(context, g, hit[1])
+            if hit[1] in PL.selected_pieces(context):
+                SEL.apply(context, SEL.ids(context), active=hit[1], view='world')
+                TT.piece_clicked(context)
+            else:
+                TB.pick_garment_piece(context, g, hit[1])
 
 
 class AC9_OT_SimContextMenu(bpy.types.Operator):
@@ -5043,6 +5694,10 @@ class AC9_OT_SimContextDo(bpy.types.Operator):
             return {'CANCELLED'}
 
 
+# Symmetrize's two rows: the half kept chosen in the menu, not afterwards in F9 (user 2026-11-17)
+SYM_KEEP_LEFT = "Symmetrize: Keep Left"
+SYM_KEEP_RIGHT = "Symmetrize: Keep Right"
+
 # (label, operator, action or "prop=value") per what is under the cursor (pick's kinds, 'seam'); None: a separator
 _MENU_ITEMS = {
     'iline': [("Cut Along Line", "ac9_cloth_sim.cut_line", ""), ("Slash and Spread", "ac9_cloth_sim.spread", ""),
@@ -5060,15 +5715,22 @@ _MENU_ITEMS = {
     'corner': [("Delete", "ac9_cloth_sim.pattern_edit", 'REMOVE')],
     'notch': [("Delete", "ac9_cloth_sim.pattern_edit", 'REMOVE')],
     'piece': [("Duplicate", "ac9_cloth_sim.duplicate_pieces", "follow=True"), ("Mirror Copy", "ac9_cloth_sim.mirror_copy", "follow=True"),
-              ("Symmetrize", "ac9_cloth_sim.symmetrize", ""), None,
+              (SYM_KEEP_LEFT, "ac9_cloth_sim.symmetrize", "keep=LEFT"),
+              (SYM_KEEP_RIGHT, "ac9_cloth_sim.symmetrize", "keep=RIGHT"), None,
               ("Move", "ac9_cloth_sim.pattern_transform", "mode=MOVE"),
               ("Rotate", "ac9_cloth_sim.pattern_transform", "mode=ROTATE"),
               ("Scale", "ac9_cloth_sim.pattern_transform", "mode=SCALE"),
               ("Name", "ac9_cloth_sim.piece_label", ""), None, ("Delete Piece", "ac9_cloth_sim.delete_piece", "")],
+    # a placed piece and a piece of the dressed garment: each its own rows (user 2026-11-17: not made the same). The
+    # placement rows work on a worn piece too: they put it back to placed first. Move / Rotate, the states and Hide
+    # are added to both by menu_items
     'placed': [("Back to Guide", "ac9_cloth_sim.reset_placed", ""), ("Back to Flat", "ac9_cloth_sim.clear_placement", ""),
                None, ("Mirror Placement", "ac9_cloth_sim.mirror_pose", ""), ("Swap Sides", "ac9_cloth_sim.swap_sides", ""),
                ("Unlink Pair", "ac9_cloth_sim.unlink_pair", "")],
-    'garment': [("Back to Placed", "ac9_cloth_sim.reset", ""), ("Local Sim", "ac9_cloth_sim.dress", 'mode=LOCAL,button=LOCAL')],
+    'garment': [("Back to Placed", "ac9_cloth_sim.reset", ""), ("Back to Guide", "ac9_cloth_sim.reset_placed", ""),
+                ("Back to Flat", "ac9_cloth_sim.clear_placement", ""), None,
+                ("Mirror Placement", "ac9_cloth_sim.mirror_pose", ""), ("Swap Sides", "ac9_cloth_sim.swap_sides", ""),
+                ("Local Sim", "ac9_cloth_sim.dress", 'mode=LOCAL,button=LOCAL')],
     'seam': [("Turn Off", "ac9_cloth_sim.seam_edit", 'TOGGLE'), ("Match Length A", "ac9_cloth_sim.match_length", 'side=a'),
              ("Match Length B", "ac9_cloth_sim.match_length", 'side=b'), None,
              ("Move Side", "ac9_cloth_sim.seam_move_side", ""), ("Notch Pair", "ac9_cloth_sim.seam_notch", ""),
@@ -5084,7 +5746,8 @@ _MENU_ITEMS_T = {
 }
 _MENU_KEYS = {"Add Point": "K", "Curve": "C", "Delete": "X", "Delete Point": "X", "Straighten": "C",
               "Delete Line": "X", "Add Notch": "N", "Duplicate": "Shift+D", "Rotate": "R", "Scale": "S", "Name": "F2",
-              "Move": "G", "Move Side": "M", "Notch Pair": "N", "Notch This Side": "Ctrl+N"}
+              "Move": "G", "Move Side": "M", "Notch Pair": "N", "Notch This Side": "Ctrl+N", "Hide": "H"}
+STATE_MENU = "MENU:AC9_MT_sim_context_state"      # a row that opens the states' submenu
 
 
 def menu_items(spec, hit, tool=None):
@@ -5094,6 +5757,9 @@ def menu_items(spec, hit, tool=None):
     if not hit:
         return []
     kind = hit[0]
+    if tool == 'DRAW':                            # a drawing tool's menu: the size of what is under the cursor
+        nr = numeric_row(spec, hit) if kind in ('piece', 'iline') else None
+        return [nr] if nr else []
     if kind == 'iline' and tool == 'TRANSFORM_PATTERN':
         pc = next((x for x in spec['pieces'] if x['name'] == hit[1]), None)
         it = next((x for x in (pc or {}).get('internals', []) if x['id'] == hit[2]), None)
@@ -5117,18 +5783,19 @@ def menu_items(spec, hit, tool=None):
             rows = _MENU_ITEMS['shape']
             if hole:                                    # a hole: its points and Delete, no curve to bend here
                 rows = [r for r in rows if r is None or r[2] != 'CURVE']
-            return first + [r if r is None else r + ({},) for r in rows]
+            nr = numeric_row(spec, hit)
+            return first + ([nr, None] if nr else []) + [r if r is None else r + ({},) for r in rows]
     if kind == 'measure':                         # a tape: Mirror, Delete; a measured line: back to where it was
         tape = hit[1].startswith('tape:')
         rows = ([("Mirror", "ac9_cloth_sim.measure_mirror", "")] if tape else []) +             [("Delete" if tape else "Reset Position", "ac9_cloth_sim.measure_delete", "")]
         return [r + ({},) for r in rows]
-    if kind in ('placed', 'garment'):            # then the state rows: the ones it is not in
-        pc = next((x for x in spec['pieces'] if x['name'] == hit[1]), None)
-        cur = S.piece_state(pc) if pc is not None else 'active'
-        st = [(lab, "ac9_cloth_sim.piece_state", 'state=' + k) for k, lab in
-              (('active', "Active"), ('freeze', "Freeze"), ('off_all', "Off (All)")) if k != cur]
-        rows = [r for r in _MENU_ITEMS[kind] if _experimental() or 'mode=LOCAL' not in r[2]]   # Local Sim: experimental
-        return [r if r is None else r + ({},) for r in rows + [None] + st]
+    if kind in ('placed', 'garment'):            # Move / Rotate, its own rows, the states' submenu, Hide
+        st = [("State", STATE_MENU, ""), ("Hide", "ac9_cloth_sim.hide_pieces", "")]
+        mv = [("Move", "transform.translate", ""), ("Rotate", "transform.rotate", ""), None]
+        # Local Sim: experimental. A separator (None) is kept: reading r[2] of it raised, and the placed piece's menu
+        # drew empty with the test features off (found by tests/test_state_names.py, 2026-11-17)
+        rows = [r for r in _MENU_ITEMS[kind] if r is None or _experimental() or 'mode=LOCAL' not in r[2]]
+        return [r if r is None else r + ({},) for r in mv + rows + [None] + st]
     if kind == 'seam':
         sm = next((x for x in spec.get('seams', []) if x['id'] == hit[1]), None)
         rows = list(_MENU_ITEMS['seam'])
@@ -5144,7 +5811,21 @@ def menu_items(spec, hit, tool=None):
     if kind in ('corner', 'handle'):              # the corner's smoothness (no key: the menu only, user 2026-11-13)
         cr = _corner_rows(spec, hit)
         out = cr + ([None] if cr and out else []) + out
+    if kind in ('inode', 'ihandle'):              # a line's vertex smooth or sharp, as a corner (user 2026-11-17)
+        cr = _ipoint_smooth_rows(spec, hit)
+        out = cr + ([None] if cr and out else []) + out
+    nr = numeric_row(spec, hit) if kind in ('corner', 'edge', 'iline', 'iend', 'inode', 'piece') else None
+    if nr is not None:                            # the Tool tab's Numeric Input here too (user 2026-11-11, 11-17)
+        out = [nr] + ([None] if out else []) + out
     return out
+
+
+def state_rows(spec, name):
+    """The states' submenu for piece `name`: [(label, state, is current)] for all four, named from the one table
+    (core/spec.py STATE_NAMES)."""
+    pc = next((x for x in spec['pieces'] if x['name'] == name), None) if spec else None
+    cur = S.piece_state(pc) if pc is not None else 'active'
+    return [(S.state_name(k), k, k == cur) for k in S.PIECE_STATES]
 
 
 def _experimental():
@@ -5183,7 +5864,7 @@ def shown_rows(rows, can_run=_can_run):
     to Pair with no partner), and without a separator at either end or twice in a row."""
     out = []
     for r in rows:
-        if r is not None and not can_run(r[1]):
+        if r is not None and not r[1].startswith('MENU:') and not can_run(r[1]):
             continue
         if r is None and (not out or out[-1] is None):
             continue
@@ -5213,14 +5894,21 @@ class AC9_MT_SimContext(bpy.types.Menu):
             label, op, action, props = r
             key = _MENU_KEYS.get(label)
             text = tx(label) + (f"   {key}" if key else "")
+            if op.startswith('MENU:'):                  # a submenu (the piece states)
+                layout.menu(op[5:], text=text)
+                continue
             if props:                                   # it names its target: run as it is
+                # '_invoke': it asks for its numbers first (Numeric Input). The context is taken per button
+                layout.operator_context = 'INVOKE_DEFAULT' if props.get('_invoke') else 'EXEC_DEFAULT'
                 o = layout.operator(op, text=text)
+                layout.operator_context = 'EXEC_DEFAULT'
                 for k, v in props.items():
-                    setattr(o, k, v)
+                    if k != '_invoke':
+                        setattr(o, k, v)
                 continue
             o = layout.operator("ac9_cloth_sim.context_do", text=text)
             o.op, o.action = op, action
-        if _menu['tool'] == 'EDIT_MEASURE':           # the pieces' Select All is no verb of a measurement
+        if _menu['tool'] in ('EDIT_MEASURE', 'DRAW'):  # no Select All: neither a measurement's nor a drawing tool's verb
             if not rows:
                 layout.label(text=tx("Nothing here"))
             return
@@ -5228,6 +5916,26 @@ class AC9_MT_SimContext(bpy.types.Menu):
             layout.separator()
         layout.operator("ac9_cloth_sim.select_all_pieces", text=tx("Select All")).action = 'SELECT'
         layout.operator("ac9_cloth_sim.select_all_pieces", text=tx("Deselect All")).action = 'DESELECT'
+
+
+class AC9_MT_SimContextState(bpy.types.Menu):
+    """The piece states, from the right-click menu of a placed or dressed piece: all four, the current one grayed"""
+    bl_idname = "AC9_MT_sim_context_state"
+    bl_label = "State"
+
+    def draw(self, context):
+        from . import ui as UI
+        layout = self.layout
+        layout.operator_context = 'EXEC_DEFAULT'
+        hit = _menu['hit']
+        spec = store.get(context)[0]
+        if not hit or spec is None:
+            return
+        for label, k, cur in state_rows(spec, hit[1]):
+            r = layout.row()
+            r.enabled = not cur
+            o = r.operator("ac9_cloth_sim.context_do", text=tx(label), icon=UI.STATE_ICON[k])
+            o.op, o.action = "ac9_cloth_sim.piece_state", 'state=' + k
 
 
 class AC9_OT_SimSelectAllPieces(bpy.types.Operator):
@@ -5239,21 +5947,18 @@ class AC9_OT_SimSelectAllPieces(bpy.types.Operator):
     action: bpy.props.EnumProperty(items=[('SELECT', "Select", ""), ('DESELECT', "Deselect", "")])
 
     def execute(self, context):
-        obs = [o for o in PV.piece_objects().values() if o is not None and o.name in context.view_layer.objects]
-        for o in obs:
-            o.select_set(self.action == 'SELECT')
-        if self.action == 'SELECT' and obs and (context.view_layer.objects.active not in obs):
-            context.view_layer.objects.active = obs[0]
+        names = [n for n, o in PV.piece_objects().items() if o is not None and o.name in context.view_layer.objects]
+        SEL.apply(context, names, 'ADD' if self.action == 'SELECT' else 'SUB', active='KEEP', others=False, interaction=True)
         return {'FINISHED'}
 
 
-CLASSES = (AC9_OT_SimSync3D, AC9_OT_SimPatternHover, AC9_OT_SimPatternDrag, AC9_OT_SimSetGap, AC9_OT_SimPatternEdit, AC9_OT_SimCornerSmooth, AC9_OT_SimPatternRotate,
+CLASSES = (AC9_OT_SimSync3D, AC9_OT_SimPatternHover, AC9_OT_SimPatternDrag, AC9_OT_SimSetGap, AC9_OT_SimPatternEdit, AC9_OT_SimCornerSmooth, AC9_OT_SimIPointSmooth, AC9_OT_SimPatternRotate,
            AC9_OT_SimPatternScale, AC9_OT_SimDuplicatePieces, AC9_OT_SimSymmetrize, AC9_OT_SimParallelLine,
            AC9_OT_SimEditPatternTool,
            AC9_OT_SimMatchLength, AC9_OT_SimExportDXF, AC9_OT_SimImportDXF, AC9_OT_SimImportSVG, AC9_OT_SimDrawPiece, AC9_OT_SimDrawLine, AC9_OT_SimNewPattern, AC9_OT_SimDeletePiece, AC9_OT_SimMirrorCopy,
            AC9_OT_SimSymmetricEdit, AC9_OT_SimUpdate3D, AC9_OT_SimDeleteInternal, AC9_OT_SimCutOut,
            AC9_OT_SimPickSeam, AC9_OT_SimPickPieceUnder, AC9_OT_SimDeleteSelected, AC9_OT_SimRestorePieces,
-           AC9_OT_SimContextMenu, AC9_OT_SimContextDo, AC9_MT_SimContext, AC9_OT_SimSelectAllPieces,
+           AC9_OT_SimContextMenu, AC9_OT_SimContextDo, AC9_MT_SimContext, AC9_MT_SimContextState, AC9_OT_SimSelectAllPieces,
            AC9_OT_SimCloneShape, AC9_OT_SimPatternTransform)
 
 
@@ -5355,6 +6060,7 @@ def unregister():
     _isel.update(piece=None, line=None)
     _imore.clear()
     _csel.clear()
+    _psel.clear()
     _esel.clear()
     for k in ('ac9_iline_fold', 'ac9_iline_fold_angle', 'ac9_iline_fold_dir', 'ac9_iline_fold_side',
               'ac9_iline_fold_layers', 'ac9_iline_elastic', 'ac9_iline_end_taper'):

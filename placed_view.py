@@ -24,7 +24,7 @@ import hashlib
 
 import bpy
 import numpy as np
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 from .i18n import tx
 
 COLL_NAME = "AC9_ClothSim_Placed"
@@ -35,6 +35,8 @@ PROP = "ac9_placed"             # on an object: the piece it holds
 TWIN_PROP = "ac9_placed_twin"   # ... and the piece its Mirror modifier makes ('' if none)
 LEAD_PROP = "ac9_placed_lead"   # ... a pair's side not mirror-meshed: the piece whose object it follows mirrored
 FOLLOWER_PROP = "ac9_placed_follower"   # ... on that leader: the piece following it
+GCENTER_PREFIX = "AC9 Center: "    # + the garment's name: its mirror center, an empty a person moves (user 2026-11-17)
+GCENTER_PROP = "ac9_center_of"     # on that empty: the garment it is the center of
 MIRROR_NAME = "AC9_ClothSim_Mirror"     # the empty mirroring a follower (its matrix: the x mirror at the center)
 FLAT_ATTR = "ac9_flat"          # per vertex: the layout point (mm)
 GEN_ATTR = "ac9_gen"            # per vertex: the world position it was made at (m)
@@ -45,11 +47,14 @@ FOLD_PROP = "ac9_fold"          # ... folded over its lines by Fold (place_fold)
 SEAM_PROP = "ac9_to_seam"       # ... moved onto its seams by Part to Seam (place_seam): the user's shape too
 LAID_PROP = "ac9_laid"          # ... laid on its sewn edge by Band on Edge (place_lay): the user's shape, laid again
                                 # by Simulate's lay (dress.py leaves it out of 'hand')
-KK_PROP = "ac9_kk"              # ... and its vertex k is the piece's mesh vertex k (a mirror-meshed twin's: its layout
-                                # points in FLAT_ATTR are the source piece's)
+KK_PROP = "ac9_kk"              # ... and its vertex k was the piece's mesh vertex k when it was made (a mirror-meshed
+                                # twin's: FLAT_ATTR holds the twin's own layout points, mirrored from the source). Kept for files and
+                                # diagnosis only: a mesh made again since can renumber its vertices, so whether
+                                # vertex k is still vertex k is decided from the layout points (layout_matches,
+                                # core.shape_source.carry), never from this mark
 GARMENT_PROP = "ac9_placed_garment"   # ... and the garment (spec name) it belongs to: a scene can hold several
 KEY_PROP = "ac9_placed_key"     # ... and the piece's layout mesh when made (vertex count, a hash of the points): a
-                                # pattern edited or re-meshed since is reported (mapped through the layout)
+                                # cache key only; whether the pattern changed since is layout_matches
 NV_PROP = "ac9_placed_nv"       # ... and its vertex count when made: vertices added or deleted by hand -> numbers
 BODY_PROP = "ac9_placed_body"   # ... and the body it was made on (placement.body_fingerprint): the body changed since
                                 # -> a piece not moved by hand is made again (user 2026-11-13, the shape seen is the start)
@@ -87,13 +92,14 @@ def placed_face_piece(context, ob, face_index):
     """Resolve the actual half touched, independently of the object's current source."""
     if not ob.get(TWIN_PROP):
         return ob.get(PROP)
-    modifiers = [m for m in ob.modifiers if m.show_viewport]
+    modifiers = [m for m in ob.modifiers if m.show_viewport and m.name != THICK_MOD]
     if len(modifiers) != 1 or modifiers[0].type != 'MIRROR':
         return None  # face ownership is known only for the standard generated pair
     me = ob.evaluated_get(context.evaluated_depsgraph_get()).data
     if not (0 <= face_index < len(me.polygons)):
         return None
-    verts, n = me.polygons[face_index].vertices, len(ob.data.vertices)
+    core = core_count(ob, len(me.vertices))     # a face of the thickness: the vertices it was copied from
+    verts, n = [v % core for v in me.polygons[face_index].vertices], len(ob.data.vertices)
     return ob[PROP] if max(verts) < n else ob[TWIN_PROP] if min(verts) >= n and max(verts) < 2 * n else None
 
 
@@ -107,6 +113,30 @@ def remember_control_side(context, ob, face_index):
     if side:
         _clicked_control[ob.session_uid] = (ob.name, ob[PROP], ob[TWIN_PROP], side)
         _control_signature = _selection_signature(context)
+
+
+def take_clicked_half(context, ob, face_index):
+    """A click on the mirrored half of a pair shown as one object: that half made the one moved (its object's origin
+    is then on it), so the gizmo is on the side picked (user 2026-10-29, again 2026-11-15: it stayed on the same side
+    whichever half was clicked). The pair's pieces stay picked. Returns (the object now carrying the pair, the
+    clicked face's index on it)."""
+    twin = ob.get(TWIN_PROP)
+    if not twin or placed_face_piece(context, ob, face_index) != twin:
+        return ob, face_index
+    nf = len(ob.data.polygons)          # the mirror modifier puts the mirrored faces after the source's
+    from . import store
+    from . import selection as SEL
+    spec = store.get(context)[0]
+    if spec is None:
+        return ob, face_index
+    try:
+        new = activate_side(context, spec, twin)
+    except ValueError:
+        return ob, face_index                   # kept as it was (a saved shape of its own): moved as before
+    if new is None:
+        return ob, face_index
+    SEL.refresh(context, active=twin, view='world')
+    return new, face_index - nf             # the clicked half is the source half now
 
 
 def hand_selection(context, names):
@@ -169,8 +199,27 @@ def garment(spec):
 
 
 def layout_key(V):
+    """A fingerprint of a layout, for caches only (the same value in every session: Python's hash() of bytes is
+    salted per process, so a key written before a restart never matched again). Never a proof that two meshes
+    number their vertices alike: layout_matches compares the points themselves."""
+    import hashlib
     V = np.ascontiguousarray(np.round(np.asarray(V, float), 3))
-    return f"{len(V)}:{hash(V.tobytes()) & 0xFFFFFFFF:08x}"
+    return f"{len(V)}:{hashlib.sha1(V.tobytes()).hexdigest()[:8]}"
+
+
+def layout_matches(ob, V):
+    """Are the placed object's layout points (FLAT_ATTR) the mesh with layout V, vertex by vertex
+    (core.shape_source.same_layout)? The marks written when it was made (KEY_PROP, KK_PROP) do not know a mesh made
+    again since with the same vertex count."""
+    from .core.shape_source import CARRY_ATOL, same_layout
+    me = ob.data
+    fl = me.attributes.get(FLAT_ATTR)
+    n = len(me.vertices)
+    if fl is None or n != len(V) or len(fl.data) != n:
+        return False
+    F = np.empty(n * 2)
+    fl.data.foreach_get('vector', F)
+    return same_layout(F.reshape(-1, 2), V, atol=CARRY_ATOL)
 
 
 def objects(spec=None):
@@ -206,16 +255,53 @@ def _pair_key(spec, name):
 
 
 def aux_empties():
-    """The empties placed_view makes: the center, a pair's own center, the mirrors (all names)."""
+    """The empties placed_view makes: the center, a pair's own center, the mirrors, the garments' centers (names)."""
     return [o.name for o in bpy.data.objects if o.type == 'EMPTY'
             and (o.name in (CENTER_NAME, OLD_CENTER_NAME) or o.name.startswith(CENTER_NAME + ":")
-                 or o.name.startswith(MIRROR_NAME))]
+                 or o.name.startswith(MIRROR_NAME) or o.get(GCENTER_PROP) is not None)]
+
+
+def find_garment_center(spec):
+    """The garment's center empty as it is (not moved to the spec's), or None."""
+    g = garment(spec)
+    return next((o for o in bpy.data.objects if o.type == 'EMPTY' and o.get(GCENTER_PROP) == g), None)
+
+
+def garment_center_empty(context, spec):
+    """The garment's mirror center shown as an empty (S.CENTER, user 2026-11-17): made when missing, put where the
+    spec says. Only moved: its rotation and scale are locked (the planes through it are the world's). None when the
+    garment has no center. The spec is the truth; a move of the empty is read back by sync_pose."""
+    from .core import spec as S
+    c = S.garment_center(spec)
+    if c is None:
+        return None
+    ob = find_garment_center(spec)
+    if ob is None:
+        ob = bpy.data.objects.new(GCENTER_PREFIX + garment(spec), None)
+        ob[GCENTER_PROP] = garment(spec)
+        ob.empty_display_type = 'PLAIN_AXES'
+        ob.empty_display_size = 0.12
+        ob.show_name = True
+        ob.show_in_front = True
+        _collection(context).objects.link(ob)
+    ob.lock_rotation = (True, True, True)
+    ob.lock_rotation_w = True
+    ob.lock_scale = (True, True, True)
+    ob.rotation_euler = (0.0, 0.0, 0.0)
+    ob.scale = (1.0, 1.0, 1.0)
+    want = Vector(c) * MM
+    if (ob.location - want).length > 1e-7:
+        ob.location = want
+    return ob
 
 
 def center_empty(context, spec, name=None):
-    """The empty a pair's Mirror modifier mirrors about: the body's center (one for every pair), or, for a pair
-    with its own plane position (S.MIRROR_AT, the pair of `name`), an empty of its own at it."""
+    """The empty a pair's Mirror modifier mirrors about: the garment's center for a pair laid flat (one per garment,
+    shown and moved; S.uses_center), the body's center (one for every pair), or, for a pair with its own plane
+    position (S.MIRROR_AT, an older file), an empty of its own at it."""
     from .core import spec as S
+    if name and S.uses_center(spec, name):
+        return garment_center_empty(context, spec)
     at = S.stored_mirror_at(spec, name) if name else None
     key = _pair_key(spec, name) if at is not None else None
     if key is None:
@@ -316,7 +402,8 @@ def save_before_seam(ob, spec):
 
 def before_seam_pattern(spec, piece):
     """Stable geometry identity even when the placed object is currently archived."""
-    pc = next((p for p in spec.get('pieces', []) if p['name'] == piece), {})
+    from .core import fold_hand as FH
+    pc = FH.shape_only(next((p for p in spec.get('pieces', []) if p['name'] == piece), {}))   # a line's hand: no shape
     shape = {k: pc[k] for k in ('edges', 'internals', 'holes', 'mirror_axis') if k in pc}
     return hashlib.sha256(json.dumps(shape, sort_keys=True).encode('utf-8')).hexdigest()
 
@@ -639,7 +726,7 @@ def remove(names, spec=None, forget_kept=True):
 def drop(spec):
     """At a Dress: the garment's placed objects removed, and the collection with its center Empty once no garment's
     are left (user 2026-10-14: after a Dress the garment is the one mesh to work on; the placed shapes are made again
-    from the spec's placement and hand moves -- the pose -- when wanted: a Reset, Move by Hand after a whole Reset).
+    from the spec's placement and hand moves -- the pose -- when wanted: a Reset, show_placed after a whole Reset).
     The moved objects' shapes are kept (keep: a Fold, Part to Seam, Band on Edge or an Edit Mode edit is not only a
     pose, user 2026-10-22) and given back when their pieces are made again. Returns the pieces removed."""
     obs = objects(spec)
@@ -746,7 +833,7 @@ def shape_snapshot(ob, *, only_moved=False):
         provenance = ('edited' if moved else 'guide',)
     flat, triangles, world = shape
     return PlacedShape(str(ob.get(PROP, '')), int(ob.session_uid), int(ob.data.session_uid), provenance,
-                       flat, triangles, world, ob.get(NV_PROP), ob.get(KEY_PROP), bool(ob.get(KK_PROP)))
+                       flat, triangles, world, ob.get(NV_PROP), ob.get(KEY_PROP))
 
 
 def set_mirror_plane(ob, plane):
@@ -771,6 +858,73 @@ def _add_mirror(ob, cen, twin, plane='x'):
     md.mirror_object = cen
     md.use_mirror_merge = False
     md.use_clip = False
+    _thickness_last(ob)
+
+
+# ---------------------------------------------------------------- the placed shapes drawn with their thickness
+# The fabric's thickness drawn on the placed shapes too, not only on the dressed garment (user 2026-11-17: a fold over
+# an internal line cannot be read without it). The same one switch and side as the garment's (Overlays > Thickness),
+# a Solidify after the pair's Mirror, display only: every shape read for a run is the object's own mesh (hand_shape),
+# never the evaluated one. One piece per object, so one value per object (a pair's mirrored half takes its source's),
+# no vertex group: the mesh is swapped by many tools and a group's weights live on the mesh.
+# Readers of the evaluated mesh (placed_face_piece, _read, box_pieces) count the vertices without it: the Solidify
+# (simple) appends a copy of each vertex in the same order, so the first half are the shape's own (core_count).
+THICK_MOD = "AC9_Thickness"          # the dressed garment's modifier has the same name (dress.THICK_MOD)
+
+
+def thick_on(ob):
+    """Is the thickness drawn on this object now (in Edit Mode it is not: the edited mesh shown as it is)?"""
+    m = ob.modifiers.get(THICK_MOD)
+    return m is not None and m.show_viewport and (ob.mode != 'EDIT' or m.show_in_editmode)
+
+
+def core_count(ob, n_evaluated):
+    """The evaluated vertices of the shape itself (with its pair's Mirror), the thickness's copies left out."""
+    return n_evaluated // 2 if thick_on(ob) else n_evaluated
+
+
+def _thickness_last(ob):
+    """The thickness after every other modifier (a Mirror added later would mirror the copies in between)."""
+    i = ob.modifiers.find(THICK_MOD)
+    if 0 <= i < len(ob.modifiers) - 1:
+        ob.modifiers.move(i, len(ob.modifiers) - 1)
+
+
+def piece_thickness_mm(spec, name):
+    """The piece's drawn thickness in mm: its fabric's, 0 with none or set to no thickness (pieces[].thickness)."""
+    from .core import fabric as FA
+    for pc in spec.get('pieces', []):
+        if pc.get('name') == name and pc.get('thickness', True) is False:
+            return 0.0
+    return float(FA.thickness(FA.resolved(spec, name)) or 0.0)
+
+
+def refresh_thickness(context, spec, obs=None):
+    """Every placed object of the garment drawn with its piece's thickness, as the scene's switch and side say.
+    Writes only what differs (called by display_state.apply on each change of what is shown)."""
+    if not spec:
+        return
+    props = context.scene.ac9_cloth_sim
+    on = bool(getattr(props, 'show_thickness', False))
+    offset = {'INSIDE': -1.0, 'CENTER': 0.0, 'OUTSIDE': 1.0}.get(getattr(props, 'thickness_side', 'INSIDE'), -1.0)
+    obs = objects(spec) if obs is None else obs
+    for ob in {o.as_pointer(): o for o in obs.values()}.values():
+        mm = piece_thickness_mm(spec, str(ob.get(PROP, ''))) if on else 0.0
+        m = ob.modifiers.get(THICK_MOD)
+        if mm <= 0.0:
+            if m is not None:
+                ob.modifiers.remove(m)
+            continue
+        if m is None:
+            m = ob.modifiers.new(THICK_MOD, 'SOLIDIFY')
+            m.show_in_editmode = False
+            m.use_even_offset = False       # True shoots a vertex out at a sharp fold (as on the garment)
+            m.use_rim = True
+        if abs(m.thickness - mm / 1000.0) > 1e-9:
+            m.thickness = mm / 1000.0
+        if m.offset != offset:
+            m.offset = offset
+        _thickness_last(ob)
 
 
 def _tag(ob, spec, piece, V):
@@ -857,8 +1011,9 @@ def _stage_control_side(context, spec, name, *, preparation=None):
                 if twin is None or twin[0] != name:
                     raise ValueError('AC9 cannot match the saved fold to the other half: ' + lid)
                 row = dict(fold, line=twin[1])
-                if PF._ab_swapped(context, spec, source, lid, name, twin[1]):
-                    row['side'] = 1 - int(row.get('side', 0))
+                # the saved side is an index into the mesh's two sides, not a letter: the other half's index of
+                # the mirror image of that side, found by where the sides lie
+                row['side'] = PF.mirror_raw_side(context, spec, source, lid, name, twin[1], int(row.get('side', 0)))
                 folds.append(row)
             props[FOLD_PROP] = json.dumps(folds)
         fl = me.attributes.get(FLAT_ATTR)
@@ -1070,7 +1225,7 @@ def matrix_for_pose(ob, pose):
 def center_control_origins(context, spec, obs):
     """Put native gizmos on their source geometry, keeping shape and canonical pose.
 
-    Only explicit Move by Hand calls this. Each live/kept/prepared shape carries
+    show_placed and build (each object it makes) call this. Each live/kept/prepared shape carries
     its own local frame; no current-world translation is copied into an archive.
     """
     staged = []
@@ -1217,7 +1372,7 @@ def remesh(ob, V, T, extend=False):
         if a.name.startswith("ac9_fold_before_") and a.data_type == 'FLOAT_VECTOR' and a.domain == 'POINT':
             B = np.empty(n * 3)
             a.data.foreach_get('vector', B)
-            B2 = D._bary_map(V, Fp, To, B.reshape(-1, 3))
+            B2 = bm(V, Fp, To, B.reshape(-1, 3))
             new.attributes.new(a.name, 'FLOAT_VECTOR', 'POINT').data.foreach_set('vector', B2.astype(np.float32).ravel())
     for m in me.materials:
         new.materials.append(m)
@@ -1251,13 +1406,21 @@ def has_edits(ob):
 def sync_pose(context, spec):
     """The placed objects' poses written to the spec's placement (a mirrored pair's object: its twin gets the
     mirror image). Returns the new spec, or None when nothing changed. Called at the start of the AC9 operators
-    that read the placement (Dress, Place, Adjust, Center, Move by Hand, the pose fields, Mirror Placement...)."""
+    that read the placement (Dress, Place, Adjust, Center, the pose fields, Mirror Placement...)."""
     from .core import spec as S
     if not spec or not spec.get('placement'):
         return None
     leave_edit(context)
     pl = spec['placement']
     new = {}
+    # the garment's center moved as an empty (user 2026-11-17): read back, the spec is the truth from here
+    c_new = None
+    c = S.garment_center(spec)
+    gc = find_garment_center(spec) if c is not None else None
+    if gc is not None:
+        o = [float(v) * 1000.0 for v in gc.matrix_world.translation]
+        if max(abs(o[i] - c[i]) for i in range(3)) > 0.01:
+            c_new = o
     for ob in {o.name: o for o in objects(spec).values()}.values():
         n = ob.get(PROP)
         if n not in pl or ob.get(LEAD_PROP):    # a follower's pose is its leader's mirrored (below)
@@ -1270,9 +1433,12 @@ def sync_pose(context, spec):
             pm = S.mirror_pose(p, S.pair_plane(spec, n))
             if not same_pose(pm, pl[tw].get('pose')):
                 new[tw] = pm
-    if not new:
+    if not new and c_new is None:
         return None
     sp = S.loads(S.dumps(spec))
+    if c_new is not None:
+        S.set_garment_center(sp, c_new)
+        sp['placement'], _ = S.mirror_twins(sp)       # the pairs about it placed again in the spec
     for n, p in new.items():
         if p:
             sp['placement'][n]['pose'] = p
@@ -1371,6 +1537,12 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
     # a pair shown as two objects: the second follows the first mirrored; notes = followers placed apart by hand
     # before, which go to their pair's mirror image (design review 11/04: told, not moved silently)
     notes = link_pairs(context, spec)
+    # the origin on the piece from the start, not only after Move by Hand: a placed piece selected by a click and
+    # turned with R turns about its own middle (user 2026-11-17: the origin was 34 mm off the piece's middle; it is
+    # made round the middle of its bounding box, which on a piece bent round a cylinder lies off the piece). World
+    # shape and saved pose unchanged (ORIGIN_SHIFT_PROP); a pair's following side stays under its leader.
+    obs = objects(spec)
+    center_control_origins(context, spec, [obs[n] for n in made if n in obs and not obs[n].get(LEAD_PROP)])
     from . import display_state
     display_state.apply(context, spec, allow_split=True)
     return made, sorted(kept), notes
@@ -1385,9 +1557,11 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
 
 def _mirror_empty(context, spec, plane='x', piece=None):
     """The empty a follower is parented to: the mirror in x (or, front / back, in y) about the center (the pair of
-    `piece`: about its own plane position when it has one)."""
+    `piece`: about its own plane position when it has one; about the garment's center, followed as it is moved)."""
     from .core import spec as S
     cen = center_empty(context, spec, piece)
+    if piece and S.uses_center(spec, piece):
+        return _following_mirror(context, spec, plane, cen)
     key = _pair_key(spec, piece) if S.stored_mirror_at(spec, piece) is not None and piece else None
     name = MIRROR_NAME + ("_Y" if plane == 'y' else "") + (":" + key if key else "")
     ob = bpy.data.objects.get(name)
@@ -1399,6 +1573,48 @@ def _mirror_empty(context, spec, plane='x', piece=None):
         _collection(context).objects.link(ob)
     C = Matrix.Translation(cen.location)
     ob.matrix_world = C @ Matrix.Diagonal((*S.mirror_diag(plane), 1.0)) @ C.inverted()
+    return ob
+
+
+def _following_mirror(context, spec, plane, cen):
+    """The mirror about the garment's center `cen`, following it while it is moved (user 2026-11-17: the other side
+    goes the opposite way at once): scale -1 across the plane's axis, that coordinate 2 c by a driver, so its matrix is
+    T(2 c) S = C S C^-1 for any c."""
+    from .core import spec as S
+    k = S.axis_of(plane)
+    name = MIRROR_NAME + ("_Y" if plane == 'y' else "") + ":C:" + garment(spec)
+    ob = bpy.data.objects.get(name)
+    if ob is None:
+        ob = bpy.data.objects.new(name, None)
+        ob.empty_display_size = 0.05
+        ob.hide_select = True
+        ob.hide_viewport = True
+        _collection(context).objects.link(ob)
+    ob.parent = None
+    ob.rotation_euler = (0.0, 0.0, 0.0)
+    sc = [1.0, 1.0, 1.0]
+    sc[k] = -1.0
+    ob.scale = sc
+    loc = [0.0, 0.0, 0.0]
+    loc[k] = 2.0 * cen.location[k]
+    ob.location = loc
+    # its matrix written too: a hidden empty no one is parented to yet is not evaluated by the update below, and a
+    # follower linked under it would keep its vertices under the identity (measured: the back panel shown on the front)
+    ob.matrix_world = Matrix.Translation(loc) @ Matrix.Diagonal((*sc, 1.0))
+    if ob.animation_data is not None:
+        for fc in list(ob.animation_data.drivers):
+            ob.animation_data.drivers.remove(fc)
+    fc = ob.driver_add('location', k)
+    drv = fc.driver
+    drv.type = 'SCRIPTED'
+    var = drv.variables.new()
+    var.name = 'c'
+    var.type = 'TRANSFORMS'
+    var.targets[0].id = cen
+    var.targets[0].transform_type = 'LOC_Y' if plane == 'y' else 'LOC_X'
+    var.targets[0].transform_space = 'WORLD_SPACE'
+    drv.expression = '2 * c'                  # a simple expression: runs without Python scripts allowed
+    context.view_layer.update()
     return ob
 
 
@@ -1555,7 +1771,7 @@ def center(ob, spec):
 # half, Edit Mode's edits); all coordinates participate in the update signature so local edits cannot be missed.
 
 _ev = {}            # object name -> {'sig', 'W' (all evaluated vertices, world m), 'tkey', 'F', 'T', 'n'}
-_bary = {}          # (piece, tkey, points) -> (triangle per point, barycentric weights)
+_bary = {}          # (vertices, points) -> (layout used, vertex triple per point, barycentric weights)
 
 
 def _connectivity_key(me):
@@ -1605,7 +1821,33 @@ def mirror_flat(F, B_src, B_twin, plane='x'):
     return F + cb
 
 
+def _stamp(ob):
+    """What _read's result depends on, read in O(1): the object's and mesh's identities and geometry epochs (the
+    depsgraph handler, overlay.epoch), the world matrix, the AC9 tags, the modifiers' switches and a Mirror's center,
+    the frame for an animated object, and the undo / load generation. None when it cannot be trusted (Edit Mode, the
+    handler not running): then the mesh is read whole. Before this every redraw read and hashed every placed mesh
+    (about 1.2 ms an object, five times a redraw; 1.3 s after a pair's half was clicked, measured 2026-11-19)."""
+    from . import overlay
+    if ob.mode == 'EDIT' or not overlay.watching():
+        return None
+    me = ob.data
+    mods = []
+    for m in ob.modifiers:
+        mo = getattr(m, 'mirror_object', None)
+        mods.append((m.name, m.type, m.show_viewport,
+                     np.array(mo.matrix_world).tobytes() if mo is not None else None))
+    # the frame always: a frame change re-evaluates without depsgraph_update_post, and what moves a placed piece over
+    # time (an armature, a hook, the mesh's own animation, a node tree) is not all on the object
+    return (ob.session_uid, me.session_uid, overlay.epoch(ob), overlay.epoch(me), overlay._generation[0],
+            np.array(ob.matrix_world).tobytes(), ob.get(KEY_PROP), ob.get(TWIN_PROP, ''), ob.get(PROP),
+            ob.get(NV_PROP), tuple(mods), bpy.context.scene.frame_current)
+
+
 def _read(context, ob, dg):
+    stamp = _stamp(ob)
+    c = _ev.get(ob.name)
+    if stamp is not None and c is not None and c.get('stamp') == stamp:
+        return c
     ev = ob.evaluated_get(dg)
     me = ev.data
     nE = len(me.vertices)
@@ -1634,6 +1876,7 @@ def _read(context, ob, dg):
         sig = (tkey, np.array(ob.matrix_world).tobytes(), coordinate_key)
         c = _ev.get(ob.name)
         if c is not None and c['sig'] == sig:
+            c['stamp'] = stamp
             return c
         Mw = np.array(ob.matrix_world)
         W = co.reshape(-1, 3).astype(np.float64) @ Mw[:3, :3].T + Mw[:3, 3]
@@ -1642,11 +1885,12 @@ def _read(context, ob, dg):
             triangles = np.empty(len(me.loop_triangles) * 3, np.int32)
             me.loop_triangles.foreach_get('vertices', triangles)
             F, T = flat.reshape(-1, 2).astype(np.float64), triangles.reshape(-1, 3)
-            n_own = nE // 2 if twin else nE
+            n_core = core_count(ob, nE) if not edit else nE    # the thickness's copies left out
+            n_own = n_core // 2 if twin else n_core
             T = T[(T < n_own).all(1)]               # the object's own half (the Mirror appends the mirrored copy)
             c = {'tkey': tkey, 'F': F[:n_own], 'T': T, 'n': n_own, 'twin': twin}
             _ev[ob.name] = c
-        c.update(sig=sig, W=W)
+        c.update(sig=sig, W=W, stamp=stamp)
         return c
     finally:
         if edit:
@@ -1737,8 +1981,13 @@ def to_world(entry, P):
     P = np.ascontiguousarray(np.asarray(P, float))
     if not len(T) or not len(P):
         return None
-    k = (tkey, len(P), hash(P.tobytes()))
+    # Kept by what the weights depend on -- the piece's layout points, checked, and the points asked -- not by the
+    # mesh datablock: a pair's half clicked swaps the source mesh for its mirrored copy (same layout within float32,
+    # same vertex order), and a pointer key recomputed every seam's weights then (0.25 s, measured 2026-11-19)
+    k = (len(F), len(P), hash(P.tobytes()))
     b = _bary.get(k)
+    if b is not None and not (b[0] is F or b[0].shape == F.shape and np.allclose(b[0], F, atol=0.01, rtol=0)):
+        b = None
     if b is None:
         A, B_, C = F[T[:, 0]], F[T[:, 1]], F[T[:, 2]]
         cen = (A + B_ + C) / 3.0
@@ -1764,12 +2013,14 @@ def to_world(entry, P):
             ti[s:s + 256], wt[s:s + 256] = cand[r, best], w
         if len(_bary) > 4096:
             _bary.clear()
-        b = _bary[k] = (ti, wt)
-    ti, wt = b
-    tr = T[ti]
+        b = _bary[k] = (F, T[ti], wt)      # F by reference: a reading makes a new array, nothing writes into it
+    _, tr, wt = b
+    if tr.size and tr.max() >= len(W):
+        return None
     return (W[tr] * wt[:, :, None]).sum(1)
 
 
 def invalidate_shown():
+    """Read the placed objects again at the next draw. The seam weights (_bary) stay: they check the layout they
+    were made from."""
     _ev.clear()
-    _bary.clear()

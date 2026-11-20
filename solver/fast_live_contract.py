@@ -5,7 +5,7 @@ import math
 
 # 2 (Accurate): the fabric's bending hysteresis (bend_fric2, solved 'after' the substep) is carried along; cloth-cloth
 # contact (self_contact) stays on; the piece Layer and the fold Layers (one layer, dependent points in the correction)
-# run; Off (Pattern), Attach and seam paths run; fold / elastic changes, grab through cloth and the smooth brush work
+# run; Inactive, Attach and seam paths run; fold / elastic changes, grab through cloth and the smooth brush work
 # while Live runs; the correction's CG relative tolerance is 1e-3 (linear_tol). A version 1 job's saved state no longer
 # matches the contract, so Continue / Live rebuilds from the shown shape with one line (live_resume.prepare).
 VERSION = 2
@@ -21,7 +21,7 @@ ghost_pieces weld'''.split()
 
 def _test_supported():
     # Supported on the Accurate path, each on by default (AC9_TEST_<name>=0 turns it off, for tests only):
-    # FAST_LAYERS the piece Layer and the fold Layers (one layer); FAST_E5 Off (Pattern), Attach and seam paths
+    # FAST_LAYERS the piece Layer and the fold Layers (one layer); FAST_E5 Inactive, Attach and seam paths
     keys = ('layers', 'one_layer') if (os.environ.get('AC9_TEST_FAST_LAYERS', '1') != '0') else ()
     if (os.environ.get('AC9_TEST_FAST_E5', '1') != '0'):
         keys += ('ghost_pieces', 'attach', 'seam_paths')
@@ -36,6 +36,8 @@ def _check_override(override):
     for name, value in (override or {}).items():
         if name.startswith('s') and name[1:].isdigit() and isinstance(value, dict):
             _check_override(value)
+        elif name == 'native_three' and value:
+            raise ValueError('Accurate (Research) and Native 3 cannot run together')
         elif name in FIXED and value != FIXED[name]:
             raise ValueError('AC9 Fast Live: override conflicts with '+name)
         elif name in UNSUPPORTED and value:
@@ -80,6 +82,8 @@ def preflight(spec, settings):
 
 def configure(cfg):
     """Apply the disclosed Fast preset after ordinary construction and overrides."""
+    if cfg.get('native_three'):
+        raise ValueError('Accurate (Research) and Native 3 cannot run together')
     result = dict(cfg)
     for key in UNSUPPORTED:
         if key in _test_supported():
@@ -118,6 +122,8 @@ def contract(cfg):
 
 
 def validate_config(cfg):
+    if cfg.get('native_three'):
+        raise ValueError('Accurate (Research) and Native 3 cannot run together')
     if cfg.get('fast_live') != MODE:
         raise ValueError('Unsupported AC9 Fast Live version')
     if not cfg.get('live'):

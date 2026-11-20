@@ -89,20 +89,12 @@ def pattern_view(win, area):
     obs = list(PV.piece_objects().values())
     if not obs:
         return
-    vl = bpy.context.view_layer
-    sel, act = SEL.objects(bpy.context), vl.objects.active
-    for o in vl.objects:
-        o.select_set(o in obs)
     reg = next(r for r in area.regions if r.type == 'WINDOW')
     try:
-        with bpy.context.temp_override(window=win, area=area, region=reg):
+        with SEL.borrow(bpy.context, obs), bpy.context.temp_override(window=win, area=area, region=reg):
             bpy.ops.view3d.view_selected()
     except (RuntimeError, TypeError):            # no window (background): the view is left unframed
         pass
-    finally:
-        for o in vl.objects:
-            o.select_set(o in sel)
-        vl.objects.active = act
 
 
 LOOK_MARK = 'ac9_view_look'      # set on the screen once its views were given view_look
@@ -138,7 +130,11 @@ def view_look(sh, pattern=False):
             pass
 
 
-def _configure(view=None, win=None):
+MOVED_COUNT = 'ac9_view_moved'          # on the screen: how many objects the last Work Screen moved, and where
+MOVED_INTO = 'ac9_view_moved_into'
+
+
+def _configure(view=None, win=None, moved=None):
     """The two 3D views (the left one: the view carried over, no sidebar; the right one: looking at the pattern, its
     rotation locked, the sidebar on the add-on's tab beside it, user 2026-10-21) and the Properties editor's Tool tab,
     in the window showing the workspace."""
@@ -151,16 +147,23 @@ def _configure(view=None, win=None):
     except ReferenceError:
         return None
     with bpy.context.temp_override(window=win):
-        _configure_window(win, view)
+        _configure_window(win, view, moved)
     return None
 
 
-def _configure_window(win, view):
+def _configure_window(win, view, moved=None):
     scr = win.screen
+    names, into = moved or ([], '')
+    scr[MOVED_COUNT] = len(names)       # 0 clears the line from the last press
+    scr[MOVED_INTO] = into
     vs = sorted((a for a in scr.areas if a.type == 'VIEW_3D'), key=lambda a: a.x)
     for i, a in enumerate(vs):
         sp = a.spaces.active
         sp.show_region_ui = i == len(vs) - 1
+        # Blender's move or rotate gizmo on what is picked, as Whole Pieces shows it (bl_widget); off in Blender by
+        # default. Only these views: other workspaces' views stay the user's (user 2026-11-17). One kind at a time,
+        # Whole Pieces' Gizmo (W): together the rotate rings hid the move arrows but their tips (user 2026-11-19)
+        _set_gizmo(sp, bpy.context.scene)
         if i == 0 and view is not None:
             for k, v in view.items():
                 setattr(sp.region_3d, k, v)
@@ -205,8 +208,9 @@ class AC9_OT_SimWorkScreen(bpy.types.Operator):
         if old is not None and old.get('ac9_ws_version', 1) >= VERSION:
             from . import view_setup
             view_setup.organize_existing(context)
+            moved = view_setup.collect_root(context)
             win.workspace = old
-            bpy.app.timers.register(lambda: _configure(None, win), first_interval=0.2)
+            bpy.app.timers.register(lambda: _configure(None, win, moved), first_interval=0.2)
             return {'FINISHED'}
         if not os.path.exists(FILE):
             self.report({'ERROR'}, rpt("The workspace file is missing: {0}", FILE))
@@ -215,6 +219,7 @@ class AC9_OT_SimWorkScreen(bpy.types.Operator):
             bpy.ops.object.mode_set(mode='OBJECT')
         from . import view_setup
         view_setup.organize_existing(context)
+        moved = view_setup.collect_root(context)
         if old is not None:            # the older copy's 3D view carried over; renamed so the new one takes the name
             view = _view_of(old.screens[0] if old.screens else None, leftmost=True)
             old.name = NAME + " (old)"
@@ -223,7 +228,7 @@ class AC9_OT_SimWorkScreen(bpy.types.Operator):
         ws = _load()
         win.workspace = ws
         bpy.app.timers.register(lambda: _settle(ws, old), first_interval=0.1)
-        bpy.app.timers.register(lambda: _configure(view, win), first_interval=0.2)
+        bpy.app.timers.register(lambda: _configure(view, win, moved), first_interval=0.2)
         return {'FINISHED'}
 
 
@@ -258,8 +263,7 @@ class AC9_OT_SimAddAvatar(bpy.types.Operator):
         context.scene.collection.children.link(coll)
         body = next((o for o in coll.objects if o.type == 'MESH' and o.name.startswith(AVATAR_BODY)
                      and not o.name.startswith(AVATAR_BODY + " ")), None)
-        for o in context.view_layer.objects:
-            o.select_set(False)
+        SEL.deselect_all(context)
         if body is not None:
             body.select_set(True)
             context.view_layer.objects.active = body
@@ -270,6 +274,27 @@ class AC9_OT_SimAddAvatar(bpy.types.Operator):
 
 
 CLASSES = (AC9_OT_SimWorkScreen, AC9_OT_SimAddAvatar)
+
+
+def _set_gizmo(space, scene):
+    """The Work Screen's views show Whole Pieces' gizmo of one kind, move or rotate (properties whole_gizmo)."""
+    props = getattr(scene, 'ac9_cloth_sim', None)
+    rotate = props is not None and props.whole_gizmo == 'ROTATE'
+    space.show_gizmo_object_translate = not rotate
+    space.show_gizmo_object_rotate = rotate
+    space.show_gizmo_object_scale = False
+
+
+def apply_gizmo(context):
+    """whole_gizmo changed: the Work Screen's 3D views in every window follow."""
+    wm = context.window_manager
+    for win in wm.windows if wm else []:
+        if win.workspace is None or win.workspace.name != NAME:
+            continue
+        for a in win.screen.areas:
+            if a.type == 'VIEW_3D':
+                _set_gizmo(a.spaces.active, win.scene)
+                a.tag_redraw()
 
 
 def register():

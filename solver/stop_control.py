@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Request a solver stop and observe it without blocking Blender's event loop."""
 import os
+import json
 import time
 from .lifecycle_trace import mark
 
@@ -46,6 +47,25 @@ def _printed_progress(p, since):
 
 
 class PendingStop:
+    def _session_preparing(self):
+        command=getattr(self.proc,'command',{})
+        if not isinstance(command,dict):return False
+        if not getattr(self.proc,'is_session_job',False):return False
+        for sd in self.stage_dirs:
+            try:
+                path=os.path.join(sd,'session_setup.json')
+                if os.path.getsize(path)>4096:continue
+                with open(path,encoding='utf8') as stream:row=json.load(stream)
+                if not isinstance(row,dict):continue
+                if (row.get('version')==1 and type(row.get('generation'))is int
+                        and row.get('generation')==command.get('generation')
+                        and row.get('job_token')==command.get('job_token')
+                        and isinstance(command.get('job_token'),str)
+                        and row.get('stage')==os.path.normcase(os.path.realpath(sd))):
+                    return row.get('phase')=='preparing'
+            except (OSError,ValueError,TypeError):pass
+        return False
+
     def __init__(self, proc, stage_dirs, timeout=60, frame_s=None, min_s=STUCK_MIN_S):
         """frame_s: how long a frame has taken in this run (None: not known yet); a frame may take that long
         before the solver reaches the stop file, so it is waited for three times over, at least min_s
@@ -54,7 +74,16 @@ class PendingStop:
         self.t0 = time.monotonic()
         self.deadline = self.t0 + timeout
         self.timeout = timeout
+        # A session's setup has no completed frame yet, but killing its job also
+        # destroys the warmed interpreter. Cooperative checkpoints acknowledge a
+        # stop; retain the existing hard deadline for genuinely unresponsive work.
+        self.stage_dirs=tuple(stage_dirs)
+        stage_dirs=self.stage_dirs
+        self.session_setup = self._session_preparing()
+        self.frame_wait_start=self.t0
         self.grace = min(timeout, max(min_s, STUCK_FRAMES * frame_s if frame_s else 0.0))
+        if getattr(proc,'is_session_job',False) and not frame_s:
+            self.grace=min(timeout,max(STUCK_MIN_S,self.grace))
         self._watch = [os.path.join(sd, 'progress.txt') for sd in stage_dirs]
         self._seen = [os.path.join(sd, 'stop_seen') for sd in stage_dirs]
         self._stamp0 = _stamp(self._watch)
@@ -86,13 +115,16 @@ class PendingStop:
                 self.finished = True
             return True
         now = time.monotonic()
+        preparing=self._session_preparing()
+        if self.session_setup and not preparing:self.frame_wait_start=now
+        self.session_setup=preparing
         if not self.moved and (any(os.path.exists(p) for p in self._seen) or _stamp(self._watch) != self._stamp0
                                or any(_printed_progress(p, n) for p, n in self._out)):
             # the solver wrote stop_seen or ended a frame after the stop: it has read it and is writing its frames,
             # given the full timeout
             self.moved = True
             mark('stop_progress_seen', child_pid=self.proc.pid, after_s=round(now - self.t0, 3))
-        stuck = not self.moved and now - self.t0 >= self.grace
+        stuck = not self.session_setup and not self.moved and now - self.frame_wait_start >= self.grace
         if not self.killed and (stuck or now >= self.deadline):
             if stuck:
                 mark('stop_stuck', child_pid=self.proc.pid, grace_s=round(self.grace, 2))

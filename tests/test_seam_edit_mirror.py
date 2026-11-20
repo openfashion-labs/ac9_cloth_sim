@@ -40,7 +40,7 @@ def shoulders():
     # top edge e2 runs from x+400 to x: t 0.7..0.95 is the left part
     spec['seams'].append({'id': 'U1', 'a': side('front', 'front_e2', 0.7, 0.95),
                           'b': side('back', 'back_e2', 0.7, 0.95), 'source': 'user', 'check': ''})
-    made = ST.mirror_within(spec, ['U1'])
+    made = ST.mirror_added(spec, ["U1"])[0]
     assert made == ['U1m'], made
     return spec
 
@@ -51,7 +51,7 @@ def pairs():
     ST.mirror_seams_group(spec, made)
     spec['seams'].append({'id': 'U1', 'a': side('front', 'front_e1', 0.0, 1.0),
                           'b': side('back', 'back_e3', 0.0, 1.0), 'source': 'user', 'check': ''})
-    assert ST.mirror_onto_twins(spec, ['U1'])[0] == ['U1m']
+    assert ST.mirror_added(spec, ["U1"])[0] == ['U1m']
     return spec
 
 

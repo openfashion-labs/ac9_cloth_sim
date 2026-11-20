@@ -1,5 +1,6 @@
 """Stop control must never wait inside the UI timer, even after its deadline."""
 import os
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -25,6 +26,57 @@ class Process:
 
 
 class StopControlTests(unittest.TestCase):
+    def session_phase(self,p,phase,token='owned'):
+        p.is_session_job=True;p.command=dict(job_token='owned',generation=1)
+        (Path(self.temp.name)/'session_setup.json').write_text(json.dumps(dict(version=1,job_token=token,
+            generation=1,stage=os.path.normcase(os.path.realpath(self.temp.name)),phase=phase)))
+
+    def test_session_setup_keeps_warm_worker_past_five_seconds(self):
+        p=Process();self.session_phase(p,'preparing')
+        with patch('solver.stop_control.time.monotonic',return_value=10):
+            stop=PendingStop(p,[self.temp.name])
+        with patch('solver.stop_control.time.monotonic',return_value=16):
+            self.assertFalse(stop.poll())
+        self.assertEqual(p.kills,0)
+        (Path(self.temp.name)/'stop_seen').touch();p.code=0
+        self.assertTrue(stop.poll());self.assertEqual(p.kills,0)
+
+    def test_unresponsive_session_retains_the_hard_deadline(self):
+        p=Process();self.session_phase(p,'preparing')
+        with patch('solver.stop_control.time.monotonic',return_value=10):
+            stop=PendingStop(p,[self.temp.name])
+        with patch('solver.stop_control.time.monotonic',return_value=70):
+            self.assertFalse(stop.poll())
+        self.assertEqual(p.kills,1)
+
+    def test_session_first_frame_without_timing_keeps_frame_watchdog(self):
+        p=Process();self.session_phase(p,'loop')
+        with patch('solver.stop_control.time.monotonic',return_value=10):stop=PendingStop(p,[self.temp.name])
+        with patch('solver.stop_control.time.monotonic',return_value=16):stop.poll()
+        self.assertEqual(p.kills,1)
+
+    def test_loop_transition_after_stop_restores_watchdog_with_frame_grace(self):
+        p=Process();self.session_phase(p,'preparing')
+        with patch('solver.stop_control.time.monotonic',return_value=10):stop=PendingStop(p,[self.temp.name],min_s=0)
+        self.session_phase(p,'loop')
+        with patch('solver.stop_control.time.monotonic',return_value=16):stop.poll()
+        self.assertEqual(p.kills,0)
+        with patch('solver.stop_control.time.monotonic',return_value=22):stop.poll()
+        self.assertEqual(p.kills,1)
+
+    def test_old_job_marker_cannot_disable_current_watchdog(self):
+        p=Process();self.session_phase(p,'preparing',token='old')
+        with patch('solver.stop_control.time.monotonic',return_value=10):stop=PendingStop(p,[self.temp.name])
+        with patch('solver.stop_control.time.monotonic',return_value=16):stop.poll()
+        self.assertEqual(p.kills,1)
+
+    def test_malformed_phase_document_cannot_break_stop_poll(self):
+        p=Process();self.session_phase(p,'preparing')
+        (Path(self.temp.name)/'session_setup.json').write_text('[]')
+        with patch('solver.stop_control.time.monotonic',return_value=10):stop=PendingStop(p,[self.temp.name])
+        with patch('solver.stop_control.time.monotonic',return_value=16):stop.poll()
+        self.assertEqual(p.kills,1)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -3,6 +3,18 @@ import unittest
 from solver import native_three_contract as N
 
 
+class SeamsTest(__import__('unittest').TestCase):
+    def test_a_garment_with_no_seam_runs_without_native_three(self):
+        spec = {'pieces': [{'name': 'A'}, {'name': 'B'}], 'seams': []}
+        with self.assertRaises(ValueError):
+            N.preflight(spec, {})
+        spec['seams'] = [{'a': {'piece': 'A'}, 'b': {'piece': 'B'}, 'enabled': False}]
+        N.preflight(spec, {})                         # an off seam still makes springs in Live
+        spec['pieces'][1]['enabled'] = False
+        with self.assertRaises(ValueError):
+            N.preflight(spec, {})
+
+
 class NativeThreeContractTests(unittest.TestCase):
     def test_only_the_intentional_shape_restart_is_expected(self):
         self.assertTrue(N.expected_shape_restart(dict(status='unavailable', reason=N.SHAPE_ONLY_CHECKPOINT)))

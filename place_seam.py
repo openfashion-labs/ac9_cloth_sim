@@ -5,7 +5,8 @@ docs/reviews/REVIEW_fable_place_tools_r4_2026-10-22.md). Live and Simulate then 
 
 One promise (user 2026-11-04, DECISIONS cloth-sim-part-to-seam-one-promise-2026-11-04; Fable
 docs/reviews/REVIEW_fable_part_to_seam_2026-11-04.md): the sewn points go onto their partners' points as placed now
-(hand moves and folds included), on the explicitly chosen partners with enabled seams. One way: rigid (Kabsch), then bent (each
+(hand moves and folds included), on the explicitly chosen partners with enabled seams. One way: rigid (Kabsch, the
+turn a straight seam leaves open kept as placed), then bent (each
 vertex moved by the sewn points' remaining moves, weighted 1/d^2 by the distance on the pattern, or the prepared
 3D shape when it has placed folds, so nearby layers move together). Then Settle with
 the sewn points held (out of the body, onto its side of each partner, edges back to length). Stretch is shown in
@@ -57,11 +58,14 @@ def _stretch(E, V, X):
     return float(np.percentile(r, 99))
 
 
-def _kabsch(P, Q):
-    pc, qc = P.mean(0), Q.mean(0)
-    U, _, Wt = np.linalg.svd((P - pc).T @ (Q - qc))
-    R = Wt.T @ np.diag([1.0, 1.0, np.sign(np.linalg.det(Wt.T @ U.T))]) @ U.T
-    return R, qc - pc @ R.T
+FIT_TOL_MM = 1.0
+
+
+def _rigid(Xi, vi, Q):
+    """The rigid part of the move: the sewn points onto their partners, the turn the seam does not decide kept as the
+    piece is placed (a one-edge placket used to lie folded onto its front, solver/rigid_fit.py)."""
+    from .solver.rigid_fit import rigid_fit, plane_normal
+    return rigid_fit(Xi[vi], Q, FIT_TOL_MM, normal=plane_normal(Xi))
 
 
 def _bend(Fl, vi, X, Q):
@@ -289,7 +293,7 @@ def plan(context, spec, piece, got=None, bvh=None, *, preparation=None):
     Xi = X[i]
     vi = np.array([a for a, _, _ in rows])
     Q = np.array([X[j][b] for _, j, b in rows])
-    R, t = _kabsch(Xi[vi], Q)
+    R, t = _rigid(Xi, vi, Q)
     from . import place_fold as PF
     ob = _object(spec, piece)
     bend = _bend_folded if ob is not None and PF.folded(ob) else _bend
@@ -314,7 +318,7 @@ def apply(context, spec, piece, p):
         why = write_shape(ob, p['V'], p['T'], p['X'])
         if why:
             return why
-    ob[SEAM_PROP] = json.dumps({'way': p['way'], 'partners': p['partners']})
+    ob[SEAM_PROP] = json.dumps({'way': p['way'], 'partners': p['partners'], 'dressed': p.get('dressed', [])})
     PLV.invalidate_shown()
     return None
 
@@ -335,9 +339,7 @@ def write_shape(ob, V, T, Y):
     fl.data.foreach_get('vector', Fp)
     Fp = Fp.reshape(-1, 2)
     V, Y = np.asarray(V, float), np.asarray(Y, float)
-    same = n == len(V) and (ob.get(PLV.KK_PROP) or np.allclose(Fp, V, atol=1e-3))
-    if not same:
-        Y = D._bary_map(Fp, V, np.asarray(T), Y)
+    Y = D.carry_shape(Fp, V, np.asarray(T), Y, extend=False)     # by the layouts, not by a mark on the object
     M = np.array(ob.matrix_world)
     W = Y * PLV.MM
     co = (np.c_[W, np.ones(n)] @ np.linalg.inv(M).T)[:, :3]
@@ -488,7 +490,25 @@ def _move_prepared(context, spec, piece, got=None, bvh=None, targets=None, *, pr
         ct = np.union1d(num['cross_t'], PT._crossing_tris(Y, T, rest, np.zeros(len(Y), bool)))
         num.update(cross_t=ct, cross=int(len(ct)))
     num['before'] = {k: before[k] for k in ('inside', 'cross', 'stretch')}
-    p = dict(p, X=Y, stretch=_stretch(_edges(T), V, Y))
+    if kept is not None:
+        # carried, not sewn on: worth placing only when it is no worse than where it is now (a large panel carried
+        # near all its partners went into the body, 0 -> 349 points, user 2026-11-15)
+        cur = np.asarray(got[2][p['i']], float)
+        now = PT.measure(cur, V, T, np.zeros(len(V), bool), bvh, others)
+        now_cross = len(np.union1d(now['cross_t'], PT._crossing_tris(cur, T, rest, np.zeros(len(cur), bool)))
+                        if rest else now['cross_t'])
+        if num['inside'] > now['inside'] or num['cross'] > now_cross:
+            return PB.refuse(preparation, tx(
+                "{0} not moved: sewn on, it would stretch {1:.1f} x, and carried near {2} it would go into the body "
+                "or through cloth (inside the body {3} -> {4}, through other cloth {5} -> {6}). Choose fewer targets, "
+                "or move it nearer by hand", piece, kept, ", ".join(p['partners']), now['inside'], num['inside'],
+                now_cross, num['cross']))
+    # the partners fitted to as the dressed garment shows them (no placed object of their own): Back to Placed after
+    # a simulation says when one of them goes back to its placed shape and leaves this piece off its seams
+    on_garment_now = D.has_result(bpy.data.objects.get(D.garment_name(spec)))
+    placed_now = set(PLV.objects(spec))
+    p = dict(p, X=Y, stretch=_stretch(_edges(T), V, Y),
+             dressed=sorted(n for n in p['partners'] if on_garment_now and n not in placed_now))
     PLV.save_before_seam(ob, spec)
     why = apply(context, spec, piece, p)
     if why:
@@ -501,7 +521,7 @@ def _move_prepared(context, spec, piece, got=None, bvh=None, targets=None, *, pr
         msg = tx("{0} kept its shape, carried near {1}: sewn on, it would stretch {2:.1f} x. Gap {3}, the seams "
                  "close while simulating", piece, ", ".join(p['partners']), kept, U.fmt(bpy.context, p['gap'][0]))
     if left:
-        msg += tx("; {0} inside the body, {1} through other cloth: red (Settle, Move by Hand, or simulate from here)",
+        msg += tx("; {0} inside the body, {1} through other cloth: red (Settle, move it with Whole Pieces, or simulate from here)",
                   num['inside'], num['cross'])
     # a piece moved to this one before goes on its old place: say so (not followed)
     after = sorted(o[PLV.PROP] for o in {o.name: o for o in PLV.objects(spec).values()}.values()
@@ -638,7 +658,7 @@ class AC9_OT_SimMoveToSeam(bpy.types.Operator):
                     ob.matrix_world = matrix
             PM._state.clear()
             PM._state.update(handle_state)
-            PL.AC9_OT_SimMoveByHand._restore_selection(context, selected, active)
+            PL.restore_selection(context, selected, active)
         try:
             with PB.operation(context, owner=preparation, consumer_backup=backup) as preparation:
                 result = self._execute(context, preparation=preparation)

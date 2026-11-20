@@ -60,7 +60,10 @@ def select(context, key):
     """Pick a measurement ('' unpicks); the Tool tab shows it."""
     context.scene.ac9_cloth_sim_measure.sel = key or ''
     from . import tool_tab as TT
-    TT.set_focus('MEASURE' if key else None)
+    if key:
+        TT.publish(context, 'MEASURE')
+    else:
+        TT.release(context, 'MEASURE')
     MT._redraw(context)
 
 

@@ -30,8 +30,8 @@ It appears in the Tool tab when you've selected a piece. If you select several, 
 - **Role**: the role.
 - **Fabric** and **Interlining**: the fabric and interlining. The pencil on the right opens a screen for fixing that fabric's or interlining's numbers (the same screen as **Edit...** in the **Fabrics** tab of **Lists**).
 - **Look**: the appearance (Blender's material field). If empty, the garment's **Default Look** is used.
-- **Thickness**: whether to show the dressed garment with thickness (appearance only).
-- **Layer** (when Experimental Features is on, or when a piece has a layer): 0 to 9. Between pieces with different numbers, the higher one is kept outside the lower one. When things have settled, set it back to 0 (the arrow on the right does it for all pieces). It doesn't go back automatically.
+- **Thickness**: whether to show the placed pieces and the dressed garment with thickness (appearance only). A fold over an internal line shows as two layers.
+- **Layer** (when Experimental Features is on, or when a piece has a layer): 0 to 9. Between pieces with different numbers, the higher one is kept outside the lower one. When things have settled, set it back to 0 (the arrow on the right does it for all pieces). It doesn't go back automatically. Near a seam joining a piece to another layer, the layer does not apply and the usual contact holds; a narrow piece sewn along its edge can have every vertex there, and then its Layer has no effect. A run says so in the log and a warning when it starts, and Problems shows that piece in red.
 - **Distance (mm)**: point spacing per piece (finer for only the small parts). The arrow on the left returns it to the garment's value.
 - **Elastic**: the rate of shrinking along the piece's long axis (100 means no shrinking).
 - **Closes Onto**: the partner piece it is fastened to with buttons ("Buttons (Fasteners)").
@@ -48,6 +48,49 @@ The **Fabrics** tab in **Lists** shows that garment's fabrics. One of them is th
 - **AC9 Fabric**: the name, **Preset** (pick from the prepared fabrics), the numbers (weight, bending, thickness, stretch, shear, hysteresis), **Edit...** (fix the numbers), **Make Default**, **Select Pieces**, and **Delete** (the default fabric can't be deleted).
 - The lower half is the interlining list; press a row to get **AC9 Interlining** (**Preset**, **Edit...**, **Select Pieces**, **Delete**). Fixing it affects every piece with that interlining. Add one with **New** and attach it with **Interlining** in **AC9 Piece**.
 - **Show Fabric Colors** at the very bottom shows each fabric's color on the pattern.
+
+## What the fabric numbers mean (Edit Fabric)
+
+The numbers in **Edit Fabric** (opened with **Edit...**) are measured values of real cloth. Start from the closest preset and change only what is missing, a little at a time.
+
+| Field | What it is | Higher | Lower | Scale (presets) |
+|---|---|---|---|---|
+| **Weight** g/m² | How heavy the cloth is (grams per square meter) | Heavier, sags under its own weight | Lighter, keeps its shape more easily | Jersey about 125, poplin 140, wool suiting 276, canvas 390, leather 706 |
+| **Bending** µN·m | How hard it is to bend. **The main stiffness** | Stiffer, fewer and rounder folds | Softer, fine wrinkles | Jersey 0.65, poplin 6, wool suiting 18, canvas 245, leather 262 |
+| **Stretch warp** N/m | How hard it is to stretch along the pattern's x (side to side) | Barely stretches | Stretches like a knit | Woven cloth about 3000, jersey 280, rib knit 15, leather 11900 |
+| **Stretch weft** N/m | The same along the pattern's y (up and down) | Same | Same | Same |
+| **Shear** N/m | How hard it is to skew diagonally (a square pulled into a diamond) | Keeps its weave square, stands away from curves | Follows round shapes, more diagonal wrinkles | Most cloth 15-30, canvas 150, leather 704 |
+| **Hysteresis** /m | How much a bend stays once the pull is gone | Creases and the draped shape stay, comes to rest sooner | Springs back, keeps moving longer | Most cloth about 40, jersey 61 |
+| **Thickness** mm | How thick the cloth is drawn | Display only (the simulation does not use it) | Same | 0.6-1.2 |
+
+### The fabrics provided (presets)
+
+| Fabric | Weight g/m² | Bending µN·m | Where the numbers come from |
+|---|---|---|---|
+| Cotton Poplin | 140 | 6 | Measured (published) |
+| Wool Suiting | 276 | 18 | Measured (published) |
+| Denim | 354 | 27 | Measured (published; a washed commercial denim, raw denim is stiffer) |
+| Satin | 120 | 4 | Estimate |
+| Chiffon | 50 | 2 | Estimate |
+| Nylon Taffeta | 82 | 3.3 | Weight a measured mean, bending an estimate (a windbreaker's cloth) |
+| Cotton Jersey | 125.5 | 0.65 | Measured (published) |
+| French Terry | 250 | 2.5 | Estimate |
+| Rib Knit | 220 | 6 | Estimate |
+| Leather | 706 | 262 | Measured (published) |
+| Synthetic Leather | 440 | 112 | Measured (published) |
+| Canvas | 390 | 245 | Bending an estimate |
+
+An estimated fabric is a starting point: change it in Edit Fabric to match a real cloth.
+
+### To make a cloth stiffer, or to make it drape
+
+- **Whether a cloth stands or droops depends on Bending against Weight.** Raising Bending alone does little if the cloth is heavy.
+  - To make it stand: raise Bending and lower Weight.
+  - To make it drape: lower Bending (raise Weight too if it should feel heavy).
+- Bending acts gently: doubling it changes little, and ten times makes the length a cloth can stick out about twice as long. Change it by tens, not a little at a time (for example 6 → 60 → 600).
+- Bending goes up to 10000, about as stiff as thick paper. Sheets of metal or plastic are beyond it.
+- To stiffen just one piece, an **Interlining** (it adds weight and bending, like a real one) or **Strengthen** (below) is easier than changing the fabric.
+- Stretch and Shear do little to how a cloth drapes. Change them when the cloth should stretch, or follow the body's curves.
 
 ## The problem watcher (Watch)
 

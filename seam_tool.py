@@ -386,9 +386,8 @@ class _AddSeamBase:
         sa, sb = [make_side(self.outlines[p], p, s0, s1, d) for p, s0, s1, d in self.sides]
         spec['seams'].append({'id': f"U{k}", 'a': sa, 'b': sb, 'source': 'user', 'check': ''})
         from .core import seam_twin as ST          # pieces edited symmetrically: the mirror seam too (2026-10-27)
-        mirrored = ST.mirror_within(spec, [f"U{k}"])
-        # both ends on left / right pairs: between their twins too (user 2026-11-04)
-        mirrored += ST.mirror_onto_twins(spec, [f"U{k}"])[0]
+        # its left / right mirror image: onto pairs' twins, across single pieces' center lines (seam_twin.lr_images)
+        mirrored = ST.mirror_added(spec, [f"U{k}"])[0]
         store.put(context, spec)
         props = context.scene.ac9_cloth_sim
         props.seam_index = len(props.seams) - 1 - len(mirrored)
@@ -559,8 +558,7 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
                 sm['group'] = group
             spec['seams'].append(sm)
         from .core import seam_twin as ST          # pieces edited symmetrically: the mirror seams too (2026-10-27)
-        mirrored = ST.mirror_within(spec, ids)
-        mirrored += ST.mirror_onto_twins(spec, ids)[0]     # both ends on left / right pairs (user 2026-11-04)
+        mirrored = ST.mirror_added(spec, ids)[0]           # their left / right mirror images (seam_twin.lr_images)
         if group and mirrored:                     # the mirror image is a group of its own
             for x in spec['seams']:
                 if x['id'] in mirrored:

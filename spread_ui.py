@@ -4,7 +4,7 @@ line drawn from outline to outline (Slash and Spread) cuts the piece along it an
 that moves first). Cut Along Line (the same menu) cuts the piece in two along it, sewn back by a new seam (core/cut.py)."""
 import bpy
 import numpy as np
-from .i18n import CTX, F9, rpt, tx
+from .i18n import CTX, rpt, tx
 from . import units as U
 
 from . import draft_tool as T
@@ -102,7 +102,7 @@ class AC9_OT_SimSpread(bpy.types.Operator):
         info = out[self.piece]
         self.report({'INFO'}, rpt("Spread {0} ({1}, side {2} moved, +{3:.0f} mm2)", U.fmt(context, self.amount * 1000.0), 'flare' if self.mode == 'hinge' else 'gathers', info['side'].upper(), info['area_added'])
                     + (rpt("; its mirror line too") if info.get('more') else "")
-                    + (rpt("; {0}", msg) if msg else "") + rpt(F9))
+                    + (rpt("; {0}", msg) if msg else ""))
         return {'FINISHED'}
 
 

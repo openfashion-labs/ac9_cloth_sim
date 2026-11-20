@@ -37,7 +37,7 @@ AC9 Cloth Sim is operated from these 4 places.
 
 ![the whole Work Screen](img/d_screen_plain.png)
 
-The work screen has no Outliner (the list of things in the scene) and no Timeline (the strip of frames). To move through frames, see "Frames and the Timeline" below.
+The work screen has no Outliner (the list of things in the scene). The Timeline (the strip of frames) is at the bottom. To move through frames, see "Frames and the Timeline" below.
 
 ## Moving the view
 

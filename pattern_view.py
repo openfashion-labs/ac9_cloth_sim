@@ -174,7 +174,7 @@ def _off_material():
 
 
 def _show_state(ob, pc):
-    """A flat piece object as its state shows. Off (Pattern) / Off (All) (P1 #9: out of the simulation's contact) are
+    """A flat piece object as its state shows. Inactive / Off (P1 #9: out of the simulation's contact) are
     gray and see-through but solid: as wire they could be picked only on their lines, not by a click inside or a
     Select Box round them (user 2026-10-21). Locked against Blender's own G / R / S: the pattern is moved by Edit
     Pattern, which writes the pattern; a moved object only moved the picture (Fable review

@@ -79,6 +79,9 @@ def physical(stages, weight_gsm, bending_uNm, h_mm, mesh_independent=False, memb
         if cfg.get('gravity_z', -9.81) == 0.0:
             cfg['friction_epsilon'] = 1e-3
             cfg['stitch_cap_N'] = (cfg.get('tri_ka', BASE['tri_ka']) + 2.0 * cfg.get('tri_ke', BASE['tri_ke'])) * 0.1 * h_mm * 1e-3
+        if cfg.get('sew_first'):
+            # Live sews without gravity first (solver/newton_vbd.py sew_first): the same cap as the stages without gravity
+            cfg['sew_first'] = dict(cfg['sew_first'], cap_N=(cfg.get('tri_ka', BASE['tri_ka']) + 2.0 * cfg.get('tri_ke', BASE['tri_ke'])) * 0.1 * h_mm * 1e-3)
         # Orthotropic membrane (user 2026-10-17, DECISIONS cloth-sim-aniso-membrane-first-2026-10-17): stretch along
         # the flat x / y (tri_ke / tri_ka) and the shear apart, after Baraff-Witkin. Shear 29 N/m = cotton shirting,
         # KES G 0.52 gf/(cm deg) x 56.2 (a physical value, not a matched one). The isotropic membrane held shear as stiff as
@@ -237,9 +240,9 @@ def frozen(spec, names):
 
 
 def hold_user_pieces(spec, stg):
-    """The pieces a person stopped (Freeze, Off (Pattern)) are held in EVERY stage they are in, the no-gravity sewing
+    """The pieces a person stopped (Freeze, Inactive) are held in EVERY stage they are in, the no-gravity sewing
     stages included (the sewing stages used to hold only their own rings, so a frozen piece moved there; Fable review
-    2026-10-13), and the Off (Pattern) ones are ghosts there too (solver ghost_pieces: nothing touches them)."""
+    2026-10-13), and the Inactive ones are ghosts there too (solver ghost_pieces: nothing touches them)."""
     held = [p['name'] for p in spec['pieces'] if S.piece_state(p) in ('freeze', 'off_pattern')]
     ghost = [p['name'] for p in spec['pieces'] if S.piece_state(p) == 'off_pattern']
     for _label, cfg in stg:
@@ -255,6 +258,18 @@ def hold_user_pieces(spec, stg):
 
 LIVE_FRAMES = 0                   # Live has no frame cap (user 2026-10-23): the solver runs it until stopped
 SEW_RAMP_FRAMES = 60              # Ordinary sewing from the current shape (user 2026-10-30).
+# Live sews without gravity (the stitch cap of the zero-gravity stages, added by physical()) until the widest stitch
+# gap is under 3 mm, holds the velocity at 0 for 24 frames so the sewing's momentum and stretch go without throwing
+# the garment, then turns the gravity on; the bend hysteresis waits until the garment is quiet (or 600 frames). A
+# Live going on from a sewn result skips all of it (solver/newton_vbd.py sew_first).
+# heavy: while a piece still floats (a collar placed by a garment already sewn), the sewn pieces weigh 10x so the
+# stitches bring the light piece to them rather than lifting them (x30 / x100 stretched them under their own weight)
+LIVE_SEW_FIRST = {'gap_max_mm': 3.0, 'zero_v': True, 'relax_frames': 24, 'quiet_mm': 0.05, 'hyst_after': 600,
+                  'max_frames': 600, 'heavy': 10}
+# The stitches slow to a stop as they arrive instead of all meeting at full speed (solver stitch_ramp_shape): only
+# where the sewing runs with gravity from the current shape -- Live and Continue's gravity stage. The no-gravity
+# stage that sews pieces added since keeps the linear ramp (its stitch force cap reshapes the pull, untested there).
+SEW_RAMP_SHAPE = 'ease_out'
 
 
 def live_params(spec, names, gravity, active_pieces=None):
@@ -298,7 +313,8 @@ def continue_stages(spec, names, pattern_path, crop, new=(), live=False):
     if live:
         return 'live', [("live (until stopped)",
                          dict(base, frames=LIVE_FRAMES, live=True, active_pieces=names, frozen_pieces=fz,
-                              stitch_ramp_frames=SEW_RAMP_FRAMES, live_every=2))]
+                              stitch_ramp_frames=SEW_RAMP_FRAMES, stitch_ramp_shape=SEW_RAMP_SHAPE, live_every=2,
+                              sew_first=dict(LIVE_SEW_FIRST)))]
     # Pieces added since are sewn on without gravity first, as a first Dress sews (user 2026-11-04): under gravity a
     # whole garment added over another (a jacket over a shirt, its shoulders 160-205 mm apart on the placement
     # cylinder) fell 14 mm while the ramp was weak and was then reeled in through the inner garment (21 cloth edges
@@ -311,7 +327,7 @@ def continue_stages(spec, names, pattern_path, crop, new=(), live=False):
              if new else
              ("continue (gravity)",
               dict(base, frames=90, active_pieces=names, frozen_pieces=fz, stitch_ramp_frames=SEW_RAMP_FRAMES,
-                   live_every=2)))
+                   stitch_ramp_shape=SEW_RAMP_SHAPE, live_every=2)))
     return 'continue', [
         first,
         ("close the seams", dict(base, frames=30, active_pieces=names, init_from_pieces=names, frozen_pieces=fz,

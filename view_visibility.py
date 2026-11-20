@@ -106,8 +106,11 @@ def world_names(context, spec, display=None):
     body = getattr(getattr(scene, 'ac9_cloth_sim', None), 'body', None)
     proxy_visible = (object_decoration_allowed(context, body) if body is not None else
                      _space(context) is None or not bool(_space(context).local_view) and allows_world(context, spec))
+    # a piece whose eye is closed (piece_hide) is left out of every 3D decoration; a caller that draws a picked
+    # hidden piece's rim adds it back itself
     return frozenset(name for name, state in display.items()
-                     if (state['source'] == 'result' and result_visible or
+                     if not state.get('hidden') and
+                        (state['source'] == 'result' and result_visible or
                          state['source'] == 'placed' and object_decoration_allowed(context, placed.get(name)) or
                          state['source'] == 'proxy' and proxy_visible))
 

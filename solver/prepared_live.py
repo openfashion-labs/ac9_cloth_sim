@@ -90,13 +90,21 @@ def file_id(path):
     return digest.hexdigest()
 
 
-def fingerprint(idx, avatar, config, env_id, *, implementation=None):
+# Options not audited for a model built ahead and reused (a prepared candidate). A session only keeps the imported
+# modules warm and builds the model anew for each job, so it is held to its own list, from which an option goes once a
+# session run of it matches a one-shot run frame for frame (2026-11-15: End Taper, experimental_fold_terminal; a
+# garment with it was refused by the session on every Live and started cold, 6 to 12 s more).
+PREPARED_UNAUDITED = ('untangle', 'iron', 'experimental_fold_terminal', 'init_from', 'color_dump',
+                      'watch', 'diag', 'hinges', 'stitch_lock')
+SESSION_UNAUDITED = tuple(k for k in PREPARED_UNAUDITED if k != 'experimental_fold_terminal')
+
+
+def fingerprint(idx, avatar, config, env_id, *, implementation=None, unaudited=PREPARED_UNAUDITED):
     """Separate physical inputs from the new job's output/control ownership."""
     config = dict(config)
     if config.get('native_three') is not True or not config.get('live') or config.get('checkpoint_in'):
         raise ValueError('Prepared Live requires shape-restart Native3 Live')
-    for key in ('untangle', 'iron', 'experimental_fold_terminal', 'init_from', 'color_dump',
-                'watch', 'diag', 'hinges', 'stitch_lock'):
+    for key in unaudited:
         if config.get(key):
             raise ValueError('This option is not audited for prepared Live: ' + key)
     files = {'idx': file_id(idx), 'avatar': file_id(avatar)}

@@ -203,6 +203,8 @@ class AC9_OT_SimButtonAdd(_Click, bpy.types.Operator):
         commit(context, sp)
         context.scene.ac9_button_active = b['id']
         context.scene.ac9_button_sel = ''
+        from . import tool_tab
+        tool_tab.publish(context, 'BUTTON')
         self.report({'INFO'}, rpt("{0} on {1}", b['id'], name) + (rpt(", its hole on {0}", b['hole']['piece']) if b['hole']
                                                          else rpt(" (for show: no hole)")))
         return False
@@ -279,12 +281,12 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
         spec = store.get(context)[0]
         # an internal line picked in Edit Pieces (a placket's center line): on it (user 2026-10-22)
         from . import draft_tool as DT
-        ob = context.active_object
-        name = ob.get(PV.PIECE_PROP) if ob is not None else None
+        from . import selection as SEL
+        name = SEL.lead(context)
         s = DT.selected_internal(context, spec)
         if s is not None and len(s[2]['pts']) >= 2 and name in (None, s[0]):
             self.piece, self.along, self.edge = s[0], s[1], ''
-            return self.execute(context)
+            return context.window_manager.invoke_props_dialog(self)   # the numbers first (user 2026-11-17)
         if name not in S.piece_index(spec):
             # no pattern piece selected: the first piece that closes onto another (Closes onto, else spec closures)
             cl = [pc['name'] for pc in spec['pieces'] if BT.closes_onto(spec, pc['name'])] + \
@@ -294,7 +296,7 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
             self.report({'WARNING'}, "Select a pattern piece")
             return {'CANCELLED'}
         self.piece = name
-        return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
         spec, outlines = store.get(context)
@@ -330,6 +332,8 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
         if pts:
             context.scene.ac9_button_active = sp['buttons'][-1]['id']
             context.scene.ac9_button_sel = ''
+            from . import tool_tab
+            tool_tab.publish(context, 'BUTTON')
         gap = float(np.linalg.norm(np.diff(np.asarray(pts), axis=0), axis=1).mean()) if len(pts) > 1 else 0.0
         self.report({'INFO'}, rpt("{0} button(s) on {1}", len(pts), self.piece) + (rpt(", {0} apart", U.fmt(context, gap)) if gap else "")
                     + (rpt("; {0} without a hole", no_hole) if no_hole else ""))
@@ -339,8 +343,8 @@ class AC9_OT_SimButtonLineUp(bpy.types.Operator):
 def _stitched(context, spec):
     """The piece From BOM puts buttons on: the selected pattern piece if it is sewn to another at button stitches,
     else the first enabled piece that is (spec closures are not looked at: a button put by Add wrote them before)."""
-    ob = context.active_object
-    name = ob.get(PV.PIECE_PROP) if ob is not None else None
+    from . import selection as SEL
+    name = SEL.lead(context)
     if name in S.piece_index(spec) and BT.stitched_partners(spec, name):
         return name
     on = [pc['name'] for pc in spec['pieces'] if pc.get('enabled', True)]
@@ -388,6 +392,8 @@ class AC9_OT_SimButtonFromStitches(bpy.types.Operator):
         off = commit(context, sp)
         context.scene.ac9_button_active = sp['buttons'][-1]['id']
         context.scene.ac9_button_sel = ''
+        from . import tool_tab
+        tool_tab.publish(context, 'BUTTON')
         self.report({'INFO'}, rpt("{0} button(s) on {1}; seams off: {2}", len(pts), name, ', '.join(off) or rpt('none')))
         return {'FINISHED'}
 
@@ -476,7 +482,7 @@ Shift+click adds them to the picked ones or takes them out"""
         context.scene.ac9_button_active = sel[0] if sel else ''
         context.scene.ac9_button_sel = ','.join(sel[1:])
         from . import tool_tab
-        tool_tab.set_focus('BUTTON')
+        tool_tab.publish(context, 'BUTTON')
         return {'FINISHED'}
 
 
@@ -612,24 +618,32 @@ class AC9_OT_SimButtonStyleFromObject(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        ob = context.active_object
-        return store.get(context)[0] is not None and ob is not None and ob.type == 'MESH' \
-            and PV.PIECE_PROP not in ob and not ob.name.startswith('AC9_')
+        return store.get(context)[0] is not None and can_be_style(context.active_object)
 
     def execute(self, context):
-        spec = store.get(context)[0]
-        sp = S.loads(S.dumps(spec))
-        ob = context.active_object
-        sid = "own_" + "".join(c if c.isalnum() else "_" for c in ob.name.lower())
-        user = [s_ for s_ in sp.get('button_styles', []) or [] if s_.get('id') != sid]
-        user.append({'id': sid, 'name': ob.name, 'kind': 'button', 'mesh': ob.name, 'author': '', 'url': '',
-                     'license': ''})
-        sp['button_styles'] = user
-        store.put(context, sp)
-        context.scene.ac9_button_style = sid
-        refresh(context, sp)
-        self.report({'INFO'}, rpt("Style {0}: {1}", sid, ob.name))
+        sid = style_from_object(context, context.active_object)
+        self.report({'INFO'}, rpt("Style {0}: {1}", sid, context.active_object.name))
         return {'FINISHED'}
+
+
+def can_be_style(ob):
+    """A mesh of the person's own (not a piece or an AC9 object): what Use Object takes."""
+    return ob is not None and ob.type == 'MESH' and PV.PIECE_PROP not in ob and not ob.name.startswith('AC9_')
+
+
+def style_from_object(context, ob):
+    """`ob` added as a button style of the garment and made the current style; returns the style's id."""
+    spec = store.get(context)[0]
+    sp = S.loads(S.dumps(spec))
+    sid = "own_" + "".join(c if c.isalnum() else "_" for c in ob.name.lower())
+    user = [s_ for s_ in sp.get('button_styles', []) or [] if s_.get('id') != sid]
+    user.append({'id': sid, 'name': ob.name, 'kind': 'button', 'mesh': ob.name, 'author': '', 'url': '',
+                 'license': ''})
+    sp['button_styles'] = user
+    store.put(context, sp)
+    context.scene.ac9_button_style = sid
+    refresh(context, sp)
+    return sid
 
 
 def _wrap(layout, text, n=34):
@@ -658,7 +672,10 @@ def draw_tools(layout, context, spec):
     # always there, grayed out with the reason when nothing is sewn at button stitches (user 2026-10-22)
     row = col.row(align=True)
     row.operator("ac9_cloth_sim.button_from_stitches", text="From BOM", icon='LINKED')
-    col.operator("ac9_cloth_sim.button_style_from_object", text="Use Object", icon='MESH_DATA')
+    # an object field with Blender's eyedropper: the mesh clicked becomes the style, whatever tool is on (the Work
+    # Screen's 3D view has no select tool for other objects, user 2026-11-17); the operator stays for F3 and the AI
+    col.label(text="Your own button:")                  # "Use Object" as the field's text was cut off
+    col.prop(context.scene.ac9_cloth_sim, "button_style_pick", text="")
     # no Fasten All / Remove All (user 2026-10-23): pick them in Lists > Fasteners (a closure's name picks its
     # buttons, Shift adds) and act on them in Properties > Tool
 

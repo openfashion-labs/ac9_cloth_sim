@@ -9,7 +9,7 @@ import bpy
 import gpu
 import numpy as np
 from gpu_extras.batch import batch_for_shader
-from .i18n import CTX, F9, rpt, tx
+from .i18n import CTX, rpt, tx
 from . import units as U
 
 from . import draft_tool as T
@@ -83,31 +83,81 @@ class AC9_OT_SimAddDart(bpy.types.Operator):
             self.report({'WARNING'}, "Point at an edge of the outline")
             return {'CANCELLED'}
         self.piece, self.edge, self.t = h[1], h[2], h[3]
-        return self.execute(context)
+        # the numbers first, in a dialog with the dart drawn on the pattern (user 2026-11-17: numbers are typed in a
+        # dialog everywhere, the Redo panel is not relied on)
+        T.dialog_aside(context, event, [self.piece], spec)
+        T.ghost_open(self)
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "width")
+        col.prop(self, "length")
+        col.prop(self, "true_mouth")
+        spec, _ = store.get(context)
+        if spec is not None and self.piece:
+            why = T.ghost(self, ("dart", self.piece, self.edge, self.t, self.width, self.length, self.true_mouth),
+                          lambda: self._make(spec)[:2] + ([],))
+            T.draw_why(col, why)
+            if not why:
+                try:
+                    cut = self._make(spec)[4]
+                except (ValueError, StopIteration):
+                    cut = None
+                if cut:
+                    col.label(text=rpt("Too long for the piece: {0} mm", round(cut)), icon='INFO')
+
+    def _make(self, spec):
+        """(the copy with the dart, pieces changed, darts made, marks moved, the length used when it was cut down
+        or None); a ValueError when it cannot go in. A dart too long for the piece (the mirror dart of a piece edited
+        symmetrically meets it, or it runs out of the far side) is cut down until it fits, and said so: it was refused
+        with a warning only, and from the menu that looked like nothing happened (user 2026-11-17, an 11 cm wide
+        piece and the 8 cm default)."""
+        k = (self.piece, self.edge, self.t, self.width, self.length, self.true_mouth, store._cache.get('key'))
+        memo = getattr(type(self), '_memo', None)
+        if memo is not None and memo[0] == k:
+            return memo[1]
+        length, cut = self.length * 1000.0, False
+        while True:
+            sp = S.loads(S.dumps(spec))
+            out, moved = DT.add_dart(sp, self.piece, self.edge, self.t, self.width * 1000.0, length,
+                                     true=self.true_mouth)
+            bad = D.problems(sp, list(out))
+            if not bad:
+                break
+            if length * 0.85 < 5.0:
+                raise ValueError(bad[0])
+            length, cut = length * 0.85, True
+        r = (sp, list(out), out, moved, length if cut else None)
+        type(self)._memo = (k, r)
+        return r
+
+    def cancel(self, context):
+        T.clear_ghost()
+        T.dialog_back(context)
 
     def execute(self, context):
+        T.clear_ghost()
+        T.dialog_back(context)
         if not self.piece:
             return {'CANCELLED'}
         spec, _ = store.get(context)
         old = S.loads(S.dumps(spec))
-        sp = S.loads(S.dumps(spec))
         try:
-            out, moved = DT.add_dart(sp, self.piece, self.edge, self.t, self.width * 1000.0, self.length * 1000.0,
-                                         true=self.true_mouth)
+            sp, _names, out, moved, cut = self._make(spec)
         except (ValueError, StopIteration) as exc:
             self.report({'WARNING'}, str(exc) or "the edge is gone")
             return {'CANCELLED'}
-        bad = D.problems(sp, list(out))
-        if bad:
-            self.report({'WARNING'}, bad[0])
-            return {'CANCELLED'}
+        type(self)._memo = None
         # the cloth outside the dart did not move: every point of the new pieces is where it was (the seams split at
         # the mouth would otherwise be laid by fraction over the whole old seam and fold the cloth)
         same = {p: _identity for p in out}
         msg = T.commit(context, sp, list(out), old_spec=old, rigid=same)
         _select_seam(context, out[self.piece])
-        self.report({'INFO'}, rpt("Dart {0} on {1}", out[self.piece], self.piece) + (rpt(" ({0} mark(s) moved off its mouth)", moved)
-                                                                             if moved else "") + (rpt("; {0}", msg) if msg else "") + rpt(F9))
+        self.report({'INFO'}, rpt("Dart {0} on {1}", out[self.piece], self.piece)
+                    + (rpt(" ({0} mark(s) moved off its mouth)", moved) if moved else "")
+                    + (rpt("; length cut to {0} mm to fit the piece", round(cut)) if cut else "")
+                    + (rpt("; {0}", msg) if msg else ""))
         return {'FINISHED'}
 
 

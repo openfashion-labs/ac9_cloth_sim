@@ -78,11 +78,9 @@ def _extended(context, spec, internal, names):
     def belongs(ob):
         return PLV.PROP not in ob or (spec is not None and ob.get(PLV.GARMENT_PROP) == PLV.garment(spec))
     from . import selection as SEL
-    selected = sorted({n for o in SEL.objects(context) if belongs(o)
-                       for n in (o.get(PV.PIECE_PROP), o.get(PLV.PROP), o.get(PLV.TWIN_PROP)) if n in names})
-    active = context.active_object
-    active_names = [n for n in (active.get(PV.PIECE_PROP), active.get(PLV.PROP), active.get(PLV.TWIN_PROP))
-                    if n in names] if active and belongs(active) else []
+    selected = sorted(n for n in SEL.pieces(context) if n in names)
+    lead = SEL.lead(context)
+    active_names = [lead] if lead in names else []
     # Objects in another scene must not become placements of this scene just
     # because their garment and piece names match.
     placed = {n: ob for n, ob in PLV.objects(spec).items()
@@ -161,8 +159,8 @@ def snapshot(context):
     edges = DT.selected_edges(spec) if edges_current else []
     internal = DT.selected_internal(context, spec) if internal_current and spec else None
     names = {pc['name'] for pc in spec['pieces']} if spec else set()
-    pieces = sorted({str(o[PV.PIECE_PROP]) for o in context.view_layer.objects.selected
-                     if PV.PIECE_PROP in o and o[PV.PIECE_PROP] in names})
+    from . import selection as SEL
+    pieces = sorted(str(n) for n in SEL.pieces(context) if n in names)
     result = {'schema': 2, 'active': active, 'tool_id': tool_id,
             'scene': context.scene.name, 'spec_text': t.name if t else None,
             'spec_available': spec is not None, 'selected_pieces': pieces[:32],

@@ -225,6 +225,7 @@ def convert(name, V3, T, UV, guides=None):
 
     # ---- seams between runs
     done = set()
+    st_pairs = {}                                 # (island, vertex, island, vertex) -> seam id
     for (k, c0), (pname, ids, ne) in runs.items():
         pt = partner.get((k, c0))
         if pt is None or (k, c0) in done:
@@ -253,6 +254,13 @@ def convert(name, V3, T, UV, guides=None):
             side_b = {'piece': bname, 'from': [bids[-1], 1.0], 'to': [bids[0], 0.0], 'dir': -1}
         sid = f"m{len(spec['seams']) + 1}"
         spec['seams'].append({'id': sid, 'a': side_a, 'b': side_b, 'source': 'mesh', 'check': '', 'enabled': True})
+        # the stitches: each outline vertex of this run with the partner run's vertex on the same 3D vertex
+        for (ka, ia) in mine:
+            kp, ip = partner[(ka, ia)]
+            for va in (ia, (ia + 1) % P[ka]['nb']):
+                for vb in (ip, (ip + 1) % P[kp]['nb']):
+                    if (ka, va) != (kp, vb) and int(P[ka]['vid'][va]) == int(P[kp]['vid'][vb]):
+                        st_pairs[(ka, va, kp, vb)] = sid
 
     # seam lengths after the curve fit (both sides are paired point for point: a big difference pulls)
     OL = {pc['name']: S.Outline(pc) for pc in spec['pieces']}
@@ -280,8 +288,10 @@ def convert(name, V3, T, UV, guides=None):
         Vs[f"V{k}"] = p['flat']
         nbs.append(p['nb'])
         o += len(p['flat'])
+    E_st = np.array([[offs[ka] + va, offs[kb] + vb] for ka, va, kb, vb in st_pairs], np.int64).reshape(-1, 2)
     job = {'names': names, 'offs': np.array(offs), 'F': np.vstack(F), 'fp': np.concatenate(fp),
-           'flat': np.vstack(flat), 'X': np.vstack(X), 'V': Vs, 'nb': np.array(nbs)}
+           'flat': np.vstack(flat), 'X': np.vstack(X), 'V': Vs, 'nb': np.array(nbs),
+           'E_st': E_st, 'E_seam': np.array(list(st_pairs.values()), dtype=str)}
     return spec, job, rep
 
 

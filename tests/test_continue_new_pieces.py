@@ -37,6 +37,19 @@ class ContinueNewPieces(unittest.TestCase):
         self.assertEqual(kind, 'live')
         self.assertNotIn('gravity_z', stg[0][1])
 
+    def test_ramp_shape_only_where_sewing_with_gravity(self):
+        # the stitches ease to a stop in Live and in Continue's gravity stage; the no-gravity stage that sews new
+        # pieces and the short closing stage keep the linear ramp
+        _k, live = recipe.continue_stages(_spec(), ['A', 'B', 'C'], 'p.npz', [0.0, 1.0, 1.0], live=True)
+        self.assertEqual(live[0][1]['stitch_ramp_shape'], recipe.SEW_RAMP_SHAPE)
+        self.assertEqual(recipe.SEW_RAMP_SHAPE, 'ease_out')
+        _k, cont = self._stages([])
+        self.assertEqual(cont[0][1]['stitch_ramp_shape'], recipe.SEW_RAMP_SHAPE)
+        self.assertNotIn('stitch_ramp_shape', cont[-1][1])
+        _k, new = self._stages(['C'])
+        self.assertNotIn('stitch_ramp_shape', new[0][1])
+        self.assertNotIn('stitch_ramp_shape', new[-1][1])
+
 
 if __name__ == '__main__':
     unittest.main()

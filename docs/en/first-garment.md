@@ -105,7 +105,7 @@ For a detailed explanation of how to add seams, see [Seams](features/seams.md).
 1. In the **Placement** panel, press **Place** to pick up the tool.
 2. Click a piece in the pattern view to select it (**Shift** adds). For a left/right pair, when you place one, its partner follows to the mirrored position.
 3. In the 3D viewport on the left, move the cursor over the cylinder where you want to place it (the cylinder glows yellow).
-4. Press on the cylinder and the piece is placed there. If you **hold and move**, it slides around and along the cylinder. It is set where you release (if you press and drag a piece that is already placed, it does not jump, and moves only by the amount you move. To change only the angle, only the height, or to tilt the piece, use Around (angle around), Height, and Tilt (tilt angle; at 90° the upper side is horizontal and outward, at 180° it is upside down = the outline of the collar faces the neck side; the ↻ next to it adds +180°) in "AC9 Piece" on the Tool tab).
+4. **Press on the cylinder and drag**: the piece is placed there and slides around and along the cylinder as you move. It is set where you release. A click alone does not place (it only selects; on nothing it deselects) (if you press and drag a piece that is already placed, it does not jump, and moves only by the amount you move. To change only the angle, only the height, or to tilt the piece, use Around (angle around), Height, and Tilt (tilt angle; at 90° the upper side is horizontal and outward, at 180° it is upside down = the outline of the collar faces the neck side; the ↻ next to it adds +180°) in "AC9 Piece" on the Tool tab).
 5. Repeat until all the pieces are placed. The panel shows "○ / ○ pieces placed" (number placed / number to use).
 
 Which piece goes on which cylinder:
@@ -134,7 +134,7 @@ To place a piece again, select it and place it again with **Place**. **Back to F
 3. When the calculation starts, the seams are pulled together and closed, and the garment settles onto the body.
 4. **It does not stop by itself.** When the garment has settled and stopped moving, press the button (it has changed to **Stop**) again or press **Esc**. The shape where you stopped is the result.
 
-- If a collar or sleeve falls before it is sewn on, uncheck **Gravity** and run, then check it once the seams have closed (you can switch it while it runs).
+- Normal Live Sim first sews placed pieces without gravity, then turns gravity on. You can also switch **Gravity** manually while it runs.
 - The time the calculation takes depends on the size of the garment and the computer.
 
 ![the dressed garment and the Result field of AC9 Garment](img/fg_dressed.png)
@@ -154,7 +154,7 @@ To place a piece again, select it and place it again with **Place**. **Back to F
 
 - **Fix the pattern**: drag corners and edges with **Edit Pieces** in the **Pattern** panel. The dressed garment does not change right away. When you then press **Live Sim**, the edited shape is carried onto the dressed garment first, and it calculates **continuing from the current shape** and settles into the edited pattern. To see the 3D shape after every edit, press **3D Follows Edits** in **AC9 Run** on the Tool tab.
 - **Pinch and fix the cloth by hand**: while the cloth is moving in **Live Sim**, pinch and pull the cloth with **Ctrl + left drag**. If cloth has pushed through other cloth, press **Alt** during the drag and the cloth you hold passes through other cloth. Press **Esc** and the shape where you stopped remains.
-- **Dress again from the start**: with nothing selected, press **Back to Placed** in the **Placement** panel (a confirmation appears), then press **Live Sim**.
+- **Restart from the placed shape used before the simulation**: with nothing selected, press **Back to Placed** in the **Placement** panel (a confirmation appears), then press **Live Sim**.
 
 ## 12. Save
 
@@ -164,7 +164,7 @@ Save with **Ctrl+S**. The final shape of the dressed garment is saved inside the
 
 - Layering clothes: switch to another garment in the **Garment** field and press **Live Sim**, and the garment you have finished dressing becomes an immovable obstacle. Dress from the inner garment outward.
 - Change the fabric: when you select a piece, you can choose the fabric in **AC9 Piece** on the Tool tab.
-- Send to Cloth Retopo: with **To AC9 Cloth Retopo** in Details of **AC9 Run** on the Tool tab, you make the dressed garment the Guide of [AC9 Cloth Retopo](https://github.com/openfashion-labs/ac9_cloth_retopo).
+- Send to Cloth Retopo: with **To AC9 Cloth Retopo** in **Settings** of **AC9 Run** on the Tool tab, you make the dressed garment the Guide of [AC9 Cloth Retopo](https://github.com/openfashion-labs/ac9_cloth_retopo).
 
 ## Other ways to start
 

@@ -243,9 +243,12 @@ def resolve(value, panel=None, environ=None):
             out[key] = getattr(panel, attr, fallback) if panel is not None else fallback
     out['physical'], out['watch'] = bool(out['physical']), bool(out['watch'])
     out['weight_gsm'], out['bending_uNm'] = float(out['weight_gsm']), float(out['bending_uNm'])
-    # the panel's Fast Live is not used (user 2026-11-12, 0.2.0: hidden everywhere; a file saved with it on runs the
-    # usual Live). A test set can still ask for it by its key
-    if panel is not None and getattr(panel, 'native_three', False):
+    # Explicit research opt-in (2026-11-14). Keep the Native preference untouched so switching off restores it.
+    # Legacy fast_live values in saved files remain ignored. Only Live consumes this solver choice.
+    if panel is not None and getattr(panel, 'accurate_research', False):
+        out.pop('native_three', None)
+        out['fast_live'] = True
+    elif panel is not None and getattr(panel, 'native_three', False):
         out['native_three'] = True
     out['name'] = name
     out['from_env'] = sorted(env)

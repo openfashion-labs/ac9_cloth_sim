@@ -13,6 +13,7 @@ install(module) replaces the two builder methods of module.TriMeshCollisionDetec
 Newton's code and stops on the first difference (the test of this file).
 """
 import os
+import itertools
 
 import numpy as np
 
@@ -84,8 +85,11 @@ def edge_edge(P, ei, vae, vae_off, extra=None):
     """Threshold 2: per edge (v0, v1), the edges that have an endpoint among v0's and v1's one-ring vertices (other
     than v0, v1), less every edge v0 or v1 belongs to (any of its four slots)."""
     E = len(ei)
-    rv, ru, epv, epe = _one_ring(P, ei, vae, vae_off)
+    rv, ru, epv, epe = _edge_one_ring(P, ei, vae, vae_off)
     v0, v1 = ei[:, 2].astype(np.int64), ei[:, 3].astype(np.int64)
+    keys = _edge_edge_keys(P,ei,rv,ru,epv,epe,v0,v1)
+    if keys is not None:
+        return _edge_csr(keys,E,extra)
     ids = np.arange(E, dtype=np.int64)
     oe, w = _join(np.r_[ids, ids], np.r_[v0, v1], rv, ru, P)
     k = (w != v0[oe]) & (w != v1[oe])
@@ -94,6 +98,61 @@ def edge_edge(P, ei, vae, vae_off, extra=None):
     eg = ei[g]
     keep = ~((eg == v0[own][:, None]) | (eg == v1[own][:, None])).any(1)
     return _csr(own[keep], g[keep], E, max(E, 1), extra)
+
+
+def _edge_one_ring(P,ei,vae,vae_off):
+    v,e,slot=_entries(vae,vae_off);endpoint=slot>=2;v,e=v[endpoint],e[endpoint]
+    u=np.r_[ei[e,2],ei[e,3]];vv=np.r_[v,v];keep=vv!=u
+    keys=np.sort(vv[keep]*P+u[keep])
+    if len(keys):keys=keys[np.r_[True,keys[1:]!=keys[:-1]]]
+    return keys//P,keys%P,v,e
+
+
+def _edge_edge_keys(P,ei,rv,ru,epv,epe,v0,v1):
+    """Bounded row-local unions avoid expanding and globally sorting repeated joins."""
+    E=len(ei)
+    if not P or not E or max(P,E)>np.iinfo(np.int32).max:return None
+    if np.any(v0<0) or np.any(v1<0) or np.any(v0>=P) or np.any(v1>=P):return None
+    nr=np.bincount(rv,minlength=P);ne=np.bincount(epv,minlength=P)
+    wn=int(nr.max(initial=0));we=int(ne.max(initial=0))
+    if not wn or not we or 2*wn*we>256 or (P+1)*max(wn,we)>8_000_000:return None
+    neighbors=np.full((P+1,wn),P,np.int32);edges=np.full((P+1,we),E,np.int32)
+    starts=np.r_[0,np.cumsum(nr)];slots=np.arange(len(ru))-np.repeat(starts[:-1],nr)
+    neighbors[rv,slots]=ru
+    starts=np.r_[0,np.cumsum(ne)];slots=np.arange(len(epe))-np.repeat(starts[:-1],ne)
+    edges[epv,slots]=epe
+    values=[]
+    for begin in range(0,E,2048):
+        end=min(begin+2048,E);a=v0[begin:end];b=v1[begin:end]
+        nodes=np.concatenate((neighbors[a],neighbors[b]),axis=1)
+        nodes[(nodes==a[:,None])|(nodes==b[:,None])]=P
+        nodes.sort(axis=1)
+        duplicate=nodes[:,1:]==nodes[:,:-1];nodes[:,1:][duplicate]=P
+        candidates=edges[nodes].reshape(end-begin,-1);candidates.sort(axis=1)
+        valid=candidates<E
+        valid[:,1:]&=candidates[:,1:]!=candidates[:,:-1]
+        own=np.repeat(np.arange(end-begin),valid.sum(axis=1));g=candidates[valid].astype(np.intp)
+        aa=a[own];bb=b[own];keep=np.ones(len(g),bool)
+        for column in range(4):
+            v=ei[g,column];keep&=(v!=aa)&(v!=bb)
+        values.append((own[keep]+begin)*E+g[keep])
+    return np.concatenate(values)
+
+
+def _edge_csr(keys,n_rows,extra):
+    """Same sorted CSR as _csr, with row-local base keys and C-level external iteration."""
+    if extra:
+        if not isinstance(extra,dict) or any(not isinstance(v,(set,list,tuple,np.ndarray)) for v in extra.values()):
+            return _csr(keys//n_rows,keys%n_rows,n_rows,n_rows,extra)
+        counts=np.fromiter(map(len,extra.values()),np.int64,count=len(extra))
+        rows=np.repeat(np.fromiter(extra,np.int64,count=len(extra)),counts)
+        vals=np.fromiter(itertools.chain.from_iterable(extra.values()),np.int64,count=int(counts.sum()))
+        keys=np.r_[keys,rows*n_rows+vals]
+    keys.sort()
+    if len(keys):keys=keys[np.r_[True,keys[1:]!=keys[:-1]]]
+    offsets=np.zeros(n_rows+1,np.int32)
+    np.cumsum(np.bincount(keys//n_rows,minlength=n_rows),out=offsets[1:])
+    return (keys%n_rows).astype(np.int32),offsets
 
 
 def install(tmc):

@@ -7,7 +7,7 @@ slug: /
 # AC9 Cloth Sim Manual
 
 This is the manual for an add-on that loads garment patterns in Blender, sews them together, puts them on an avatar, and lets you check how the cloth settles.
-It is currently an **alpha version (0.1)**. Features are missing, and the screens and steps will keep changing.
+The current version is **0.3.0**. See [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) and [CHANGELOG](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) for the development stage and changes in each version. Features are missing, and the screens and steps will keep changing.
 
 ## Reading order
 
@@ -18,6 +18,7 @@ It is currently an **alpha version (0.1)**. Features are missing, and the screen
 | [Your first garment](first-garment.md) | You want to dress one garment from start to finish |
 | [Concepts](concepts.md) | You are not sure which shape you are looking at, or where things are saved |
 | [Features](features/screen.md) | You want to look up panels and buttons one by one |
+| [How It Works](internals/index.md) | You want to know how the data is kept, how selection and the gizmo work, how a run goes; or to script or change the add-on |
 | [Troubleshooting](troubleshooting.md) | Things are not working the way you expect |
 | [Glossary](glossary.md) | You want to check what a word means |
 

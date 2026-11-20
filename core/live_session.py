@@ -95,7 +95,8 @@ class Session:
         if self.lease is not None:raise ValueError('Previous frontend lease has not been released')
         if not self.compatible(self.python,self.environment,config_path):raise ValueError('Incompatible Native session')
         cfg=json.loads(Path(config_path).read_text(encoding='utf8'))
-        identity=protocol.fingerprint(idx,avatar,cfg,protocol.environment_id(self.environment),implementation=self.code)
+        identity=protocol.fingerprint(idx,avatar,cfg,protocol.environment_id(self.environment),implementation=self.code,
+                                      unaudited=protocol.SESSION_UNAUDITED)
         self.generation+=1
         command=dict(op='run',session_token=self.token,job_token=uuid.uuid4().hex,generation=self.generation,
                      args=list(map(str,(idx,avatar,config_path,stage))),fingerprint=identity,code=self.code)

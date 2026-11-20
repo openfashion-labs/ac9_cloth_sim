@@ -69,39 +69,38 @@ def write_job(context, spec, job):
     and the garment object showing it. Returns the job folder."""
     from . import dress as DR
     d = DR.job_dir(context)
-    os.makedirs(os.path.join(d, 's1'), exist_ok=True)
+    from . import result_reference as RR
     names = job['names']
-    pat = dict(job['V'], names=np.array(names), nb=job['nb'])
-    np.savez(os.path.join(d, 'pattern.npz'), **pat)
-    np.savez(os.path.join(d, 'scene.idx.npz'), offs=job['offs'], F=job['F'], fp=job['fp'], flat=job['flat'],
-             Xinit=job['X'])
-    np.save(os.path.join(d, 's1', 'frames.npy'), (job['X'][None] * 0.001).astype(np.float32))
-    open(os.path.join(d, 'ac9_spec.json'), 'w', encoding='utf-8').write(S.dumps(spec))
-    json.dump({'kind': 'from mesh', 'source': spec['source'].get('object', ''), 'names': names,
-               'stages': ['from mesh'], 'verts': int(len(job['flat'])), 'tris': int(len(job['F']))},
-              open(os.path.join(d, 'job.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    RR.write_result(d, 'from mesh', names, job['offs'], job['F'], job['fp'], job['flat'], job['X'], S.dumps(spec),
+                    pattern=dict(job['V'], names=np.array(names), nb=job['nb']), stitches=job['E_st'],
+                    seams=job['E_seam'], info={'source': spec['source'].get('object', '')})
     ob = DR.garment_object(context, DR.garment_name(spec), job['flat'], job['F'], job['fp'], job['X'], names)
     ob['ac9_job'] = d
     DR.refresh_thickness(context, ob, spec)
     return d, ob
 
 
+def source_mesh(context):
+    """The mesh From Mesh works on: the Mesh field's (picked with the eyedropper or by name), else the active object."""
+    return context.scene.ac9_cloth_sim.from_mesh_object or context.active_object
+
+
 class AC9_OT_SimFromMesh(bpy.types.Operator):
-    """Make the pattern from the active mesh: each UV island is a piece, edges shared by two islands are seams. The garment starts as modeled (Live Sim settles it). Model it single-layered and open, as shown (modifiers applied); pick the body first"""
+    """Make the pattern from the mesh in the Mesh field (empty: the active mesh): each UV island is a piece, edges shared by two islands are seams. The garment starts as modeled (Live Sim settles it). Model it single-layered and open, as shown (modifiers applied); pick the body first"""
     bl_idname = "ac9_cloth_sim.from_mesh"
     bl_label = "From Mesh"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        ob = context.active_object
+        ob = source_mesh(context)
         body = context.scene.ac9_cloth_sim.body
         return ob is not None and ob.type == 'MESH' and body is not None and ob != body
 
     def execute(self, context):
         from . import dress as DR
         t0 = time.time()
-        ob = context.active_object
+        ob = source_mesh(context)
         props = context.scene.ac9_cloth_sim
         try:
             co, tri, uv = _mesh_arrays(context, ob)

@@ -168,7 +168,7 @@ def lay(context, spec, piece, got=None, targets=None, *, preparation=None):
     if num['inside'] or num['cross']:
         msg += tx("; inside the body {0}, through other cloth {1}", num['inside'], num['cross'])
         if left:
-            msg += tx(" ({0} vertices left red: Move by Hand, or simulate from here)", left)
+            msg += tx(" ({0} vertices left red: move it with Whole Pieces, or simulate from here)", left)
     if row.get('ratio_off'):
         msg += tx("; its sewn edge is {0:.2f} times its length", row['ratio'])
     return True, msg

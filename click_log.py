@@ -36,7 +36,9 @@ def _state(context):
     """What the selection looks like (read before and after a click)."""
     try:
         act = context.view_layer.objects.active
-        return {'active': act.name if act else None, 'selected': _names(context.view_layer.objects.selected)}
+        from . import tool_tab, store
+        return {'active': act.name if act else None, 'selected': _names(context.view_layer.objects.selected),
+                'details': tool_tab.snapshot(context, store.get(context)[0])}
     except Exception:
         return {}
 
@@ -126,8 +128,11 @@ def logged_end(modal):
         res = modal(self, context, event)
         try:
             if res and not ({'RUNNING_MODAL', 'PASS_THROUGH'} & set(res)):
+                from . import toolbar as TB
+                branch = TB._branch.get('name')         # what the press turned out to be (the Place tool)
+                TB._branch['name'] = None
                 _write({'t': time.strftime("%H:%M:%S"), 'op': self.bl_idname, 'end': sorted(res),
-                        'event': [event.type, event.value], 'after': _state(context)})
+                        'event': [event.type, event.value], 'branch': branch, 'after': _state(context)})
         except Exception:
             pass
         return res

@@ -89,22 +89,23 @@ def bary(Q, V, T, X):
     return out
 
 
-def mirror_piece(X, flat, F, rng_src, rng_tgt, cx, plane='x'):
+def mirror_piece(X, flat, F, rng_src, rng_tgt, cx, plane='x', layout=None):
     """(positions for the target's vertices, 'same' | 'mapped'): the source's shape mirrored about x = cx (front /
     back, plane 'y': about y = cx). The same
     mirrored mesh (a pair meshed as mirror images: vertex i is vertex i's mirror) is copied vertex for vertex; other
     meshes through the layout (barycentric in the source's triangles)."""
     s0, s1 = rng_src
     t0, t1 = rng_tgt
+    layout = layout or plane                  # the pattern axis the pair is drawn mirrored across (spec.layout_of)
     from .spec import mirror_points
     M = mirror_points(np.asarray(X[s0:s1], float), plane, cx)
     fs, ft = np.asarray(flat[s0:s1], float), np.asarray(flat[t0:t1], float)
     if s1 - s0 == t1 - t0:
-        if float(np.abs(_mirror_layout(ft, fs, ft, plane) - fs).max(initial=0.0)) <= SAME_TOL:
+        if float(np.abs(_mirror_layout(ft, fs, ft, layout) - fs).max(initial=0.0)) <= SAME_TOL:
             return M, 'same'
     F = np.asarray(F)
     T = F[(F[:, 0] >= s0) & (F[:, 0] < s1)] - s0
-    return bary(_mirror_layout(ft, fs, ft, plane), fs, T, M), 'mapped'
+    return bary(_mirror_layout(ft, fs, ft, layout), fs, T, M), 'mapped'
 
 
 def closure_top(spec, a, b, side_of):
@@ -163,6 +164,9 @@ OPEN_MM = 2.0           # a seam this far apart after the copy is said
 def opened_seams(X, pidx, ranges, targets, tol=OPEN_MM):
     """[(piece, piece, max gap mm)] of the seams touching the copied targets that are now apart, widest first.
     pidx: the job's scene.idx (E_st, E_seam); ranges {piece: (first, end)}."""
+    files = pidx.files if hasattr(pidx, 'files') else pidx
+    if 'E_st' not in files:          # a result folder that does not know its stitches: nothing to say
+        return []
     E = np.asarray(pidx['E_st'])
     if not len(E):
         return []

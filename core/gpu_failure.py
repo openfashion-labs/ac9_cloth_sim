@@ -11,10 +11,14 @@ fail too: that is the add-on's fault, and a driver update will not help. No Blen
 import os
 import re
 
+# solver/newton_vbd.py writes this and stops when Warp has no CUDA device (it would run on the CPU for many minutes)
+NO_GPU = 'AC9: no CUDA device'
 VERSIONS = re.compile(r'CUDA Toolkit (\d+)\.(\d+), Driver (\d+)\.(\d+)')
 # what Warp writes when the GPU side cannot build or load a kernel, or cannot use the driver at all
 BUILD_FAILED = ('CUDA kernel build failed', 'ptxas error', 'NVRTC_ERROR', 'insufficient CUDA driver version',
-                'CUDA driver not found', 'PTX JIT compilation failed', 'Failed to load CUDA module')
+                'CUDA driver not found', 'PTX JIT compilation failed', 'Failed to load CUDA module',
+                NO_GPU)
+TOOLKIT = re.compile(r'CUDA Toolkit (\d+)\.(\d+)')
 TAIL = 400_000          # the last bytes of each file are enough: Warp's start line and the traceback
 
 
@@ -35,8 +39,9 @@ def _read_tail(path):
 
 
 def diagnose(paths):
-    """{'driver': (major, minor) or None, 'toolkit': ... or None, 'old_driver': bool} when the output shows the GPU
-    could not build or load the simulation's kernels, else None."""
+    """{'driver': (major, minor) or None, 'toolkit': ... or None, 'old_driver': bool, 'no_gpu': bool} when the output
+    shows the GPU could not build or load the simulation's kernels, or that no CUDA device could be used at all (no
+    NVIDIA driver, or one too old for Warp: the solver stops rather than run on the CPU), else None."""
     text = '\n'.join(_read_tail(p) for p in paths if p)
     if not any(m in text for m in BUILD_FAILED):
         return None
@@ -45,8 +50,12 @@ def diagnose(paths):
     if found:
         toolkit = (int(found.group(1)), int(found.group(2)))
         driver = (int(found.group(3)), int(found.group(4)))
+    elif TOOLKIT.search(text):       # 'CUDA Toolkit 12.9, CUDA driver not available': no driver version to show
+        t = TOOLKIT.search(text)
+        toolkit = (int(t.group(1)), int(t.group(2)))
     old = driver is not None and toolkit is not None and driver < toolkit
-    return {'driver': driver, 'toolkit': toolkit, 'old_driver': old or 'insufficient CUDA driver version' in text}
+    return {'driver': driver, 'toolkit': toolkit, 'old_driver': old or 'insufficient CUDA driver version' in text,
+            'no_gpu': NO_GPU in text}
 
 
 def version_text(v):

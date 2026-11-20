@@ -414,15 +414,6 @@ class OperationScopes(unittest.TestCase):
         self.assertIsNone(bpy.data.objects.get(name));self.assertTrue(PLV.objects(ST.get(bpy.context)[0]))
         self.assertFalse(FA.needs_migrate(ST.get(bpy.context)[0]))
         self.assertEqual(sum(m.type=='MESH_CACHE' for m in self.other.modifiers),0)
-    def test_real_move_by_hand_late_control_failure_keeps_uncommitted_preparation(self):
-        from ac9_cloth_sim import placement as PL
-        ids={o.session_uid for o in bpy.data.objects}
-        with patch.object(PL,'selected_pieces',return_value=['A']):
-            with patch.object(PLV,'activate_sides',side_effect=ValueError('control refused after construction')):
-                self.assertEqual(bpy.ops.ac9_cloth_sim.move_by_hand(),{'CANCELLED'})
-        self.assert_not_committed();self.assertFalse(PLV.objects(self.sp))
-        self.assertEqual({o.session_uid for o in bpy.data.objects},ids)
-
     def test_real_partial_reset_late_build_failure_restores_frame_provenance(self):
         g,local=self.local_consumer();old={k:g[k] for k in g.keys()}
         build=PLV.build;calls=[]

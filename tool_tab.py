@@ -7,42 +7,114 @@ VIEW_3D / UI / 'Tool' and show only where the area is the Properties editor (Fab
 bl_context: they stay in every mode (Fix by Hand goes to Sculpt or Edit Mode)."""
 import bpy
 from bpy.app.handlers import persistent
-from .i18n import tx, wrap
+from .i18n import fabric_name, tx, wrap
 
 from . import pattern_view as PV
 from . import store
 from . import selection as SEL
 from . import ui as U
 
-# what was touched last: 'SEAM' (seam_index changed, properties.py), 'PIECE' / 'GARMENT' (the selection changed,
-# _on_depsgraph), 'FABRIC' / 'BOND' (a row of Lists > Fabrics: a fabric or an interlining, its id in 'item').
-# None: from the selection
-_focus = {'kind': None, 'sig': None, 'item': None}
+# Selection says what an operation acts on; focus says which selected thing's details to show.
+# Only publish() writes focus. Internal projections acknowledge selection, without becoming a new input.
+_focus = {'kind': None, 'owner': None, 'item': None, 'serial': 0, 'origin': None}
+_observed = {'owner': None, 'selection': None}
 
 
-def set_focus(kind):
-    _focus['kind'] = kind
+def _owner(context):
+    text = store.text(context)
+    return (context.scene.session_uid, text.session_uid if text else 0, context.view_layer.name)
+
+
+def _selection(context):
+    active = context.view_layer.objects.active
+    other = tuple(sorted(ob.session_uid for ob in SEL.objects(context) if SEL._kind(ob) is None))
+    active_other = active.session_uid if active is not None and active.select_get() and SEL._kind(active) is None else 0
+    return (SEL.lead(context), tuple(sorted(SEL.pieces(context))), active_other, other)
+
+
+def acknowledge_selection(context):
+    """An internal projection/restore is observed, but is not a click on a new detail target."""
+    owner, selection = _owner(context), _selection(context)
+    previous = _observed['selection'] if _observed['owner'] == owner else None
+    _observed.update(owner=owner, selection=selection)
+    if previous is None or previous[0] != selection[0]:
+        from . import properties as P
+        P.sync_looks()
+
+
+def selection_changed(context):
+    """Called by selection.watch BEFORE it projects an external selection; never from a second watcher."""
+    return _observed['owner'] == _owner(context) and _observed['selection'] != _selection(context)
+
+
+def _target(context, spec, kind):
+    """Stable identity of the current editing target, rather than an index or a generated object name."""
+    if kind == 'PIECE':
+        return _selected_piece(context, spec) if spec is not None else None
+    if kind == 'GARMENT':
+        return 'GARMENT'
+    if kind == 'SEAM':
+        return (store.active_seam(context, spec) or {}).get('id')
+    if kind == 'BUTTON' and spec is not None:
+        from . import button_ui as BU
+        bid = context.scene.ac9_button_active
+        return bid if BU._find(spec, bid) is not None else None
+    if kind == 'MEASURE':
+        from . import measure_edit as MEE, measure_tool as MT
+        picked = MEE.selected(context)
+        if picked is not None:
+            body = MT._body(context) if picked[0] in ('item', 'tape') else None
+            return (MEE.sel(context), body.session_uid if body else 0)
+    if kind == 'INTERNAL' and spec is not None:
+        from . import draft_tool as DT
+        picked = DT.selected_internal(context, spec)
+        return tuple(picked[:2]) if picked else None
+    if kind == 'EDGES' and spec is not None:
+        from . import draft_tool as DT
+        picked = tuple(x for x in DT.picked_lines(spec) if x[0] in ('edge', 'corner', 'ipoint'))
+        return picked or None
+    return None
+
+
+def publish(context, kind, item=None, origin='click'):
+    """Commit one explicit interaction, including re-clicks and drag starts; callers finish selection first."""
+    spec = store.get(context)[0]
+    if kind not in ('FABRIC', 'BOND'):
+        item = _target(context, spec, kind)
+    if item is None:
+        kind = 'PIECE' if _target(context, spec, 'PIECE') is not None else 'GARMENT'
+        item = _target(context, spec, kind)
+    _focus.update(kind=kind, owner=_owner(context), item=item, serial=_focus['serial'] + 1, origin=origin)
+    acknowledge_selection(context)
+    from . import properties as P
+    P.sync_looks(context)
     _tag_properties()
 
 
-def _sig(vl):
-    act = vl.objects.active
-    return (act.name if act is not None else None, tuple(o.name for o in vl.objects.selected))
+def release(context, kind):
+    """Clearing another tool's selection must not steal the currently shown details."""
+    if _focus['owner'] == _owner(context) and _focus['kind'] == kind:
+        publish(context, None, origin='clear')
+    else:
+        _tag_properties()
+
+
+def piece_clicked(context=None, origin='click'):
+    publish(context or bpy.context, 'PIECE', origin=origin)
 
 
 def focus_item(context, kind, iid):
     """Show fabric (kind 'FABRIC') or interlining ('BOND') `iid` in the Tool tab (Lists > Fabrics, user
-    2026-10-25). Its row selects its pieces: the selection seen now is taken as already seen, so _on_depsgraph does
-    not turn the tab to AC9 Piece; a later click on a piece does (the last thing touched)."""
-    _focus['item'] = iid
-    _focus['sig'] = _sig(context.view_layer)
-    set_focus(kind)
+    2026-10-25). Its row selects its pieces; publishing acknowledges that projection. A later piece click publishes
+    a new detail target even when the selection itself stays the same."""
+    publish(context, kind, iid)
 
 
-def focused_item(spec, kind):
+def focused_item(spec, kind, context=None):
     """The id of the fabric / interlining (kind 'FABRIC' / 'BOND') the Tool tab shows, or None."""
     from .core import fabric as FA
-    iid = _focus['item'] if _focus['kind'] == kind else None
+    context = context or bpy.context
+    iid = _focus['item'] if _focus['owner'] == _owner(context) and _focus['kind'] == kind else None
     if spec is None or iid is None:
         return None
     return iid if iid in (FA.fabric_index(spec) if kind == 'FABRIC' else FA.interlining_index(spec)) else None
@@ -89,55 +161,34 @@ def _selected_piece(context, spec):
 
 def resolve(context, spec):
     """'MEASURE', 'INTERNAL', 'EDGES', 'BUTTON', 'FABRIC', 'SEAM', 'PIECE' or 'GARMENT': what the Tool tab shows."""
-    k = _focus['kind']
-    if k in ('FABRIC', 'BOND') and focused_item(spec, k) is not None:
+    k = _focus['kind'] if _focus['owner'] == _owner(context) else None
+    if k in ('FABRIC', 'BOND') and focused_item(spec, k, context) is not None:
         return k
-    if k == 'BUTTON' and spec is not None and spec.get('buttons'):
-        from . import button_ui as BU
-        if BU._find(spec, BU.active_id(bpy.context, spec)) is not None:
-            return 'BUTTON'
-    if k == 'MEASURE':
-        from . import measure_edit as MEE
-        if MEE.selected(context) is not None:
-            return 'MEASURE'
-    if k == 'INTERNAL' and spec is not None:
-        from . import draft_tool as DT
-        if DT.selected_internal(context, spec) is not None:
-            return 'INTERNAL'
-    if k == 'EDGES' and spec is not None:
-        from . import draft_tool as DT
-        if DT.selected_edges(spec):
-            return 'EDGES'
-    if k == 'SEAM' and store.active_seam(context, spec) is not None:
-        return 'SEAM'
-    # whatever was touched last and is gone now (an edge, an internal line, a seam no longer picked) gives the tab
-    # back to the selected piece: a click on a piece already selected changes no selection, so _on_depsgraph does
-    # not run and the tab stayed on the garment
+    if k is not None and k not in ('FABRIC', 'BOND'):
+        current = _target(context, spec, k)
+        if current is not None and current == _focus['item']:
+            return k
+    # A removed or stale target falls back to the current piece. Never display a different object at its old index.
     if spec is not None and _selected_piece(context, spec) is not None:
         return 'PIECE'
     return 'GARMENT'
 
 
-@persistent
-def _on_depsgraph(scene, depsgraph):
-    # the selection changed (a click in the viewport, select all, the Pieces list): the Tool tab shows the piece,
-    # or the garment when no piece is selected. A seam picked since stays until the selection changes again
-    try:
-        vl = bpy.context.view_layer
-    except AttributeError:
-        return
-    if vl is None:
-        return
-    sig = _sig(vl)
-    if sig == _focus['sig']:
-        return
-    first = _focus['sig'] is None
-    _focus['sig'] = sig
-    if first:
-        return
-    piece = bool(SEL.facts(bpy.context))        # a pattern piece, a placed piece or a handle (a box select keeps the
-    #                                             active object outside)
-    set_focus('PIECE' if piece else 'GARMENT')
+def snapshot(context, spec=None):
+    """Read-only diagnostic: the selected editing target, resolved details and the last input's sequence."""
+    if spec is None:
+        spec = store.get(context)[0]
+    own = _focus['owner'] == _owner(context)
+    shown = resolve(context, spec)
+    actual = focused_item(spec, shown, context) if shown in ('FABRIC', 'BOND') else _target(context, spec, shown)
+    return dict(kind=shown, target=actual, requested=_focus['kind'] if own else None,
+                requested_target=_focus['item'] if own else None,
+                serial=_focus['serial'] if own else 0, origin=_focus['origin'] if own else None)
+
+
+def native_selection(context):
+    """selection.watch is the sole source for external selection changes, after its canonical projection."""
+    piece_clicked(context, origin='selection')
     from . import properties as P                 # the Look fields show the piece now selected
     try:
         P.sync_looks()
@@ -147,12 +198,20 @@ def _on_depsgraph(scene, depsgraph):
 
 @persistent
 def _on_load(_):
-    _focus.update(kind=None, sig=None, item=None)
+    _focus.update(kind=None, owner=None, item=None, serial=0, origin=None)
+    _observed.update(owner=None, selection=None)
     from . import properties as P
     try:
         P.sync_looks()
     except Exception:
         pass
+
+
+@persistent
+def _on_history(_):
+    # Keep a surviving focus; resolve checks ownership, identity and the editing target after restoration.
+    acknowledge_selection(bpy.context)
+    _tag_properties()
 
 
 def _base_poll(context):
@@ -179,6 +238,29 @@ class AC9_PT_ToolRun(_ToolTab, bpy.types.Panel):
         U.draw_run(self.layout, context)
 
 
+def whole_garment_picked(context):
+    """The dressed garment object picked as a whole (Blender's own select tools: they do not pick pieces) while no
+    AC9 tool is active."""
+    from . import dress as D, toolbar as TB
+    act = context.view_layer.objects.active if context.view_layer else None
+    if act is None or not act.name.startswith(D.GARMENT_PREFIX) or not act.select_get():
+        return False
+    t = TB.active_tool(context) or ''
+    return not t.startswith('ac9_cloth_sim.')
+
+
+def draw_whole_garment_hint(layout, context):
+    """One line and the button to Whole Pieces, only while the whole garment is picked with Blender's own tools
+    (Fable review 2026-11-17: the step between the 2D pattern and the dressed garment; not shown all the time)."""
+    if not whole_garment_picked(context):
+        return
+    from . import toolbar as TB
+    box = layout.box()
+    box.label(text="Whole garment selected", icon='INFO')      # short: the Properties editor is narrow
+    box.label(text="Click a piece with:")
+    TB.tool_button(box, context, TB.WHOLE_PIECES_ID, "Whole Pieces", 'ORIENTATION_GLOBAL')
+
+
 class AC9_PT_ToolGarment(_ToolTab, bpy.types.Panel):
     """The garment: which one, its pieces, mesh and fabric, obstacles, its result."""
     bl_label = "AC9 Garment"
@@ -192,15 +274,23 @@ class AC9_PT_ToolGarment(_ToolTab, bpy.types.Panel):
         layout = self.layout
         props = context.scene.ac9_cloth_sim
         spec, _ = store.get(context)
-        layout.prop(props, "spec_text", text="Garment")
+        L = U.live_running()          # nothing of the garment is taken by a running Live Sim
+        draw_whole_garment_hint(layout, context)
+        r = layout.row()
+        r.enabled = not L
+        r.prop(props, "spec_text", text="Garment")
         c = {s: 0 for s in S.PIECE_STATES}
         for pc in spec['pieces']:
             c[S.piece_state(pc)] += 1
         layout.label(text=tx("{0}: {1} on, {2} freeze, {3} off", spec['name'], c['active'], c['freeze'], c['off_pattern'] + c['off_all']), icon='MESH_GRID')
         layout.separator()
-        U.draw_fabric(layout, context, spec)
+        fc = layout.column()
+        fc.enabled = not L
+        U.draw_fabric(fc, context, spec)
         # which front is on top where the garment closes (user 2026-11-02, DECISIONS cloth-sim-closure-over-2026-11-02)
-        sp = layout.row().split(factor=0.4)
+        r = layout.row()
+        r.enabled = not L
+        sp = r.split(factor=0.4)
         r = sp.row()
         r.alignment = 'RIGHT'
         r.label(text=tx("Front Over"))
@@ -271,131 +361,179 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
             layout.label(text=tx("Garment: {0}", gname), icon='STICKY_UVS_LOC')
         if len(sel) > 1:
             layout.label(text=tx("{0} pieces selected: a change sets all", len(sel)), icon='INFO')
-        draw_pair_box(layout, context, spec, name)
-        # edited symmetrically about its center line (a piece's setting, user 2026-10-21: here, not in the Pattern
-        # panel). Switched on but no longer symmetric: red, it does nothing
-        from .core import draft as DR
-        on = bool(pc.get('mirror_edit'))
-        smix = len({bool(S.piece_index(spec)[n].get('mirror_edit')) for n in sel if n in S.piece_index(spec)}) > 1
-        r = layout.row()
-        broken = on and DR.self_mirror_map(pc) is None
-        sub = r.row()
-        sub.alert = smix or broken
-        # a button that stays pressed while on (user 2026-10-27: not a checkbox; as Fold of a dart)
-        sub.operator("ac9_cloth_sim.symmetric_edit", depress=on, icon='MOD_MIRROR',
-                     text=tx("Symmetric Edit") + (tx(" (mixed)") if smix else (tx(" (broken)") if broken else "")))
-        # make it symmetric again: the left half kept, F9 for the right (user 2026-10-27)
-        r.operator("ac9_cloth_sim.symmetrize", text=tx("Symmetrize"))
-        layout.separator()
+        # while Live / Local Sim runs it takes Active / Freeze, Strengthen and Elastic at once; the rest of the piece
+        # (its pattern, pair, fabric, mesh, placement) is read when a run starts, so it is grayed (user 2026-11-16)
+        L = U.live_running()
+        # the order (user 2026-11-17, REVIEW_fable_piece_panel_mirror_center_2026-11-17 §3 案 1): what is touched most
+        # first -- the state and display, always shown -- then folding sections: fabric and look, the simulation's
+        # values (those a running Live Sim takes on top), the pair, the piece's own symmetry, where it is placed
         row = layout.row()
         row.label(text="State:")
         row.operator("ac9_cloth_sim.invert_piece_selection", icon='ARROW_LEFTRIGHT')    # user 2026-10-25
         U.draw_selected_states(layout, current=S.piece_state(pc), title=None)
-        layout.separator()
+        layout.label(text="Display:")               # its own row: hiding is not a state (user 2026-11-15)
+        U.draw_hide_buttons(layout)
         # several pieces selected: each field shows this (the active) piece's value, its label says "mixed" in red
         # when the selected differ, a change sets them all (user 2026-10-20; the label, not a label beside the field,
         # so the field keeps its width: Fable UI review 2026-10-21)
         pcs = S.piece_index(spec)
         names = [n for n in dict.fromkeys(sel) if n in pcs] or [name]
         props = context.scene.ac9_cloth_sim
-        col = layout.column()
-        col.use_property_split = True
-        col.use_property_decorate = False
 
-        def field(prop, label, value, extra=None):
+        def section(idname, label):
+            head, body = layout.panel(idname, default_closed=False)
+            head.label(text=label)
+            if body is None:
+                return None
+            c = body.column()
+            c.use_property_split = True
+            c.use_property_decorate = False
+            return c
+
+        col = None
+
+        def field(prop, label, value, extra=None, live=False, shown=False):
+            # live: taken by a running Live Sim (marked then); shown: only how it looks (never grayed)
             row = col.row(align=True)
+            row.enabled = live or shown or not L
             mixed = len({value(n) for n in names}) > 1
             row.alert = mixed
-            row.prop(props, prop, text=tx("{0} (mixed)", label) if mixed else label)
+            row.prop(props, prop, text=tx("{0} (mixed)", label) if mixed else label, icon=U.live_icon(live and L))
             if extra:
                 extra(row)
 
-        from .core import roles as RO
-        if pc.get('enabled', True):
-            row = col.row()
-            row.alert = len({RO.role_of(pcs[n]) for n in names}) > 1
-            sp = row.split(factor=0.4)
-            r = sp.row()
-            r.alignment = 'RIGHT'
-            r.label(text="Role (mixed)" if row.alert else "Role")
-            sp.operator_menu_enum("ac9_cloth_sim.set_role", "role", text=tx(RO.EN.get(RO.role_of(pc), "Other")))
-            # how it starts against its partners (user 2026-11-02): its own field, under the role
-            row = col.row()
-            row.alert = len({RO.start_of(pcs[n]) for n in names}) > 1
-            sp = row.split(factor=0.4)
-            r = sp.row()
-            r.alignment = 'RIGHT'
-            r.label(text="Start Shape (mixed)" if row.alert else "Start Shape")
-            st_ = RO.start_of(pc)
-            sp.operator_menu_enum("ac9_cloth_sim.set_start", "start", text=tx(RO.START_EN[st_]))
-            note = {'edge': ("Live Sim pulls it from this ring onto the sewn edge by its seams.",
-                             "Band on Edge lays it there now."),}.get(st_)
-            for ln in note or ():
-                for w_ in wrap(tx(ln), U._wrap_width(context)):
-                    col.label(text=w_)
-        else:
-            col.label(text="Role: (the piece is off)")
-        col.separator()
-        # the material (fabric, interlining), then the simulation's values for the piece
-        def edit_fabric(row):                         # the same dialog as Lists > Fabrics' Edit... (user 2026-10-25)
-            f = FA.resolved(spec, name)
-            sub = row.row(align=True)
-            sub.enabled = f is not None
-            op = sub.operator("ac9_cloth_sim.fabric_edit", text="", icon='GREASEPENCIL')
-            op.fabric_id = f['id'] if f else ''
-
-        field("piece_fabric", "Fabric", lambda n: (FA.resolved(spec, n) or {}).get('id'), edit_fabric)
-        def edit_bond(row):                           # the same dialog as AC9 Interlining's Edit... (user 2026-10-25)
-            b = FA.piece_bond(spec, name)
-            sub = row.row(align=True)
-            sub.enabled = b is not None
-            op = sub.operator("ac9_cloth_sim.interlining_edit", text="", icon='GREASEPENCIL')
-            op.interlining_id = (b or {}).get('id') or ''     # none yet: a garment from before the list, see piece
-            op.piece = name
-
-        field("piece_bond", "Interlining",
-              lambda n: (lambda b: (b.get('name'), b.get('preset')) if b else None)(FA.piece_bond(spec, n)), edit_bond)
-        # the look (render material): Blender's material field (a picture, search, New, x = the default's)
-        from .core import look as LK
-        lmix = len({(LK.piece_look(spec, n) or {}).get('material') for n in names}) > 1
-        sp = col.row().split(factor=0.4)
-        r = sp.row()
-        r.alignment = 'RIGHT'
-        r.alert = lmix
-        r.label(text="Look (mixed)" if lmix else "Look")
-        sp.template_ID(props, "piece_look", new="material.new")
-        if LK.piece_look(spec, name) is None:
-            d = LK.default_look(spec)
-            r = col.row()
-            r.active = False
-            r.label(text=tx("Default: {0}", d['material']) if d else "No look (none for the garment)")
-        field("piece_strengthen", tx("Strengthen"), lambda n: bool(pcs[n].get('strengthen')))
-        field("piece_strengthen_factor", tx("Strength Factor"), lambda n: S.piece_strengthen_factor(pcs[n]))
-        field("piece_thickness", "Thickness", lambda n: pcs[n].get('thickness', True) is not False)
-        # the layer (user 2026-10-25): higher = kept outside the lower while they differ; a person sets
-        # them back to 0 (the arrow: every piece's)
-        # under Experimental Features (user 2026-11-12); still drawn while a piece of the garment has one, so a
-        # layer kept in an older file can be seen and set back
-        from . import dress as _D
-        if _D.experimental(context) or any(S.piece_layer(x) for x in spec.get('pieces', [])):
-            field("piece_layer", "Layer", lambda n: S.piece_layer(pcs[n]),
-                  lambda row: row.operator("ac9_cloth_sim.layers_to_zero", text="", icon='LOOP_BACK'))
-        col.separator()
-
-        def back(row):                                # its own distance: the arrow gives it back the garment's
-            if pc.get('mesh_mm'):
+        # ---- fabric and look
+        col = section("ac9_cloth_sim_piece_fabric", "Fabric & Look")
+        if col is not None:
+            def edit_fabric(row):                     # the same dialog as Lists > Fabrics' Edit... (user 2026-10-25)
+                f = FA.resolved(spec, name)
                 sub = row.row(align=True)
-                sub.operator_context = 'EXEC_DEFAULT'
-                sub.operator("ac9_cloth_sim.piece_mesh", text="", icon='LOOP_BACK').mesh_mm = 0.0
+                sub.enabled = f is not None
+                op = sub.operator("ac9_cloth_sim.fabric_edit", text="", icon='GREASEPENCIL')
+                op.fabric_id = f['id'] if f else ''
 
-        field("piece_distance", "Particle Distance (mm)", lambda n: pcs[n].get('mesh_mm') or 0, back)
-        field("piece_elastic", "Elastic", lambda n: EL.piece_ratio(spec, n))
-        if pc.get('enabled', True):
-            from . import button_ui as BU       # the piece it buttons onto (user 2026-10-22, by hand)
-            BU.draw_closes_onto(col, context, spec, name)
+            field("piece_fabric", "Fabric", lambda n: (FA.resolved(spec, n) or {}).get('id'), edit_fabric)
+
+            def edit_bond(row):                       # the same dialog as AC9 Interlining's Edit... (user 2026-10-25)
+                b = FA.piece_bond(spec, name)
+                sub = row.row(align=True)
+                sub.enabled = b is not None
+                op = sub.operator("ac9_cloth_sim.interlining_edit", text="", icon='GREASEPENCIL')
+                op.interlining_id = (b or {}).get('id') or ''     # none yet: a garment from before the list
+                op.piece = name
+
+            field("piece_bond", "Interlining",
+                  lambda n: (lambda b: (b.get('name'), b.get('preset')) if b else None)(FA.piece_bond(spec, n)),
+                  edit_bond)
+            # the look (render material): Blender's material field (a picture, search, New, x = the default's)
+            from .core import look as LK
+            lmix = len({(LK.piece_look(spec, n) or {}).get('material') for n in names}) > 1
+            sp = col.row().split(factor=0.4)
+            r = sp.row()
+            r.alignment = 'RIGHT'
+            r.alert = lmix
+            r.label(text="Look (mixed)" if lmix else "Look")
+            sp.template_ID(props, "piece_look", new="material.new")
+            if LK.piece_look(spec, name) is None:
+                d = LK.default_look(spec)
+                r = col.row()
+                r.active = False
+                r.label(text=tx("Default: {0}", d['material']) if d else "No look (none for the garment)")
+            field("piece_thickness", "Thickness", lambda n: pcs[n].get('thickness', True) is not False, shown=True)
+
+        # ---- the simulation's values: those a running Live Sim takes first
+        col = section("ac9_cloth_sim_piece_sim", "Simulation")
+        if col is not None:
+            field("piece_strengthen", tx("Strengthen"), lambda n: bool(pcs[n].get('strengthen')), live=True)
+            field("piece_strengthen_factor", tx("Strength Factor"), lambda n: S.piece_strengthen_factor(pcs[n]),
+                  live=True)
+            field("piece_elastic", "Elastic", lambda n: EL.piece_ratio(spec, n), live=True)
+            col.separator()
+            from .core import roles as RO
+            if pc.get('enabled', True):
+                row = col.row()
+                row.enabled = not L
+                row.alert = len({RO.role_of(pcs[n]) for n in names}) > 1
+                sp = row.split(factor=0.4)
+                r = sp.row()
+                r.alignment = 'RIGHT'
+                r.label(text="Role (mixed)" if row.alert else "Role")
+                sp.operator_menu_enum("ac9_cloth_sim.set_role", "role", text=tx(RO.EN.get(RO.role_of(pc), "Other")))
+                # how it starts against its partners (user 2026-11-02): its own field, under the role
+                row = col.row()
+                row.enabled = not L
+                row.alert = len({RO.start_of(pcs[n]) for n in names}) > 1
+                sp = row.split(factor=0.4)
+                r = sp.row()
+                r.alignment = 'RIGHT'
+                r.label(text="Start Shape (mixed)" if row.alert else "Start Shape")
+                st_ = RO.start_of(pc)
+                sp.operator_menu_enum("ac9_cloth_sim.set_start", "start", text=tx(RO.START_EN[st_]))
+                note = {'edge': ("Live Sim pulls it from this ring onto the sewn edge by its seams.",
+                                 "Band on Edge lays it there now."),}.get(st_)
+                for ln in note or ():
+                    for w_ in wrap(tx(ln), U._wrap_width(context)):
+                        col.label(text=w_)
+            else:
+                col.label(text="Role: (the piece is off)")
+
+            def back(row):                            # its own distance: the arrow gives it back the garment's
+                if pc.get('mesh_mm'):
+                    sub = row.row(align=True)
+                    sub.operator_context = 'EXEC_DEFAULT'
+                    sub.operator("ac9_cloth_sim.piece_mesh", text="", icon='LOOP_BACK').mesh_mm = 0.0
+
+            field("piece_distance", "Particle Distance (mm)", lambda n: pcs[n].get('mesh_mm') or 0, back)
+            # the layer (user 2026-10-25): higher = kept outside the lower while they differ; a person sets
+            # them back to 0 (the arrow: every piece's). Under Experimental Features (user 2026-11-12); still drawn
+            # while a piece of the garment has one, so a layer kept in an older file can be seen and set back
+            from . import dress as _D
+            if _D.experimental(context) or any(S.piece_layer(x) for x in spec.get('pieces', [])):
+                field("piece_layer", "Layer", lambda n: S.piece_layer(pcs[n]),
+                      lambda row: row.operator("ac9_cloth_sim.layers_to_zero", text="", icon='LOOP_BACK'))
+            if pc.get('enabled', True):
+                from . import button_ui as BU   # the piece it buttons onto (user 2026-10-22, by hand)
+                bc = col.column()
+                bc.enabled = not L
+                BU.draw_closes_onto(bc, context, spec, name)
+
+        # ---- the pair
+        head, body = layout.panel("ac9_cloth_sim_piece_pair", default_closed=False)
+        head.label(text="Pair", icon='MOD_MIRROR')
+        if body is not None:
+            pb = body.column()
+            pb.enabled = not L
+            draw_pair_box(pb, context, spec, name)
+
+        # ---- the piece's own symmetry: edited symmetrically about its center line (a piece's setting, user
+        # 2026-10-21; not a pair setting, so its own section, 2026-11-17). Switched on but no longer symmetric: red
+        head, body = layout.panel("ac9_cloth_sim_piece_symmetry", default_closed=False)
+        head.label(text="This Piece's Symmetry")
+        if body is not None:
+            from .core import draft as DR
+            on = bool(pc.get('mirror_edit'))
+            smix = len({bool(pcs[n].get('mirror_edit')) for n in sel if n in pcs}) > 1
+            r = body.row()
+            r.enabled = not L
+            broken = on and DR.self_mirror_map(pc) is None
+            sub = r.row()
+            sub.alert = smix or broken
+            # a button that stays pressed while on (user 2026-10-27: not a checkbox; as Fold of a dart)
+            sub.operator("ac9_cloth_sim.symmetric_edit", depress=on, icon='MOD_MIRROR',
+                         text=tx("Symmetric Edit") + (tx(" (mixed)") if smix else (tx(" (broken)") if broken else "")))
+            # make it symmetric again: which half stays chosen from the button's list (user 2026-11-17, not F9)
+            r.operator_menu_enum("ac9_cloth_sim.symmetrize", "keep", text=tx("Symmetrize"))
+
+        # ---- where it is placed: read when a run starts
+        head, body = layout.panel("ac9_cloth_sim_piece_placed", default_closed=False)
+        head.label(text="Placement")
+        if body is None:
+            return
         placed = name in spec.get('placement', {})
-        layout.label(text="Placed" if placed else "Not placed yet (Place in the sidebar)",
-                     icon='CHECKMARK' if placed else 'ERROR')
+        body.label(text="Placed" if placed else "Not placed yet (Place in the sidebar)",
+                   icon='CHECKMARK' if placed else 'ERROR')
+        layout = body.column()
+        layout.enabled = not L
         if placed and S.is_flat(spec['placement'][name]):
             # laid flat (user 2026-11-10): no guide to go round or along. Its turn on the face it lies on takes the
             # seat Around / Height / Tilt have for a guide's piece (user 2026-11-11, REVIEW_fable_flat_turn_snap_mirror_ui
@@ -418,76 +556,109 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
             row = pcol.row(align=True)
             row.prop(props, "piece_tilt", text=tx("Tilt (deg)"))
             row.operator("ac9_cloth_sim.flip_up_down", text="", icon='FILE_REFRESH')
-            # a band laid as a ring: how big the ring is (user 2026-11-02, DECISIONS cloth-sim-ring-size-2026-11-02)
-            from .core import roles as RO
-            if (name in RO.with_role(spec, RO.BAND_ROLES)
-                    and spec['placement'][name].get('guide') in ('torso', 'neck')):
-                row = pcol.row(align=True)
-                row.prop(props, "piece_ring", text=tx("Ring Size (x)"))
-                row.prop(props, "piece_ring_auto", text=tx("Auto"), toggle=True)
             # the placed shape's location and rotation, folded (user 2026-11-10: the sidebar's Item tab is far from
             # here). The placed object's own transform: typing in it is a hand move, as G / R are
             draw_transform(layout, spec, name)
+        # Always show the ring controls; placement on a curved guide enables editing.
+        row = layout.row(align=True)
+        row.enabled = placed and not S.is_flat(spec.get('placement', {}).get(name, {}))
+        row.prop(props, "piece_ring", text=tx("Ring Size (x)"))
+        row.prop(props, "piece_ring_auto", text=tx("Auto"), toggle=True)
         # the fold lines are set on the line itself now: click it (AC9 Internal Line, user 2026-10-21)
         n_lines = sum(1 for x in pc.get('internals', []) if x.get('kind') != 'baseline')
         if n_lines:
             layout.label(text=tx("{0} internal line(s): click one for its fold / elastic", n_lines), icon='INFO')
 
 
+def _caption(layout, text):
+    """A section's gray caption inside the Pair box (no box in a box)."""
+    r = layout.row()
+    r.active = False
+    r.label(text=text)
+
+
 def draw_pair_box(layout, context, spec, name):
-    """The Pair box (user 2026-11-11, REVIEW_fable_pair_ui_2026-11-11 b-1): which piece it pairs with and how, its
-    mirror plane, and every pair button in one place (the Placement panel's pair rows moved here; the right-click
-    menus keep theirs). Symmetric Edit (one piece's own halves) is not a pair setting and stays outside."""
+    """The Pair box (user 2026-11-11, REVIEW_fable_pair_ui_2026-11-11 b-1; in three parts 2026-11-17): which piece it
+    pairs with; the pattern (shapes linked or drawn apart); the placement in 3D (the mirror plane, the mirror center,
+    the pair buttons); the simulated result (Mirror 3D to Pair). The right-click menus keep their buttons. Symmetric
+    Edit (one piece's own halves) is not a pair setting: its own section."""
     from .core import spec as S
     from .core import mirror_result as MR_
     from . import dress as DR_
+    from . import placement as PLC
+    from . import placed_view as PLV_
     pl = spec.get('placement', {})
     twin = next((b if a == name else a for a, b in S.twins(spec) if name in (a, b)), None)
     paired = next((p[1] if p[0] == name else p[0] for p in spec.get('pairs', []) if name in p), None)
     box = layout.box()
-    head = box.row()
-    head.label(text="Pair", icon='MOD_MIRROR')
     if twin is None and paired is None:
         box.label(text="No pair (Mirror Copy, or select two pieces and Pair)")
         box.operator("ac9_cloth_sim.pair", text="Pair", icon='MOD_MIRROR')
         return
     other = twin or paired
+    apart = twin is not None and any(name in p for p in U.twins_apart(spec))
+    unlinked = twin is not None and bool(pl.get(name, {}).get('unlinked') or pl.get(twin, {}).get('unlinked'))
+    r = box.row()
+    r.alert = apart
+    r.label(text=tx("With {0}", other) + (tx(" (no longer mirrored)") if apart else ""),
+            icon='ERROR' if apart else 'ARROW_LEFTRIGHT')
+    # -- the pattern
+    _caption(box, "Pattern")
+    box.label(text="Shapes linked: editing one edits the other" if twin
+              else "Shapes drawn apart: only placed as a pair", icon='BLANK1')
+    # -- the placement in 3D
+    _caption(box, "3D Placement")
     if twin:
-        apart = any(name in p for p in U.twins_apart(spec))
-        unlinked = bool(pl.get(name, {}).get('unlinked') or pl.get(twin, {}).get('unlinked'))
-        r = box.row()
-        r.alert = apart
-        r.label(text=tx("With {0}", other) + (tx(" (no longer mirrored)") if apart else ""),
-                icon='ERROR' if apart else 'BLANK1')
         r = box.row()
         r.active = not unlinked
         r.label(text=tx("Unlinked: each side moves on its own") if unlinked
                 else tx("Linked: moves as its mirror image"), icon='UNLINKED' if unlinked else 'LINKED')
-        # the mirror plane (user 2026-11-11): Left / Right, Front / Back
-        plane = S.plane_of(S.piece_index(spec)[name])
-        row = box.row(align=True)
-        row.label(text="Mirror Plane")
-        for v, t in (('x', "Left / Right"), ('y', "Front / Back")):
-            row.operator("ac9_cloth_sim.pair_plane", text=t, depress=plane == v).plane = v
-        row = box.row(align=True)
+    plane = S.plane_of(S.piece_index(spec)[name])
+    row = box.row(align=True)
+    row.label(text="Mirror Plane")
+    for v, t, _d in PLC.PLANE_ITEMS:
+        row.operator("ac9_cloth_sim.pair_plane", text=t, depress=plane == v).plane = v
+    # the mirror center (user 2026-11-17): a pair laid flat mirrors about the garment's center, an empty a person
+    # moves; one on the body about the body's center; an older file's pair about its own plane until aligned
+    lead = name if name in pl else other
+    own = S.stored_mirror_at(spec, lead)
+    flat = lead in pl and S._pair_flat(spec, lead)
+    c = S.garment_center(spec)
+    if flat and own is not None and S.plane_of(S.piece_index(spec)[lead]) == plane:
+        r = box.row()
+        r.alert = True
+        r.label(text=(tx("Own plane {0} mm, the center's {1} mm", f"{own:.0f}", f"{c[S.axis_of(plane)]:.0f}")
+                      if c is not None else tx("Own plane {0} mm (no center yet)", f"{own:.0f}")), icon='ERROR')
+        box.operator("ac9_cloth_sim.center_align", icon='PIVOT_CURSOR')
+    elif flat and c is not None:
+        ob = PLV_.find_garment_center(spec)
+        r = box.row(align=True)
+        r.label(text=ob.name if ob is not None else tx("Mirror Center"), icon='EMPTY_AXIS')
+        r.operator("ac9_cloth_sim.center_select", text="Select Center")
+        if ob is not None:
+            col = box.column(align=True)
+            col.prop(ob, "location", text="")
+    else:
+        box.label(text=tx("Mirror Center: the body's center"), icon='BLANK1')
+        if flat:                            # laid flat but no center yet (paired before it was laid flat)
+            box.operator("ac9_cloth_sim.center_align", icon='PIVOT_CURSOR')
+    row = box.row(align=True)
+    if twin:
         row.operator("ac9_cloth_sim.unlink_pair", text=tx("Link") if unlinked else tx("Unlink"),
                      icon='LINKED' if unlinked else 'UNLINKED')
-        row.operator("ac9_cloth_sim.swap_sides", text="Swap Sides", icon='ARROW_LEFTRIGHT')
-        if unlinked:
-            box.operator("ac9_cloth_sim.mirror_pose", text="Mirror Placement", icon='MOD_MIRROR')
     else:
-        box.label(text=tx("Paired with {0}", other), icon='BLANK1')
-        row = box.row(align=True)
         row.operator("ac9_cloth_sim.pair", text="Unpair", icon='X')
-        row.operator("ac9_cloth_sim.swap_sides", text="Swap Sides", icon='ARROW_LEFTRIGHT')
+    row.operator("ac9_cloth_sim.swap_sides", text="Swap Sides", icon='ARROW_LEFTRIGHT')
+    if paired or unlinked:
         box.operator("ac9_cloth_sim.mirror_pose", text="Mirror Placement", icon='MOD_MIRROR')
-    # simulated: one side's shape onto the other (the pairs Mirror 3D to Pair copies between, as its poll)
+    # -- simulated: one side's shape onto the other (the pairs Mirror 3D to Pair copies between, as its poll)
     g_ = bpy.data.objects.get(DR_.garment_name(spec))
     have_ = (set(DR_.garment_pieces(g_)) - set(DR_.hidden_pieces(g_, spec) or ())
              - {p['name'] for p in spec['pieces'] if S.piece_state(p) == 'off_all'}
              if g_ is not None and DR_.has_result(g_) else set())
     mate = next((b if a == name else a for a, b in MR_.pairs(spec) if name in (a, b)), None)
     if mate and name in have_ and mate in have_:
+        _caption(box, "Simulation Result")
         box.operator("ac9_cloth_sim.mirror_result", text="Mirror 3D to Pair", icon='MOD_MIRROR')
 
 
@@ -501,7 +672,7 @@ def draw_transform(layout, spec, name):
         return
     ob = PLV.objects(spec).get(name)
     if ob is None:
-        body.label(text="No placed shape yet (Move by Hand)", icon='INFO')
+        body.label(text="No placed shape yet (Place it)", icon='INFO')
         return
     col = body.column()
     col.use_property_split = True
@@ -539,7 +710,7 @@ class AC9_PT_ToolFabric(_ToolTab, bpy.types.Panel):
         from . import piece_look as PL
         layout = self.layout
         spec, _ = store.get(context)
-        fid = focused_item(spec, 'FABRIC')
+        fid = focused_item(spec, 'FABRIC', context)
         if fid is None:
             return
         f = FA.fabric_index(spec)[fid]
@@ -548,8 +719,11 @@ class AC9_PT_ToolFabric(_ToolTab, bpy.types.Panel):
         sw = row.row()
         sw.ui_units_x = 0.9
         sw.template_node_socket(color=PL.fabric_colors(spec).get(fid, (0.5, 0.5, 0.5, 1.0)))
-        row.label(text=f['name'] + (tx(" (default)") if is_d else ''), icon='SOLO_ON' if is_d else 'MATERIAL')
-        sp = layout.row().split(factor=0.4)
+        row.label(text=fabric_name(f['name']) + (tx(" (default)") if is_d else ''), icon='SOLO_ON' if is_d else 'MATERIAL')
+        L = U.live_running()          # a fabric is read when a run starts: grayed while Live Sim runs
+        r = layout.row()
+        r.enabled = not L
+        sp = r.split(factor=0.4)
         r = sp.row()
         r.alignment = 'RIGHT'
         r.label(text="Preset")
@@ -562,6 +736,7 @@ class AC9_PT_ToolFabric(_ToolTab, bpy.types.Panel):
         for ln in fabric_lines(f):
             col.label(text=ln)
         row = layout.row(align=True)
+        row.enabled = not L
         row.operator("ac9_cloth_sim.fabric_edit", text="Edit...", icon='GREASEPENCIL').fabric_id = fid
         sub = row.row(align=True)
         sub.enabled = not is_d
@@ -578,7 +753,7 @@ class AC9_PT_ToolFabric(_ToolTab, bpy.types.Panel):
         sub.enabled = bool(us)
         sub.operator("ac9_cloth_sim.fabric_select", text="Select Pieces", icon='RESTRICT_SELECT_OFF').fabric_id = fid
         sub = row.row(align=True)
-        sub.enabled = not is_d
+        sub.enabled = not is_d and not L
         sub.operator("ac9_cloth_sim.fabric_remove", text="Delete", icon='X').fabric_id = fid
         if is_d:
             r = layout.row()
@@ -600,12 +775,15 @@ class AC9_PT_ToolInterlining(_ToolTab, bpy.types.Panel):
         from .core import fabric as FA
         layout = self.layout
         spec, _ = store.get(context)
-        iid = focused_item(spec, 'BOND')
+        iid = focused_item(spec, 'BOND', context)
         if iid is None:
             return
         i = FA.interlining_index(spec)[iid]
-        layout.label(text=i['name'], icon='MOD_SOLIDIFY')
-        sp = layout.row().split(factor=0.4)
+        layout.label(text=fabric_name(i['name']), icon='MOD_SOLIDIFY')
+        L = U.live_running()          # read when a run starts: grayed while Live Sim runs
+        r = layout.row()
+        r.enabled = not L
+        sp = r.split(factor=0.4)
         r = sp.row()
         r.alignment = 'RIGHT'
         r.label(text="Preset")
@@ -616,7 +794,9 @@ class AC9_PT_ToolInterlining(_ToolTab, bpy.types.Panel):
         r = layout.row()
         r.active = False
         r.label(text=tx("+{0:g} g/m², +{1:g} µN·m to the fabric", float(i['weight_gsm']), float(i['bending_uNm'])))
-        layout.operator("ac9_cloth_sim.interlining_edit", text="Edit...", icon='GREASEPENCIL').interlining_id = iid
+        r = layout.row()
+        r.enabled = not L
+        r.operator("ac9_cloth_sim.interlining_edit", text="Edit...", icon='GREASEPENCIL').interlining_id = iid
         us = U.interlining_users(spec).get(iid, [])
         layout.separator()
         for ln in U.wrap(tx("Pieces ({0}): {1}", len(us), ', '.join(us)) if us else tx("Pieces: none"), 40)[:4]:
@@ -630,7 +810,9 @@ class AC9_PT_ToolInterlining(_ToolTab, bpy.types.Panel):
         sub.enabled = bool(us)
         sub.operator("ac9_cloth_sim.interlining_select", text="Select Pieces",
                      icon='RESTRICT_SELECT_OFF').interlining_id = iid
-        row.operator("ac9_cloth_sim.interlining_remove", text="Delete", icon='X').interlining_id = iid
+        sub = row.row(align=True)
+        sub.enabled = not L
+        sub.operator("ac9_cloth_sim.interlining_remove", text="Delete", icon='X').interlining_id = iid
 
 
 class AC9_PT_ToolSeam(_ToolTab, bpy.types.Panel):
@@ -674,10 +856,7 @@ class AC9_PT_ToolMeasure(_ToolTab, bpy.types.Panel):
     @classmethod
     def poll(cls, context):
         a = context.area
-        if a is None or a.type != 'PROPERTIES' or _focus['kind'] != 'MEASURE':
-            return False
-        from . import measure_edit as MEE
-        return MEE.selected(context) is not None
+        return a is not None and a.type == 'PROPERTIES' and resolve(context, store.get(context)[0]) == 'MEASURE'
 
     def draw(self, context):
         from . import measure_edit as MEE
@@ -732,14 +911,18 @@ def register():
         bpy.utils.register_class(c)
     for k, v in PROPS.items():
         setattr(bpy.types.Scene, k, v)
-    if _on_depsgraph not in bpy.app.handlers.depsgraph_update_post:
-        bpy.app.handlers.depsgraph_update_post.append(_on_depsgraph)
+    _focus.update(kind=None, owner=None, item=None, serial=0, origin=None)
+    _observed.update(owner=None, selection=None)
     if _on_load not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_on_load)
+    for handlers in (bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
+        if _on_history not in handlers:
+            handlers.append(_on_history)
 
 
 def unregister():
-    for hs, n in ((bpy.app.handlers.depsgraph_update_post, '_on_depsgraph'), (bpy.app.handlers.load_post, '_on_load')):
+    for hs, n in ((bpy.app.handlers.depsgraph_update_post, '_on_depsgraph'), (bpy.app.handlers.load_post, '_on_load'),
+                  (bpy.app.handlers.undo_post, '_on_history'), (bpy.app.handlers.redo_post, '_on_history')):
         for h in [h for h in hs if getattr(h, '__name__', '') == n and getattr(h, '__module__', '') == __name__]:
             hs.remove(h)
     for k in PROPS:

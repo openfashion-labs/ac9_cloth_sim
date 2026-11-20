@@ -4,8 +4,9 @@ docs/design/DESIGN_draw_basics_2026-10-20.md F1, F2, F3, F5, F6 (user 2026-10-20
 
 Rectangle / Ellipse: press and drag from corner to corner (or click two corners: a press released where it started
 waits for a second click). Shift after pressing: a square / circle, Alt after pressing: from the center
-(a tool's key map only gets a plain click, so a modifier held before pressing goes to Blender). Type the width, Tab,
-the height (in the scene's length unit), Enter. Ctrl: no snapping. Internal Rectangle / Ellipse draw the same inside
+(a tool's key map only gets a plain click, so a modifier held before pressing goes to Blender). Ctrl: no snapping.
+The size is typed afterwards in Numeric Input... (right-click; the typed W, Tab, H while drawing was taken out,
+user 2026-11-17: numbers are typed in dialogs). Internal Rectangle / Ellipse draw the same inside
 a piece: a closed internal shape (a pocket's place, a button's mark), not a new piece.
 """
 import math
@@ -357,7 +358,7 @@ def shape_points(kind, lo, hi):
 
 
 class AC9_OT_SimDrawShape(bpy.types.Operator):
-    """Draw a rectangle or an ellipse on the pattern: drag from corner to corner (or click two corners). Shift: square, Alt: from the center, type width Tab height, Ctrl: no snapping"""
+    """Draw a rectangle or an ellipse on the pattern: drag from corner to corner (or click two corners). Shift: square, Alt: from the center, Ctrl: no snapping"""
     bl_idname = "ac9_cloth_sim.draw_shape"
     bl_label = "Draw Shape"
     bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
@@ -383,9 +384,8 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
         return p, pc
 
     def _box(self, context):
-        w = typed_mm(context, self.typed[0]) if self.typed[0] else None
-        h = typed_mm(context, self.typed[1]) if self.typed[1] else None
-        return D.shape_box(self.p0, self.cur if self.cur is not None else self.p0, w, h, self.square, self.center)
+        return D.shape_box(self.p0, self.cur if self.cur is not None else self.p0, None, None, self.square,
+                           self.center)
 
     def _status(self, context):
         txt = f"{self._label()}"
@@ -398,11 +398,7 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
                 rx, ry = (hi - lo) / 2
                 h = ((rx - ry) / max(rx + ry, 1e-9)) ** 2              # Ramanujan's perimeter
                 txt += tx("  round {0}", fmt(context, np.pi * (rx + ry) * (1 + 3 * h / (10 + np.sqrt(4 - 3 * h)))))
-        f = ['W', 'H']
-        if any(self.typed) or self.p0 is not None:
-            txt += "   [" + "  ".join(f"{f[i]} {self.typed[i] or '-'}{'<' if i == self.field else ''}"
-                                      for i in (0, 1)) + "]"
-        txt += ("   drag, or click two corners   type W, Tab, H, Enter   Shift: square   Alt: from the center"
+        txt += ("   drag, or click two corners   Shift: square   Alt: from the center"
                 "   Ctrl: no snap   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
@@ -443,7 +439,6 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
         self.on = None
         self.press_px = None
         self.waiting = False                  # True: the press was a click, the second corner is a click too
-        self.typed, self.field = ['', ''], 0
         self.square = self.center = False
         self.snapper = Snapper(context, ('corner', 'notch', 'iend', 'mid', 'edge', 'iline'))
         self._draw_area = context.area.as_pointer()
@@ -462,7 +457,7 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
         if (hi - lo).min() < MIN_MM:
             self.report({'WARNING'}, rpt("Too small: each side needs at least {0}", fmt(context, MIN_MM)))
             return {'CANCELLED'}
-        from .draft_tool import commit
+        from .draft_tool import commit, NUMERIC_INPUT
         from .core import spec as S
         spec, _ = store.get(context)
         old = S.loads(S.dumps(spec))
@@ -479,7 +474,8 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
             if context.window_manager.ac9_draw_symmetric:
                 D.piece(spec, nm)['mirror_edit'] = True
             commit(context, spec, [nm])
-            self.report({'INFO'}, rpt("Added piece {0}: {1} x {2}", nm, fmt(context, hi[0] - lo[0]), fmt(context, hi[1] - lo[1])))
+            self.report({'INFO'}, rpt("Added piece {0}: {1} x {2}", nm, fmt(context, hi[0] - lo[0]), fmt(context, hi[1] - lo[1]))
+                        + rpt("; the size by numbers: right-click > {0}", tx(NUMERIC_INPUT)))
             return {'FINISHED'}
         if self.shape == 'ELLIPSE':                  # four curved spans: its points can be dragged (2026-10-28)
             Q = D.ellipse_quarters((lo + hi) / 2, (hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2)
@@ -493,7 +489,7 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
         msg = commit(context, spec, [self.on], old_spec=old)
         notes = D.internal_mesh_notes(spec, self.on, context.scene.ac9_cloth_sim.mesh_size, [lid])
         self.report({'WARNING'} if notes else {'INFO'},
-                    rpt("Added {0} {1} on {2}", self._label().lower(), lid, self.on) + (rpt("; {0}", notes[0]) if notes else "")
+                    rpt("Added {0} {1} on {2}", self._label().lower(), lid, self.on) + rpt("; the size by numbers: right-click > {0}", tx(NUMERIC_INPUT)) + (rpt("; {0}", notes[0]) if notes else "")
                     + (rpt("; {0}", msg) if msg else ""))
         return {'FINISHED'}
 
@@ -536,7 +532,7 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
                 return self._end(context, True)
         elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE' and self.p0 is not None and not self.waiting:
             moved = np.linalg.norm(np.array([event.mouse_region_x, event.mouse_region_y]) - self.press_px)
-            if moved > CLICK_PX or any(self.typed):
+            if moved > CLICK_PX:
                 q, _ = self._mm(context, event)
                 if q is not None:
                     self.cur = q
@@ -547,12 +543,6 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
                 return self._end(context, False)
             if event.type in {'RET', 'NUMPAD_ENTER'}:
                 return self._end(context, self.p0 is not None)
-            if event.type == 'TAB':
-                self.field = 1 - self.field
-            elif event.type == 'BACK_SPACE':
-                self.typed[self.field] = self.typed[self.field][:-1]
-            elif event.unicode and event.unicode in '0123456789.':
-                self.typed[self.field] += event.unicode
         show_mark(context, self.snapper, self.M)
         self._status(context)
         return {'RUNNING_MODAL'}
@@ -575,7 +565,7 @@ def _tool(idname, label, desc, icon, tool):
         'bl_description': desc, 'bl_icon': icon, 'bl_widget': None,
         'bl_keymap': (("ac9_cloth_sim.tool_hover", {"type": 'MOUSEMOVE', "value": 'ANY'}, {"properties": [("tool", tool)]}),
                       ("ac9_cloth_sim.tool_click", {"type": 'LEFTMOUSE', "value": 'PRESS'}, {"properties": [("tool", tool)]}))
-                     + TB.DELETE_KEYS,
+                     + TB.DELETE_KEYS + TB.DRAW_MENU_KEYS,
         'draw_settings': staticmethod(draw_settings)})
 
 
@@ -587,7 +577,7 @@ def draw_snap_settings(context, layout):
     row.prop(wm, "ac9_pattern_grid", text="", icon='MESH_GRID')
 
 
-_DESC = "drag from corner to corner, or click two corners. Shift: {sq}, Alt: from the center, type width Tab height"
+_DESC = "drag from corner to corner, or click two corners. Shift: {sq}, Alt: from the center. The size: right-click > Numeric Input..."
 AC9_WT_Rect = _tool("ac9_cloth_sim.rect_tool", "Rectangle Piece", "Draw a rectangular piece: " + _DESC.format(sq="square"),
                     "ops.gpencil.primitive_box", 'RECT')
 AC9_WT_Ellipse = _tool("ac9_cloth_sim.ellipse_tool", "Ellipse Piece", "Draw a round piece: " + _DESC.format(sq="circle"),

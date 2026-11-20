@@ -117,16 +117,21 @@ THICK_ATTR = 'ac9_thickness_mm'                  # per face: its fabric's thickn
 
 
 def build_guide(context, garment):
+    from . import result_reference as RR
     job_dir = D.job_of(garment)
-    if not job_dir or not os.path.exists(os.path.join(job_dir, 'job.json')):
+    res = RR.open_result(job_dir) if job_dir else None
+    if res is None or not res.exists():
         raise ValueError("The garment has no finished simulation job")
-    job = json.load(open(os.path.join(job_dir, 'job.json'), encoding='utf-8'))
-    idx = np.load(os.path.join(job_dir, 'scene.idx.npz'))
+    job, idx = res.info, res.index
     X = last_frame(job_dir, job)
     shown = D.shown_shape(context, garment) / 1000.0       # the frame on screen, or the hand-fixed shape
     if len(shown) == len(X):
         X = shown
-    E = idx['E_st']
+    from . import result_reference as RR
+    E = RR.stitches(idx)
+    if E is None:
+        raise ValueError("The garment's seams are not known in its result folder (it was made from the .blend or "
+                         "the mesh alone): Live Sim it once, then try again")
     Y, gap_before = weld_stitches(X, E)
     if 'E_seam' in idx.files:
         Y = weld_between(Y, E, idx['E_seam'], idx['F'].astype(np.int64))
@@ -200,8 +205,8 @@ class AC9_OT_SimExportRetopo(bpy.types.Operator):
     def execute(self, context):
         try:
             ob, info = build_guide(context, _garment(context))
-        except ValueError as exc:
-            self.report({'ERROR'}, str(exc))
+        except Exception as exc:                    # noqa: BLE001 -- a result folder missing a file is said, not raised
+            self.report({'ERROR'}, D.refusal(exc))
             return {'CANCELLED'}
         self.report({'INFO'}, rpt("{0}: {1} verts; seams closed (were up to {2} apart)", ob.name, info['verts'], U.fmt(context, info['stitch_gap_before_mm']))
                     + (rpt("; set as the Cloth Retopo Guide") if info['linked_to_retopo'] else ""))
