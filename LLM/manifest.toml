@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.4.1"
-build_id = "b4ac17bd834dcacc2bcc25ed16ed87779521172f1067ad0bcd37e263e89050c3"
+build_id = "ac8ee1fbd9c261c891ac5f3ee557324beff570f99619b5318177dccacf1728a3"
 
 [[documents]]
 id = "guide_blender"
@@ -1721,7 +1721,7 @@ sha256 = "1044eb3b370f562fd6183c2e17b7e138411a34800cbdbe7ddc1795e7464a0faa"
 
 [[sources]]
 path = "tests/test_runtime_release_inputs.py"
-sha256 = "6486a17870e403b73224213da2016387ccc12425ab87ca2832478316b7a7bf0c"
+sha256 = "4cc7488a25b209a44371884fbf5a99bf9fa369e32d7005e90fe725a03060fbd9"
 
 [[sources]]
 path = "tests/test_runtime_repair.py"
@@ -1913,7 +1913,7 @@ sha256 = "618a50330856783b1961e0752e260491f3a0fecc3ca6f667ea49ee0860df2eac"
 
 [[sources]]
 path = "tools/split_distribution.py"
-sha256 = "af4cf2e7b4db2f9569b88c06c5b45eb519c04e92b48ba78a978d47bfc0eae51b"
+sha256 = "68764a6617ac81e797b66e94cd6cf93b8c2fc9b6854f2d61ee796684b69542de"
 
 [[sources]]
 path = "tools/verify_release_assets.py"

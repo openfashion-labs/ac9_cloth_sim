@@ -19,6 +19,24 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def main_notices(canonical):
+    """Replace only the full-package introduction; retain every component notice."""
+    introduction = (
+        b'AC9 Cloth Sim is GPL-3.0-or-later (LICENSE). This is the split main component.\n'
+        b'The matching AC9 Cloth Sim Runtime extension supplies the unmodified Python wheels;\n'
+        b'this main ZIP does not contain wheels/. The following notices cover those dependencies\n'
+        b'and the modified Newton sources included in this main component:\n\n'
+    )
+    notices, count = re.subn(
+        rb'\AAC9 Cloth Sim is GPL-3.0-or-later \(LICENSE\)\. It bundles these Python packages '
+        rb'as wheels \(wheels/\), each\r?\nunmodified from PyPI:\r?\n\r?\n',
+        introduction, canonical, count=1,
+    )
+    if count != 1:
+        raise ValueError('Canonical third-party notice introduction is missing or unrecognized')
+    return notices
+
+
 def verify_newton(source, wheels):
     tree = ast.parse(source['solver/newton_vbd.py'])
     table = next(ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
@@ -80,8 +98,7 @@ def split(full, out):
         raise ValueError('Cannot remove the canonical wheel declaration')
     main['blender_manifest.toml'] = text.encode()
     main['runtime_contract.json'] = contract
-    main['THIRD_PARTY_NOTICES.txt'] = (b'AC9 split main component. The matching runtime extension supplies the wheels.\n'
-                                       +source.get('THIRD_PARTY_NOTICES.txt',b''))
+    main['THIRD_PARTY_NOTICES.txt'] = main_notices(source.get('THIRD_PARTY_NOTICES.txt', b''))
     runtime = {'__init__.py':b'# SPDX-License-Identifier: GPL-3.0-or-later\ndef register(): pass\ndef unregister(): pass\n',
                'LICENSE':Path(__file__).with_name('runtime_LICENSE.txt').read_bytes(),'runtime_contract.json':contract}
     for name,data in wheels.items():
