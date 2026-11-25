@@ -17,6 +17,7 @@ Release repair in preparation. Split distribution is not published yet.
 
 - Restore the prepared distribution CPU checks and split-package CI artifacts omitted during 0.4.0 public export.
 - Check required release steps and all three package roles; block publication while distribution connection and review requirements remain incomplete.
+- Correct split-main third-party notices to state that the matching runtime supplies the wheels, preserving the original component credits.
 
 
 ## [0.4.0] - 2026-11-25
