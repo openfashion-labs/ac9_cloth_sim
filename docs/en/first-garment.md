@@ -121,20 +121,20 @@ Which piece goes on which cylinder:
 - To place on the back, turn the view in the 3D viewport on the left so you see the back of the body (drag with the middle button; without one, see [Blender basics](blender-basics.md)).
 - If you mix up front and back, or left and right, the calculation still runs. If the garment is worn oddly, place it again.
 
-The shape you see when you release is the shape the simulation starts from. Pieces that turn red are pieces that are inside the body or overlap other pieces (the reason is shown). You can start as is, but it starts more cleanly if you place them again or use the tidying tools in the **Placement** panel.
+The shape you see when you release is the shape the simulation starts from. Placement does not add automatic quality warnings or red marks. Press **Diagnose** in its own panel to check the displayed cloth for intrusion, cloth crossing, stretch, and start-shape warnings. Placed and dressed pieces share this entry point; nothing moves. Expand **Diagnosis Results** for pieces and crossing partners. **Display** selects Problem Areas, Stretch, Face Side, or None. Diagnose again after correcting the shape.
 
 To place a piece again, select it and place it again with **Place**. **Back to Flat** lays it flat where it is.
 
 ![right after placing around the body](img/fg_placed.png)
 
-## 9. Dress (Live Sim)
+## 9. Dress (Simulate)
 
-1. Press **Live Sim** at the top of the Tool tab on the right (**AC9 Run**).
+1. Press **Simulate** at the top of the Tool tab on the right (**AC9 Run**).
 2. At first it is preparing the calculation, so wait a little ("Preparing the simulation (N s elapsed)" appears in the 3D view; the first time you dress, it takes a little longer). **During this time the cloth does not move, but it has not stopped. Wait without pressing the button again** (pressing it again stops it).
 3. When the calculation starts, the seams are pulled together and closed, and the garment settles onto the body.
 4. **It does not stop by itself.** When the garment has settled and stopped moving, press the button (it has changed to **Stop**) again or press **Esc**. The shape where you stopped is the result.
 
-- Normal Live Sim first sews placed pieces without gravity, then turns gravity on. You can also switch **Gravity** manually while it runs.
+- If a collar or sleeve falls before it is sewn on, uncheck **Gravity** and run, then check it once the seams have closed (you can switch it while it runs).
 - The time the calculation takes depends on the size of the garment and the computer.
 
 ![the dressed garment and the Result field of AC9 Garment](img/fg_dressed.png)
@@ -142,7 +142,7 @@ To place a piece again, select it and place it again with **Place**. **Back to F
 ## 10. Look at the result
 
 - With nothing selected, look at the Tool tab and the result (Result) appears in **AC9 Garment**.
-- Red fill means "possible problem". It does not necessarily mean it is bad.
+- Use **Diagnose** to check the current shape. Red marks confirmed issues such as crossings; yellow marks crossing candidates whose seams could not be verified. Read the target, counts and unchecked items, and diagnose again after editing. Color alone does not determine quality.
 - Even with the same settings, the result changes slightly every time you calculate. Do not judge good or bad from one run; run it a few times and look.
 - Signs it went well: the sleeves are on the arms, the neckline goes around the neck, and the cloth does not sink into the body.
 
@@ -152,19 +152,19 @@ To place a piece again, select it and place it again with **Place**. **Back to F
 
 ## 11. Fix it and dress again
 
-- **Fix the pattern**: drag corners and edges with **Edit Pieces** in the **Pattern** panel. The dressed garment does not change right away. When you then press **Live Sim**, the edited shape is carried onto the dressed garment first, and it calculates **continuing from the current shape** and settles into the edited pattern. To see the 3D shape after every edit, press **3D Follows Edits** in **AC9 Run** on the Tool tab.
-- **Pinch and fix the cloth by hand**: while the cloth is moving in **Live Sim**, pinch and pull the cloth with **Ctrl + left drag**. If cloth has pushed through other cloth, press **Alt** during the drag and the cloth you hold passes through other cloth. Press **Esc** and the shape where you stopped remains.
-- **Restart from the placed shape used before the simulation**: with nothing selected, press **Back to Placed** in the **Placement** panel (a confirmation appears), then press **Live Sim**.
+- **Fix the pattern**: drag corners and edges with **Edit Pieces** in the **Pattern** panel. The dressed garment does not change right away. When you then press **Simulate**, the edited shape is carried onto the dressed garment first, and it calculates **continuing from the current shape** and settles into the edited pattern. To see the 3D shape after every edit, press **3D Follows Edits** in **AC9 Run** on the Tool tab.
+- **Pinch and fix the cloth by hand**: while the cloth is moving in **Simulate**, pinch and pull the cloth with **Ctrl + left drag**. If cloth has pushed through other cloth, press **Alt** during the drag and the cloth you hold passes through other cloth. Press **Esc** and the shape where you stopped remains.
+- **Dress again from the start**: with nothing selected, press **Back to Adjusted Shape** in the **Placement** panel (a confirmation appears), then press **Simulate**.
 
 ## 12. Save
 
-Save with **Ctrl+S**. The final shape of the dressed garment is saved inside the .blend, and the progress frames are saved in the folder next to the .blend.
+Save with **Ctrl+S**. The final garment shape is saved in the .blend. Recorded progress is stored in the adjacent `AC9_ClothSim_jobs` folder. The retained range depends on [recording settings](features/run.md#recording-progress); check Result after stopping.
 
 ## What to do next
 
-- Layering clothes: switch to another garment in the **Garment** field and press **Live Sim**, and the garment you have finished dressing becomes an immovable obstacle. Dress from the inner garment outward.
+- Layering clothes: switch to another garment in the **Garment** field and press **Simulate**, and the garment you have finished dressing becomes an immovable obstacle. Dress from the inner garment outward.
 - Change the fabric: when you select a piece, you can choose the fabric in **AC9 Piece** on the Tool tab.
-- Send to Cloth Retopo: with **To AC9 Cloth Retopo** in **Settings** of **AC9 Run** on the Tool tab, you make the dressed garment the Guide of [AC9 Cloth Retopo](https://github.com/openfashion-labs/ac9_cloth_retopo).
+- Send to Cloth Retopo: with **To AC9 Cloth Retopo** at the bottom of the **Setup** panel, you make the dressed garment the Guide of [AC9 Cloth Retopo](https://github.com/openfashion-labs/ac9_cloth_retopo).
 
 ## Other ways to start
 

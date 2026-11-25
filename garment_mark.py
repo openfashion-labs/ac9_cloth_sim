@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The point clicked on the dressed garment shown on its pattern too (user 2026-10-14): a click on the garment
 with an AC9 tool leaves a dot there and the same point on the flat pattern. The dot stays on the cloth
-(it follows the frames) until the next click on the garment.
+(it follows the frames) until the next click on the garment or a blank click clears it.
 
 The pattern point comes from the garment's UV map: dress.garment_object writes each vertex's layout point (mm / 1000)
 as its UV, so the point is the clicked triangle's UVs weighted as the click is on the triangle.
@@ -30,8 +30,10 @@ _mark = {}                   # 'garment' (the object's name: a garment or a plac
 _handles = []
 
 
-def clear():
+def clear(context=None):
     _mark.clear()
+    if context is not None:
+        _redraw(context)
 
 
 def mark(context, g, mx, my):

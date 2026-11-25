@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The picked internal line's two sides, filled on the flat pattern and on the placed shape (user 2026-10-25, after
+"""The picked internal line's two sides, filled on the flat pattern and on the adjusted shape (user 2026-10-25, after
 "the A / B of Fold and Layers, I can't tell what they are"): A orange, B blue; the side that moves (Moves) darker;
 the side taken out by Layers (Keep A / Keep B) hatched; the letters A and B at the middle of their sides, away
 from the line's dimension boxes.
@@ -275,7 +275,7 @@ def placed_positions(spec, piece, n, context=None):
 
 
 def draw_view(context, spec, piece, line):
-    """The fills and the hatching (POST_VIEW): on the flat pattern over everything, on the placed shape lifted
+    """The fills and the hatching (POST_VIEW): on the flat pattern over everything, on the adjusted shape lifted
     towards the eye and depth tested (piece_look's tints)."""
     from . import piece_look as LK
     from . import view_visibility as VV
@@ -305,7 +305,7 @@ def draw_view(context, spec, piece, line):
     gpu.state.depth_test_set('NONE')
     if flat_visible:
         _batches(sh_t, sh_l, w[1], w[2], al, hidx, vs)
-    # the side that turns, an arrow over the line on the pattern (the placed shape shows it folded)
+    # the side that turns, an arrow over the line on the pattern (the adjusted shape shows it folded)
     k = 0 if al_a == MOVE_ALPHA else (1 if al_b == MOVE_ALPHA else None)
     arw = (d.get('arrow') or [None, None])[k] if k is not None else None
     if arw is not None and flat_visible:
@@ -349,7 +349,7 @@ def _hatch3(V, X, T, H):
 
 
 def draw_px(context, spec, piece, line):
-    """The letters A and B at the middle of their sides, on the flat pattern and on the placed shape (POST_PIXEL)."""
+    """The letters A and B at the middle of their sides, on the flat pattern and on the adjusted shape (POST_PIXEL)."""
     import blf
     from bpy_extras.view3d_utils import location_3d_to_region_2d
     from mathutils import Vector
@@ -383,7 +383,7 @@ def draw_px(context, spec, piece, line):
                 spots[j].append((ab, k, p))
     for sp in spots:
         if len(sp) == 2 and (sp[0][2] - sp[1][2]).length < LETTER_GAP_PX:
-            # one side folded over the other (the placed shape at 149 degrees): side by side, not on top
+            # one side folded over the other (the adjusted shape at 149 degrees): side by side, not on top
             sp = [(ab, k, p + Vector(((k - 0.5) * LETTER_GAP_PX, 0.0))) for ab, k, p in sp]
         items = []
         for ab, k, p in sp:

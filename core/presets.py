@@ -318,9 +318,9 @@ def build_stages(spec, names, rings, pattern_path, crop, h, st, extras=None, pre
                         # the cloth's seam hinges from the stage it went on from, the seams' folds as they are set
                         # now: taken over whole, a fold set since was dropped (user 2026-10-23: a seam set to 90
                         # deg, then Live, did not fold) and a fold set to nothing kept its old angle
-                        sb = {k_: v_ for k_, v_ in prev_cfg[key].items() if k_ not in ('rest_deg_seams', 'fold_ke')}
-                        sb.update({k_: v_ for k_, v_ in (cfg.get(key) or {}).items()
-                                   if k_ in ('rest_deg_seams', 'fold_ke')})
+                        now = ('rest_deg_seams', 'fold_ke', 'turn_seams')
+                        sb = {k_: v_ for k_, v_ in prev_cfg[key].items() if k_ not in now}
+                        sb.update({k_: v_ for k_, v_ in (cfg.get(key) or {}).items() if k_ in now})
                         cfg[key] = sb
                     else:
                         cfg[key] = prev_cfg[key]

@@ -18,6 +18,16 @@ from .i18n import tx
 
 DELTA = 2.0             # mm each flap lies off the ring (the top one out, the other in: 4 mm apart, self contact 1 mm x 2)
 OVERS = ('left', 'right')
+# A piece's Ends (placement 'ends', user 2026-11-22): open round its guide; closed, its two ends meeting; or closed
+# with its left / right end on top. Left and right along the pattern's width as placed, the way it goes round
+ENDS = ('open', 'closed', 'left', 'right')
+LAPPED = ('left', 'right')
+# the names shown for them (AC9 Piece's Ends, its right-click menu, reports, i18n_ja): read from here only
+ENDS_NAMES = {'open': "Open", 'closed': "Closed", 'left': "Left on Top", 'right': "Right on Top"}
+ENDS_TIPS = {'open': "Wrapped round its guide, the ends apart",
+             'closed': "Goes once round, its two ends meeting (a rib, a waistband)",
+             'left': "Goes round, its left end (on the pattern) over the right by the overlap",
+             'right': "Goes round, its right end (on the pattern) over the left by the overlap"}
 
 
 def _seg_dist(P, L):
@@ -115,6 +125,92 @@ def top_end(spec, pat, names, i, pl, Xring, center_x):
                 if owner[k] is not None and names[owner[k]] == h['piece'] and owner['ab'.replace(k, '')] is not None                         and names[owner['ab'.replace(k, '')]] == b['piece']:
                     return k, 'buttons'
     return None, None
+
+
+def _self_button(spec, piece):
+    """A button on `piece` whose hole is on `piece` too (its two ends buttoned over each other), or None."""
+    for b in spec.get('buttons', []):
+        h = b.get('hole')
+        if h and b.get('piece') == piece and h.get('piece') == piece and 'pt' in b and 'pt' in h:
+            return b
+    return None
+
+
+def _edge_lap(spec, pat, i, piece, p):
+    """(the two sides' layout x, seam) of a self seam sewing one end's outline side onto a line inside the other end
+    (a waistband's end over its button stand, as pattern files often draw it), or (None, None). Both sides go across
+    the piece (each under a quarter of its width along it); two outline sides are the ring's own closing seam (the
+    ends meet: no overlap) and are not one."""
+    V = np.asarray(pat[f"V{i}"], float)
+    W = float(V[:, 0].max() - V[:, 0].min())
+    for seam in self_seams(spec, piece):
+        if 'line' not in seam['a'] and 'line' not in seam['b']:
+            continue
+        try:
+            L = [S.spun(p, S.side_polyline(spec, seam[k])) for k in 'ab']
+        except (KeyError, StopIteration, ValueError):
+            continue
+        if any(float(np.ptp(q[:, 0])) > 0.25 * W for q in L):
+            continue
+        # the outline side is one of the piece's two ends (within two mesh steps), not a tuck mid-way along it
+        near = 2.0 * (float(pat['h']) if 'h' in pat else 6.0)
+        lo, hi = float(V[:, 0].min()), float(V[:, 0].max())
+        if any('line' not in seam[k] and min(abs(float(q[:, 0].mean()) - lo), abs(float(q[:, 0].mean()) - hi)) > near
+               for k, q in zip('ab', L)):
+            continue
+        x = [float(q[:, 0].mean()) for q in L]
+        if abs(x[1] - x[0]) >= 1.0:
+            return x, seam
+    return None, None
+
+
+def lap_from(spec, pat, i, piece, p):
+    """(overlap mm, by): how far the two ends of piece i go over each other when nothing is typed -- from the self seam
+    of two lines apart or of one end sewn onto a line, else from a button and its hole both on the piece, else 0 (the
+    ends meet)."""
+    cpl = plan(spec, pat, i, piece)
+    if cpl is not None:
+        x = [float(S.spun(p, S.side_polyline(spec, cpl['seam'][k]))[:, 0].mean()) for k in 'ab']
+        return x, 'seam', cpl['seam']
+    x, seam = _edge_lap(spec, pat, i, piece, p)
+    if x is not None:
+        return x, 'seam', seam
+    b = _self_button(spec, piece)
+    if b is not None:
+        q = S.spun(p, np.asarray([b['pt'], b['hole']['pt']], float))
+        return [float(q[0, 0]), float(q[1, 0])], 'button', None
+    return None, None, None
+
+
+def lap_plan(spec, pat, i, piece, V, p):
+    """{'x': {'a', 'b'} the two lines' layout x (where the ends meet round the ring), 'span' the length round (line to
+    line), 'by', 'seam', 'overlap'} of piece i lapped over itself (Ends: left / right on top). The overlap: the
+    number typed (placement 'overlap', mm), else from the seam or the button joining its ends, else 0. At most two
+    layers: an overlap over half the piece is cut to it."""
+    V = np.asarray(V, float)
+    lo_x, hi_x = float(V[:, 0].min()), float(V[:, 0].max())
+    W = hi_x - lo_x
+    x, by, seam = (None, 'number', None) if p.get('overlap') is not None else lap_from(spec, pat, i, piece, p)
+    if x is None:
+        o = max(0.0, float(p.get('overlap') or 0.0))
+        o = min(o, 0.5 * W - 1.0)
+        x = [lo_x + 0.5 * o, hi_x - 0.5 * o]
+        by = by if p.get('overlap') is not None else 'none'
+    x = sorted(x)
+    lim = 0.5 * W - 1.0                       # at most two layers, from a seam or a button too
+    if W - (x[1] - x[0]) > lim:
+        more = 0.5 * (W - (x[1] - x[0]) - lim)
+        x = [x[0] - more, x[1] + more]
+    span = x[1] - x[0]
+    if span < 1.0:
+        return None
+    return {'x': {'a': x[0], 'b': x[1]}, 'span': span, 'by': by, 'seam': seam, 'overlap': W - span}
+
+
+def top_of(pl, ends):
+    """The key ('a' | 'b') of the end on top: Ends left = the end at the lower layout x."""
+    lo, hi = sorted('ab', key=lambda k: pl['x'][k])
+    return lo if ends == 'left' else hi
 
 
 def offsets(V, pl, top, h):

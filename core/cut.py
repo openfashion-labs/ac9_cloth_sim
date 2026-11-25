@@ -158,7 +158,9 @@ def _cut_edges(it, P, used):
     return out
 
 
-def _cut_one(spec, name, line_id, new_name):
+def _cut_one(spec, name, line_id, new_name, keep_point=None):
+    if SP.seams_on_line(spec, name, line_id):
+        raise ValueError(rpt("the line is sewn: cut along a line that is not part of a seam"))
     pc = D.piece(spec, name)
     it = D.internal(pc, line_id)
     if it.get('closed'):
@@ -209,6 +211,10 @@ def _cut_one(spec, name, line_id, new_name):
         keep = 'a' if hit['a'] > hit['b'] else 'b'
     else:
         keep = 'a' if D.signed_area(regions['a']) >= D.signed_area(regions['b']) else 'b'
+    if keep_point is not None:
+        containing = [k for k in 'ab' if DT._inside(regions[k], keep_point)[0]]
+        if len(containing) == 1:
+            keep = containing[0]
     other = 'b' if keep == 'a' else 'a'
     arc_ids = {k: {pc['edges'][j]['id'] for j in arcs[k]} for k in 'ab'}
     ol = S.Outline(pc)
@@ -395,7 +401,7 @@ def _cut_one(spec, name, line_id, new_name):
     return {'new': new_name, 'seam': sid, 'kept': keep}
 
 
-def _cut_mutating(spec, name, line_id, twins=True):
+def _cut_mutating(spec, name, line_id, twins=True, keep_point=None):
     """Cut piece `name` in two along its internal line `line_id` (drawn from outline to outline). Returns
     {piece: {'new': the new half's name, 'seam': the seam sewing the cut, 'kept': 'a' / 'b'}} (the twin too). A piece
     edited symmetrically is cut along the line's mirror image too (that cut in the first entry's 'more': [(piece cut,
@@ -403,32 +409,74 @@ def _cut_mutating(spec, name, line_id, twins=True):
     longer symmetric is no longer edited symmetrically."""
     if SP.seams_on_line(spec, name, line_id):
         raise ValueError(rpt("the line is sewn: cut along a line that is not part of a seam"))
-    twin = None
+    # Freeze the parent's layout reflection before either set of fragments changes its bbox.
+    # A central cut's two equal halves can keep opposite names on the two parents.
     if twins:
-        tw, lid_b, _ = D._twin_internal(spec, name, line_id)
+        tw, peer_line, M = D._twin_internal(spec, name, line_id)
         if tw:
-            twin = (tw, lid_b)
+            mirrored = bool(D.piece(spec, name).get('mirrored'))
+            out = _cut_mutating(spec, name, line_id, twins=False)
+            B = S.Outline(D.piece(spec, name)).B
+            samples = np.vstack([D.outline_centroid(D.piece(spec, name)),
+                                  (B + np.roll(B, 1, 0) + np.roll(B, -1, 0)) / 3.0])
+            valid = samples[DT._inside(B, samples)]
+            if not len(valid):
+                raise ValueError(rpt("Cannot match internal line {0} to its mirror", line_id))
+            out.update(_cut_mutating(spec, tw, peer_line, twins=False, keep_point=M(valid[:1])[0]))
+
+            def descendants(root):
+                info = out[root]
+                return list(dict.fromkeys([root, info['new']] +
+                            [p for holder, v in info.get('more', []) for p in (holder, v['new'])]))
+
+            left, right = descendants(name), descendants(tw)
+            matches = []
+            for a in left:
+                ring = S.Outline(D.piece(spec, a)).B
+                Q = M(np.vstack([ring, ring[:1]]))
+                candidates = []
+                for b in right:
+                    ring = S.Outline(D.piece(spec, b)).B
+                    P = np.vstack([ring, ring[:1]])
+                    if max(float(D._dist_to_polyline(Q, P).max()),
+                           float(D._dist_to_polyline(P, Q).max())) < D.TWIN_TOL:
+                        candidates.append(b)
+                if len(candidates) != 1:
+                    raise ValueError(rpt("Cannot match internal line {0} to its mirror", line_id))
+                matches.append((a, candidates[0]))
+            if len(left) != len(right) or len({b for _, b in matches}) != len(right):
+                raise ValueError(rpt("Cannot match internal line {0} to its mirror", line_id))
+            old_family = D.piece(spec, name).get('family')
+            for p in [p for p in left + right if p not in (name, tw)]:
+                pc = D.piece(spec, p)
+                pc.pop('family', None)
+                pc.pop('mirrored', None)
+            families = {D.family_of(pc) for pc in spec['pieces']}
+            for a, b in matches:
+                pa, pb = D.piece(spec, a), D.piece(spec, b)
+                if a == name:
+                    if b != tw:
+                        raise ValueError(rpt("Cannot match internal line {0} to its mirror", line_id))
+                    if old_family is not None:pa['family'] = pb['family'] = old_family
+                else:
+                    family = D._next_free(a, families)
+                    families.add(family)
+                    pa['family'] = pb['family'] = family
+                pa['mirrored'], pb['mirrored'] = mirrored, not mirrored
+            return out
     ms = D.self_mirror_line(D.piece(spec, name), line_id)[0]
     new_a = D.unique_name(spec, name + "_2")
-    out = {name: _cut_one(spec, name, line_id, new_a)}
+    out = {name: _cut_one(spec, name, line_id, new_a, keep_point=keep_point)}
     if ms is not None and ms != line_id:
         holder = next(n for n in (name, new_a) if any(it['id'] == ms for it in D.piece(spec, n).get('internals', [])))
         new_c = D.unique_name(spec, name + "_3")
-        out[name]['more'] = [(holder, _cut_one(spec, holder, ms, new_c))]
+        out[name]['more'] = [(holder, _cut_one(spec, holder, ms, new_c, keep_point=keep_point))]
         pn = D.piece(spec, new_c)
         pn.pop('family', None)
         pn.pop('mirrored', None)
-    if twin:
-        new_b = D.unique_name(spec, twin[0] + "_2")
-        out[twin[0]] = _cut_one(spec, twin[0], twin[1], new_b)
-        pa, pb = D.piece(spec, new_a), D.piece(spec, new_b)
-        pa['family'] = pb['family'] = new_a          # the two new halves are twins (one family, one mirrored)
-        pa['mirrored'] = bool(D.piece(spec, name).get('mirrored'))
-        pb['mirrored'] = not pa['mirrored']
-    else:
-        pn = D.piece(spec, new_a)
-        pn.pop('family', None)
-        pn.pop('mirrored', None)
+    pn = D.piece(spec, new_a)
+    pn.pop('family', None)
+    pn.pop('mirrored', None)
     for v in [out[name]] + [i for _, i in out[name].get('more', [])]:
         for n in (name, v['new']):
             pc = D.piece(spec, n)

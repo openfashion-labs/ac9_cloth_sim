@@ -5,12 +5,39 @@ from pathlib import Path
 import sys
 import runpy
 import tempfile
+import threading,time,os
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import patch
 import numpy as np
 from solver import prepared_live as P
 
+
+class AtomicPublication(unittest.TestCase):
+    @unittest.skipUnless(sys.platform=='win32','Windows reader sharing')
+    def test_same_temporary_retries_until_a_reader_closes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'status.json';P.write(path,dict(value=0))
+            reader=path.open('r',encoding='utf8')
+            old_temp=Path(folder)/'old.tmp';old_temp.write_text('{}')
+            try:
+                with self.assertRaises(PermissionError):os.replace(old_temp,path)
+                thread=threading.Thread(target=lambda:(time.sleep(.015),reader.close()))
+                thread.start()
+                try:P.write(path,dict(value=1))
+                finally:thread.join()
+            finally:reader.close();old_temp.unlink(missing_ok=True)
+            self.assertEqual(json.loads(path.read_text()),dict(value=1))
+            self.assertEqual(list(Path(folder).glob('*.tmp')),[])
+
+    @unittest.skipUnless(sys.platform=='win32','Windows reader sharing')
+    def test_persistent_denial_does_not_publish_or_leave_a_temporary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'status.json';P.write(path,dict(value=0))
+            with path.open('r',encoding='utf8'):
+                with self.assertRaises(PermissionError):P.write(path,dict(value=1))
+            self.assertEqual(json.loads(path.read_text()),dict(value=0))
+            self.assertEqual(list(Path(folder).glob('*.tmp')),[])
 
 class PreparedInputTests(unittest.TestCase):
     def setUp(self):

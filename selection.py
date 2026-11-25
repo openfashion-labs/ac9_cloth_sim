@@ -1,14 +1,11 @@
 """Which pieces are selected: read and written here only (user 2026-11-03: the add-on keeps the piece selection in
 one place, picked in 2D or 3D it is the selection everywhere).
 
-The record is Blender's own selection flag of the AC9 objects, read over the whole view layer
-(view_layer.objects.selected), never through one viewport (context.selected_objects lists only the objects that
-viewport shows: the 2D pattern view and the 3D view show different collections, so a piece picked in 2D was not
-selected for a Place or Part to Seam run from the 3D view). Blender's flag stays the record (not a second copy in the
-scene): Undo, the Outliner, G / R and box select keep working on it as they do, and nothing has to be kept in step.
-What changes is who clears it: deselect_all clears every object of the view layer, also those the viewport does not
-show, and a replacing click or box select of Blender's own in one view drops the AC9 objects of the other view
-(watch). The pieces themselves are named by core.piece_table from these facts."""
+The saved record on the ViewLayer contains document-qualified logical piece IDs and their representative.
+Pattern flags, placed objects (including shared Mirror objects) and garment handles project that record.
+The record survives an excluded pattern collection and does not expand one logical half into both halves.
+Old files bootstrap from their flags. Blender/Outliner changes pass through watch before becoming logical input;
+internal projection and redraw are never new input. Undo and file loading restore the same saved record."""
 import bpy
 from bpy.app.handlers import persistent
 
@@ -38,18 +35,128 @@ def objects(context):
     return [ob for ob in vl.objects.selected if ob is not None] if vl is not None else []
 
 
+def owns(context, ob):
+    """Validate an input object's document before interpreting its logical IDs."""
+    from . import store, piece_move as PM
+    spec = store.get(context)[0]
+    if spec is None or ob is None:
+        return False
+    if PLV.PROP in ob:
+        from . import garment_owner as GO
+        return GO.owns(ob, GO.PLACED, spec, context=context, legacy_name=ob.get(PLV.GARMENT_PROP))
+    if HANDLE_NAMES in ob:
+        return (ob in PM.handles() and ob.get('ac9_handle_garment', spec['name']) == spec['name']
+                and ob.get('ac9_handle_spec', store.text(context)) == store.text(context))
+    return (PV.PIECE_PROP in ob and PV.piece_objects().get(ob[PV.PIECE_PROP]) == ob
+            and ob.get('ac9_pattern_spec', store.text(context)) == store.text(context))
+
+
 def facts(context):
     """ObjFacts of the selected AC9 piece objects (pattern pieces, placed objects, handles)."""
     vl = context.view_layer
     if vl is None:
         return []
     active = vl.objects.active
-    return [f for f in (_fact(ob, active) for ob in objects(context)) if f is not None]
+    from . import store, piece_move as PM
+    spec = store.get(context)[0]
+    if spec is None:
+        return []
+    valid = {pc['name'] for pc in spec['pieces']}
+    out = []
+    for ob in objects(context):
+        if not owns(context, ob):
+            continue
+        f = _fact(ob, active)
+        if f is not None:
+            ns = tuple(n for n in f.names if n in valid)
+            if ns:
+                out.append(f._replace(names=ns))
+    return out
+
+
+def _logical_record(context):
+    """A saved, owner-qualified record also works when the pattern collection is excluded."""
+    import json
+    from . import store
+    raw = context.view_layer.get('ac9_piece_selection')
+    if raw is None:
+        return {} if context.view_layer.get('ac9_piece_selection_owner') is not None else None
+    try:
+        record = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(record, dict) or not isinstance(record.get('ids'), list):
+        return {}
+    if any(not isinstance(n, str) or not n for n in record['ids']):
+        return {}
+    text = store.text(context)
+    if text is None or context.view_layer.get('ac9_piece_selection_owner') != text:
+        return {}
+    return record
+
+
+def view_layer_key(context, create=False):
+    """Saved identity survives rename and undo; copied layers receive a distinct identity."""
+    layer = context.view_layer
+    key = layer.get('ac9_selection_layer_uid')
+    for other in context.scene.view_layers:
+        if other == layer:
+            break
+        if key and other.get('ac9_selection_layer_uid') == key:
+            key = None
+            break
+    if key:
+        return key
+    if create:
+        import uuid
+        key = uuid.uuid4().hex
+        layer['ac9_selection_layer_uid'] = key
+        return key
+    return layer.as_pointer()
+
+
+def _save_logical(context, names, active):
+    import json
+    from . import store
+    text = store.text(context)
+    if text is None:
+        return
+    if context.view_layer.get('ac9_piece_selection_owner') != text:
+        context.view_layer['ac9_piece_selection_owner'] = text
+    spec = store.get(context)[0]
+    record = json.dumps(dict(ids=names, garment=spec['name'] if spec is not None else '',
+                             lead=active if active in names else (names[0] if names else None)))
+    if context.view_layer.get('ac9_piece_selection') != record:
+        context.view_layer['ac9_piece_selection'] = record
+
+
+def _logical_facts(context):
+    """Logical IDs are the record. Object flags are its projection or an external input."""
+    raw = facts(context)
+    record = _logical_record(context)
+    if record is None:
+        # Bootstrap old files from their saved flags, once, before the first projection.
+        picked = {f.names[0] for f in raw if f.kind == 'pattern'}
+        if not PV.piece_objects():
+            return raw
+    else:
+        picked = set(record.get('ids', ()))
+    out = [f._replace(names=tuple(n for n in f.names if n in picked), active=False)
+           for f in raw if any(n in picked for n in f.names)]
+    represented = {n for f in out for n in f.names}
+    out += [PT.ObjFact('pattern', (n,), True, False) for n in sorted(picked - represented)]
+    return out
 
 
 def pieces(context):
     """Selected piece names, the active object's first (a pair's placed object gives both)."""
-    return PT.selected_names(facts(context))
+    record = _logical_record(context)
+    if record is not None:
+        from . import store
+        spec = store.get(context)[0]
+        valid = {pc['name'] for pc in spec['pieces']} if spec is not None else set()
+        return [n for n in record.get('ids', ()) if n in valid]
+    return PT.selected_names(_logical_facts(context))
 
 
 def pattern_pieces(context):
@@ -61,12 +168,30 @@ def pattern_pieces(context):
 def lead(context, names=None):
     """The piece the Tool tab shows and edits (core.piece_table.lead_name): a pattern piece, a placed piece's object
     or a handle on the dressed garment alike."""
-    return PT.lead_name(facts(context), names)
+    record = _logical_record(context)
+    if record is not None:
+        picked = set(pieces(context))
+        if names is not None:
+            picked &= set(names)
+        preferred = record.get('lead')
+        return preferred if preferred in picked else next(iter(sorted(picked)), None)
+    fs = _logical_facts(context)
+    return PT.lead_name(fs, names)
 
 
 def any_pieces(context):
     """True when a pattern piece or a placed piece's object is selected (Place has something to place)."""
-    return any(f.kind in ('pattern', 'placed') for f in facts(context))
+    return any(f.kind in ('pattern', 'placed') for f in _logical_facts(context))
+
+
+def piece_selection(context, spec=None):
+    """The same validated logical set and representative for panels and property writes."""
+    if spec is None:
+        from . import store
+        spec = store.get(context)[0]
+    valid = {pc['name'] for pc in spec['pieces']} if spec is not None else set()
+    names = tuple(n for n in pieces(context) if n in valid)
+    return names, lead(context, set(names)) if names else None
 
 
 def deselect_all(context, keep=()):
@@ -133,14 +258,9 @@ def drop_other_view(context):
 
 
 # ---------------------------------------------------------------- one selection, shown everywhere
-# The picked pieces are the selected pattern objects: every piece has exactly one, Undo and saving keep their flags
-# as Blender keeps any selection. The other objects are marks of that record (user 2026-11-14: a picked piece
-# carries the same mark in every view it shows in, and only marked pieces are acted on): project() writes them all,
-# apply() is the one way a tool changes the selection, and watch() turns a change Blender made itself (a click with
-# its own select tools, the Outliner, A / Alt+A) into an apply. The 2026-11-04 reading kept each kind's flag as its
-# own record, so a pick in 3D left the pattern unmarked and the pattern tools blind to it, and the garment's handle
-# held the only copy of its pieces.
-_last = {'snap': None, 'ids': []}
+# apply/project commit one saved logical selection; every available representation shows it.
+# _last is only the previous external-input snapshot for watch, never the authoritative selected set.
+_last = {'snap': None, 'ids': [], 'lead': None}
 _projecting = [False]
 _state_owner = [None]
 
@@ -148,11 +268,11 @@ _state_owner = [None]
 def _ensure_owner(context):
     from . import store
     text = store.text(context)
-    key = (context.scene.session_uid, context.view_layer.as_pointer(), text.session_uid if text else 0)
+    key = tuple(_owner(context))
     if key != _state_owner[0]:
         _state_owner[0] = key
-        _last.update(snap=None, ids=[])
-        _seen.update(sig=None, op=None, objs=None)
+        _last.update(snap=None, ids=[], lead=None)
+        _seen.update(sig=None, op=None, objs=None, membership=None)
         return True
     return False
 
@@ -167,7 +287,7 @@ def _snapshot(context):
     out = {}
     for ob in objects(context):
         k = _kind(ob)
-        if k is not None:
+        if k is not None and owns(context, ob):
             out[ob.as_pointer()] = (k, tuple(_names(ob)))
     return out
 
@@ -186,40 +306,53 @@ def _set(ob, on):
 
 
 def _worn(context, spec):
-    """Pieces shown on the dressed garment (not put back to their placed shapes), and the garment."""
-    from . import piece_move as PM
-    g = PM._garment(context)
-    if g is None or spec is None:
-        return set(), None
-    import json
-    try:
-        have = set(json.loads(g.get('ac9_piece_names', '[]')))
-    except ValueError:
-        have = set()
-    if not have:
-        return set(), g
-    from . import dress as D
-    return have - set(D.hidden_pieces(g, spec)), g
+    """Pieces shown on the dressed garment (not put back to their adjusted shapes), and the garment."""
+    from . import control_basis as CB
+    on, g = CB.on_garment(context, spec)
+    return set(on & CB.result_names(g, context)), g
 
 
 def project(context, names, active=None, view=None, others=False):
-    """Mark pieces `names` (and no other) in every view: their pattern objects, their placed shapes (one object for
+    """Mark pieces `names` (and no other) in every view: their pattern objects, their adjusted shapes (one object for
     each pair), the dressed garment's handle. active: the piece made active (as an object of `view`, 'pattern' or
     'world'; None keeps the active object). others: objects that are not pieces' are deselected too."""
     from . import store
     from . import piece_move as PM
+    view_layer_key(context, create=True)
     _ensure_owner(context)
-    names = list(dict.fromkeys(n for n in names if n))
+    spec = store.get(context)[0]
+    if spec is not None:
+        PLV.detach_legacy_results(context, spec)
+    valid = {pc['name'] for pc in spec['pieces']} if spec is not None else set()
+    names = list(dict.fromkeys(n for n in names if n in valid))
     want = set(names)
     vl = context.view_layer
-    spec = store.get(context)[0]
+    # Adopt legacy placements once, before changing the document-qualified record.
+    import json
+    text = store.text(context)
+    old_owner = vl.get('ac9_piece_selection_owner')
+    try:
+        old_name = json.loads(vl.get('ac9_piece_selection', '{}')).get('garment')
+    except (ValueError, TypeError, AttributeError):
+        old_name = None
+    for ob in set(PLV.objects(spec).values()) if spec is not None else ():
+        if ob.get('ac9_placed_spec') is None:
+            ob['ac9_placed_spec'] = old_owner if old_owner is not None and old_name == spec['name'] else text
+    from . import dress as D
+    g = D.garment(spec) if spec is not None else None
+    if g is not None and g.get('ac9_garment_spec') is None:
+        g['ac9_garment_spec'] = old_owner if old_owner is not None and old_name == spec['name'] else text
+    _save_logical(context, names, active)
     _projecting[0] = True
     try:
         pats = PV.piece_objects()
         for n, ob in pats.items():
-            _set(ob, n in want)
-        worn, g = _worn(context, spec)
-        placed = PLV.objects(spec) if spec is not None else {}
+            _set(ob, n in want and owns(context, ob))
+        from . import control_basis as CB
+        worn, g = CB.on_garment(context, spec)
+        coll = bpy.data.collections.get(PLV.COLL_NAME)
+        placed = {n: ob for ob in coll.objects if PLV.PROP in ob and owns(context, ob)
+                  for n in _names(ob)} if coll is not None else {}
         world = {}
         for ob in {o.as_pointer(): o for o in placed.values()}.values():
             own = [n for n in (ob.get(PLV.PROP), ob.get(PLV.TWIN_PROP)) if n and n not in worn]
@@ -248,24 +381,27 @@ def project(context, names, active=None, view=None, others=False):
                 world[n] = h
         if others:
             for ob in objects(context):
-                if _kind(ob) is None:
+                if _kind(ob) is None or not owns(context, ob):
                     _set(ob, False)
         if active is not None and active in want:
             ob = world.get(active) if view == 'world' else None
-            vl.objects.active = ob or pats.get(active) or world.get(active)
+            choices = (ob, pats.get(active), world.get(active))
+            vl.objects.active = next((o for o in choices if o is not None and o.name in vl.objects), None)
     finally:
         _projecting[0] = False
+    _last.update(snap=_snapshot(context), ids=names, lead=active if active in want else None)
     _remember(context)
-    _last.update(snap=_snapshot(context), ids=names)
     return names
 
 
 def marks(context):
     """The pieces marked as picked, per view, as they are drawn: the pattern objects (Blender's outline in the 2D
-    view), the placed shapes (Blender's outline in 3D), the dressed garment (piece_look's tint and rim)."""
+    view), the adjusted shapes (Blender's outline in 3D), the dressed garment (piece_look's tint and rim)."""
     from . import piece_look as PK
     pattern, placed = set(), set()
     for ob in objects(context):
+        if not owns(context, ob):
+            continue
         k = _kind(ob)
         if k == 'pattern':
             pattern.update(_names(ob))
@@ -289,8 +425,8 @@ def apply(context, names, mode='SET', active=None, view='pattern', others=None, 
         new = [n for n in cur if n not in names]
     if active == 'KEEP':
         act = context.view_layer.objects.active
-        own = _names(act) if act is not None else []
-        active = own[0] if own and own[0] in new else (names[0] if names and mode != 'SUB' else None)
+        previous = lead(context)
+        active = previous if previous in new else (names[0] if names and mode != 'SUB' else None)
         if view is None and act is not None:
             view = 'world' if _kind(act) == 'world' else 'pattern'
     if mode == 'SUB' and active not in new:
@@ -306,6 +442,26 @@ def apply(context, names, mode='SET', active=None, view='pattern', others=None, 
 def refresh(context, active=None, view=None):
     """The marks written again from the picked pieces (after placed objects or the garment were made again)."""
     return project(context, ids(context), active=active, view=view)
+
+
+def capture_flags(context):
+    """A short-lived rollback snapshot, not a new logical selection."""
+    return dict(selected=tuple(objects(context)), active=context.view_layer.objects.active)
+
+
+def restore_flags(context, snapshot):
+    """Restore an operation's input flags after all original memberships have been put back."""
+    previous = _projecting[0]
+    _projecting[0] = True
+    try:
+        vl = context.view_layer
+        current = set(vl.objects)
+        for ob in current:
+            _set(ob, ob in snapshot['selected'])
+        vl.objects.active = snapshot['active'] if snapshot['active'] in current else None
+    finally:
+        _projecting[0] = previous
+        _remember(context)
 
 
 class borrow:
@@ -347,6 +503,13 @@ def watch(scene, depsgraph):
     if scene != ctx.scene or (depsgraph is not None and depsgraph.view_layer.name != vl.name):
         return
     first = _ensure_owner(ctx)
+    membership = tuple(ob.as_pointer() for ob in vl.objects)
+    previous_membership = _seen.get('membership')
+    if previous_membership is not None and membership != previous_membership and _logical_record(ctx) is not None:
+        # Excluding/rebuilding a collection changes visible flags, not the user's logical selection.
+        record = _logical_record(ctx)
+        project(ctx, record.get('ids', ()), active=record.get('lead'))
+        return
     sig = _signature(ctx)
     if sig == _seen['sig']:
         return
@@ -368,7 +531,8 @@ def watch(scene, depsgraph):
     act = vl.objects.active
     act_kind = _kind(act) if act is not None and act.select_get() else None
     if prev is None:                                # a file opened, an undo: the record is the pattern objects
-        names = PT.selected_names([f for f in facts(ctx) if f.kind == 'pattern']) or pieces(ctx)
+        names = (pieces(ctx) if _logical_record(ctx) is not None else
+                 PT.selected_names([f for f in facts(ctx) if f.kind == 'pattern']) or pieces(ctx))
     elif native:
         # Blender's own select tool: it does not pick pieces, it only drops them (a replacing select drops all, an
         # extending one drops what it deselected)
@@ -397,6 +561,13 @@ def _drop_seam(context):
         SET.unselect_seam(context)
     except Exception:                               # noqa: BLE001 -- a selection watcher must not fail
         pass
+    from . import draft_tool as DT, measure_edit as MEE, tool_tab as TT
+    DT.select_internal(context)
+    DT.select_edge(context)
+    DT.select_corner(context)
+    DT.select_ipoint(context)
+    MEE.select(context, '')
+    TT.clear(context)
 
 
 LEAD_PROP = "ac9_placed_lead"       # placed_view.LEAD_PROP (not imported: this module loads before it)
@@ -414,7 +585,8 @@ def select_placed(context, spec, names, side=None, keep=(), activate=True):
     obs = PLV.objects(spec)
     partner = {}
     for a, b in S.placement_pairs(spec):
-        partner[a], partner[b] = b, a
+        if a in obs and b in obs and not (PLV.from_sim(obs[a]) or PLV.from_sim(obs[b])):
+            partner[a], partner[b] = b, a
     names = [n for n in dict.fromkeys(([side] if side else []) + list(names)) if n in obs]
     if not names:
         return []
@@ -433,10 +605,9 @@ def select_placed(context, spec, names, side=None, keep=(), activate=True):
         if ob is not None and ob not in picked:
             picked.append(ob)
     keep = [o for o in keep if _alive(o) and not o.get(LEAD_PROP) and o.select_get()]
-    want = [n for o in picked for n in _names(o)]
+    want = list(names)
     want += [n for o in keep for n in _names(o) if n not in want]
-    first = _names(picked[0]) if picked and activate else []
-    project(context, want, active=first[0] if first else None, view='world', others=True)
+    project(context, want, active=names[0] if activate else None, view='world', others=True)
     for o in keep:                                  # objects that are not pieces', kept as they were
         if _alive(o) and _kind(o) is None:
             _set(o, True)
@@ -493,6 +664,7 @@ def _remember(context):
     vl = context.view_layer
     act = vl.objects.active
     _seen['objs'] = ([o.name for o in objects(context)], act.name if act is not None else None)
+    _seen['membership'] = tuple(ob.as_pointer() for ob in vl.objects)
     from . import tool_tab as TT
     TT.acknowledge_selection(context)
 
@@ -531,15 +703,15 @@ def _signature(context):
 def _owner(context):
     from . import store
     text = store.text(context)
-    return [context.scene.as_pointer(), context.view_layer.as_pointer(), text.as_pointer() if text else 0]
+    return [context.scene.session_uid, view_layer_key(context), text.session_uid if text else 0]
 
 
 @persistent
 def _cancel_pending(*_args):
     _pending.clear()
     _pending_owner.clear()
-    _seen.update(sig=None, op=None)
-    _last.update(snap=None, ids=[])
+    _seen.update(sig=None, op=None, membership=None)
+    _last.update(snap=None, ids=[], lead=None)
     _state_owner[0] = None
     if bpy.app.timers.is_registered(_lead_clicked):
         bpy.app.timers.unregister(_lead_clicked)

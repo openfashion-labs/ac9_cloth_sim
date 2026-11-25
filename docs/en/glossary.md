@@ -22,7 +22,7 @@ These are the terms used in this guide and on screen. Each term is listed under 
 | **Slash and Spread** (切り開き) | An operation that cuts a piece open along an internal line and spreads it (flare, gathers). |
 | **Pair** (ペア) | Two pieces that are left-right symmetric. When you fix one, the other is fixed in a mirrored shape. |
 | **Fold** (折り) | Making the cloth into a folded shape at an internal line. You set mountain or valley fold and the angle. |
-| **Piece Roles** (ピースの役割) | Roles such as body, collar, and sleeve. They are used for the sewing order. |
+| Piece Roles | Experimental labels used by Phase Sim. Not required for normal Simulate. [Details](features/roles.md) |
 
 ## Placing and dressing
 
@@ -31,10 +31,11 @@ These are the terms used in this guide and on screen. Each term is listed under 
 | **Body** (体) | The avatar body mesh the garment is dressed on. |
 | Guide (**Detect Guides**, ガイド検出) | Cylinders fitted over the torso, neck, arms, and legs of the body. They are the reference for placing pieces. |
 | Flat pattern (平らな型紙) | The pieces laid out on the floor. The shape right after loading or drawing. |
-| Placed shape (**Place**, 配置) | Pieces placed on the guides. The simulation starts from this shape. |
+| Placed Shape (配置した形) | The reference shape made by **Place** on a guide or flat target, before free hand moves and vertex edits. |
+| Adjusted Shape (調整した形) | The shape after hand moves, vertex edits, folds, and other preparation. Without adjustments, it coincides with the Placed Shape. |
 | Dressed garment (結果の「**AC9 Garment**」, AC9 服) | The garment after dressing (the object `AC9_Garment_<garment name>`). It appears in the result of **AC9 Garment**. |
 | Simulation (シミュレーション) | The physics calculation of cloth motion. It is computed with NVIDIA's Newton. |
-| Phase (段) | One section within **Live Sim**. It goes through the phases in order, such as a phase that closes the seams and a phase that applies gravity to drape the cloth. |
+| Phase (段) | One section within **Simulate**. It goes through the phases in order, such as a phase that closes the seams and a phase that applies gravity to drape the cloth. |
 | Frame (コマ) | One image of the progress. You can play them back in the Timeline. |
 | Progress (cache) (経過、**Delete Cache**) | The record of the simulation's frames. It is stored in a folder next to the saved .blend. |
 | Piece state (ピースの状態) | **Active**, **Freeze**, **Inactive**, **Off**. They decide whether a piece moves, whether it collides with other cloth, and whether its seams are used. |

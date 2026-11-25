@@ -147,7 +147,7 @@ class PlacedThickness(unittest.TestCase):
         props = self.ctx.scene.ac9_cloth_sim
         props.thickness_side = 'OUTSIDE'
         self.assertEqual(self.single.modifiers[PLV.THICK_MOD].offset, 1.0)
-        props.show_thickness = False                         # the update callback refreshes the placed shapes
+        props.show_thickness = False                         # the update callback refreshes the adjusted shapes
         self.assertIsNone(self.single.modifiers.get(PLV.THICK_MOD))
         self.assertIsNone(self.pair.modifiers.get(PLV.THICK_MOD))
         props.show_thickness = True

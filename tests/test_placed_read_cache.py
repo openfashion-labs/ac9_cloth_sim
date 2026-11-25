@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The placed shapes' draw caches: a placed object is read again only when what it depends on changed (its geometry
+"""The adjusted shapes' draw caches: a placed object is read again only when what it depends on changed (its geometry
 epoch from the depsgraph handler, its matrix, its tags, its modifiers' switches), and the seam weights are kept by the
 layout they were made from, not by the mesh datablock (a pair's half clicked swaps the mesh for its mirrored copy:
 the seams were recomputed every time, 1.3 s with the whole-read of every mesh per redraw).

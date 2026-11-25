@@ -16,7 +16,12 @@ TOKEN_KEY = 'native_runtime_token'
 DESCRIPTOR = 'native_runtime.json'
 MARKER = 'owner.json'
 KNOWN_FILES = frozenset((MARKER, 'worker.lock', 'console.txt', 'progress.txt', 'progress_tmp.txt',
-                         'live.npy', 'live_tmp.npy', 'grab.json', 'params.json'))
+                         'live.npy', 'live_tmp.npy', 'grab.json', 'params.json',
+                         # the pieces held while a re-placed piece is sewn on (newton_vbd _write_held)
+                         'held.json', 'held_tmp.json',
+                         # the add-on writes these two through a temporary file (dress.py: grab and params); one
+                         # left by a Blender that stopped mid-write must not make the runtime look foreign
+                         'grab.json.tmp', 'params.json.tmp'))
 
 
 @contextmanager
@@ -44,8 +49,8 @@ def _stage_claim(stage):
                 fcntl.flock(claim.fileno(), fcntl.LOCK_UN)
 
 
-def _base():
-    return Path(tempfile.gettempdir()).resolve() / 'ac9_native_runtime'
+def _base(temp_root=None):
+    return Path(temp_root or tempfile.gettempdir()).resolve() / 'ac9_native_runtime'
 
 
 def _canonical(path):
@@ -68,12 +73,12 @@ def _write(path, data):
             temporary.unlink()
 
 
-def _validate(stage, directory, token, *, require_current=True):
+def _validate(stage, directory, token, *, require_current=True, base=None):
     stage = Path(stage).resolve()
     directory = Path(directory).resolve()
     if not isinstance(token, str) or re.fullmatch(r'[0-9a-f]{32}', token) is None:
         raise ValueError('Invalid Native runtime token')
-    if directory.parent != _base() or directory.name != token:
+    if directory.parent != (Path(base) if base is not None else _base()) or directory.name != token:
         raise ValueError('Native runtime directory is outside its owned cache')
     marker = _read(directory / MARKER)
     if marker.get('version') != 1 or marker.get('token') != token or marker.get('stage') != _canonical(stage):
@@ -85,13 +90,13 @@ def _validate(stage, directory, token, *, require_current=True):
     return marker
 
 
-def _status(stage, directory, token, **fields):
+def _status(stage, directory, token, *, base=None, **fields):
     with _stage_claim(stage):
-        return _status_claimed(stage, directory, token, **fields)
+        return _status_claimed(stage, directory, token, base=base, **fields)
 
 
-def _status_claimed(stage, directory, token, **fields):
-    marker = _validate(stage, directory, token, require_current=False)
+def _status_claimed(stage, directory, token, *, base=None, **fields):
+    marker = _validate(stage, directory, token, require_current=False, base=base)
     marker.update(fields)
     _write(directory / MARKER, marker)
     descriptor = _read(stage / DESCRIPTOR) if (stage / DESCRIPTOR).is_file() else {}
@@ -102,13 +107,14 @@ def _status_claimed(stage, directory, token, **fields):
 
 class RuntimeOwner:
     """Created by run entry, after Prepare; never by a read query."""
-    def __init__(self, stage, config):
+    def __init__(self, stage, config, *, temp_root=None):
         if config.get('native_three') is not True or config.get('fast_live'):
             raise ValueError('Native runtime I/O requires the isolated Native route')
         self.stage = Path(stage).resolve()
         self.stage.mkdir(exist_ok=True)
         self.token = uuid.uuid4().hex
-        self.directory = _base() / self.token
+        self.base = _base(temp_root) if temp_root is not None else _base()
+        self.directory = self.base / self.token
         self.controls = {}
         try:
             with _stage_claim(self.stage):
@@ -142,10 +148,10 @@ class RuntimeOwner:
 
     def abort_before_launch(self):
         """Caller must have not launched a worker; no reader has been published."""
-        marker = _validate(self.stage, self.directory, self.token, require_current=False)
+        marker = _validate(self.stage, self.directory, self.token, require_current=False, base=self.base)
         if marker.get('phase') not in ('allocated', 'retained') or marker.get('worker_pid') or (self.directory / 'worker.lock').exists():
             raise ValueError('A started Native runtime cannot be aborted as unlaunched')
-        _status(self.stage, self.directory, self.token, phase='aborted')
+        _status(self.stage, self.directory, self.token, base=self.base, phase='aborted')
         return self.release(readers_released=True)
 
     def release(self, *, readers_released=False, preserve=False):
@@ -155,7 +161,7 @@ class RuntimeOwner:
             return self._release_claimed(preserve)
 
     def _release_claimed(self, preserve):
-        if self.directory.parent != _base() or self.directory.name != self.token:
+        if self.directory.parent != self.base or self.directory.name != self.token:
             raise ValueError('Unsafe Native runtime cleanup target')
         descriptor = _read(self.stage / DESCRIPTOR) if (self.stage / DESCRIPTOR).is_file() else {}
         current = (descriptor.get('token') == self.token and descriptor.get('stage') == _canonical(self.stage)
@@ -176,7 +182,7 @@ class RuntimeOwner:
                 descriptor.update(phase='retired'); _write(self.stage / DESCRIPTOR, descriptor)
             return True
         if (self.directory / MARKER).exists():
-            marker = _validate(self.stage, self.directory, self.token, require_current=False)
+            marker = _validate(self.stage, self.directory, self.token, require_current=False, base=self.base)
         elif backup is not None:
             marker = backup
         elif current and descriptor.get('phase') == 'cleanup_pending':
@@ -190,7 +196,7 @@ class RuntimeOwner:
         files = list(self.directory.iterdir())
         if any(not path.is_file() or path.name not in KNOWN_FILES for path in files):
             if (self.directory / MARKER).exists():
-                _status_claimed(self.stage, self.directory, self.token, phase='retained', reason='Unexpected cache file')
+                _status_claimed(self.stage, self.directory, self.token, base=self.base, phase='retained', reason='Unexpected cache file')
             return False
         marker.update(phase='cleanup_pending')
         _write(self.directory / MARKER, marker)

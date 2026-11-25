@@ -9,7 +9,8 @@ class ProcessTreeTests(unittest.TestCase):
   self.temp=tempfile.TemporaryDirectory(prefix='ac9_job_tree_test_');self.root=Path(self.temp.name)
   self.script=self.root/'parent.py';self.status=self.root/'child.json'
   solver=Path(__file__).resolve().parents[1]/'solver'
-  child="import os,json,sys;from pathlib import Path;Path(sys.argv[1]).write_text(json.dumps(dict(pid=os.getpid(),ppid=os.getppid())));sys.stdin.readline()"
+  # written aside and renamed: the file appears whole (an empty read under load made setUp fail, 2026-11-24)
+  child="import os,json,sys;from pathlib import Path;t=Path(sys.argv[1]+'.tmp');t.write_text(json.dumps(dict(pid=os.getpid(),ppid=os.getppid())));os.replace(t,sys.argv[1]);sys.stdin.readline()"
   self.script.write_text("import sys,subprocess\nsys.path.insert(0,"+repr(str(solver))+")\nfrom process_tree import join_owned_job\njoin_owned_job()\np=subprocess.Popen([sys.executable,'-c',"+repr(child)+",sys.argv[1]])\nraise SystemExit(p.wait())\n",encoding='utf8')
   self.p=OwnedProcess([sys.executable,str(self.script),str(self.status)],stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
   until=time.monotonic()+5

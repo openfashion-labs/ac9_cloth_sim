@@ -59,11 +59,11 @@ Blender's move and rotate gizmo sits at the average of the origins of the object
 that view** (with the default Median Point pivot).
 
 AC9 marks the flat pattern object of every picked piece. A flat pattern object's origin is not on its piece: it is
-one point shared by every piece. So **when one 3D view shows both the flat pattern and the placed shapes**, the gizmo
+one point shared by every piece. So **when one 3D view shows both the flat pattern and the adjusted shapes**, the gizmo
 shows up in the empty space between the placed piece and the pattern.
 
 To avoid it, work in the **Work Screen** (**Setup**). Its 3D view does not show the flat pattern, and its pattern view
-does not show the placed shapes or the dressed garment. Objects a view does not show are not in the average, so the
+does not show the adjusted shapes or the dressed garment. Objects a view does not show are not in the average, so the
 gizmo sits on the piece you are looking at.
 
 Pairs differ in one more way:

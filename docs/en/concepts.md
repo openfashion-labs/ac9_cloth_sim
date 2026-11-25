@@ -28,32 +28,31 @@ Everything about one garment (the pattern shapes, seams, placement, fold lines, 
 | `AC9_Guide_<garment name>` | The garment you pass to Cloth Retopo (made with "Send to AC9 Cloth Retopo") |
 | Text `AC9_ClothSim_Log` | The simulation log |
 
-## A piece's three shapes, and the three "go back" buttons
+## A piece's four shapes, and the three "go back" buttons
 
-Each piece has three shapes.
+We distinguish four stages of a piece. Without adjustments, its Placed Shape and Adjusted Shape coincide.
 
 | Shape | Where it is | What you did to get there |
 |---|---|---|
 | **Flat pattern** | On the floor (the middle view of the Work Screen) | Right after loading or drawing |
-| **Placed shape** | In 3D space, around the body or on the ground | The shape set with **Place** and any hand adjustments. The simulation starts from this shape |
-| **Dressed garment** | On the body | After dressing it with **Live Sim** or similar |
+| **Placed Shape** | On a guide, or laid flat at the placement target | The shape made by **Place**, before free hand moves or vertex edits |
+| **Adjusted Shape** | At its adjusted position and shape | The placed shape after hand moves, vertex edits, folds, and other preparation |
+| **Dressed garment** | On the body | After dressing it with **Simulate** or similar |
 
-The **Placement** panel has three buttons that restore different aspects of a piece.
+There are three buttons for going back to an earlier shape, and they differ in how far back they go (they are lined up in the **Placement** panel, nearest first).
 
 | Button | Goes back to | What it throws away |
 |---|---|---|
-| **Back to Placed** | After a simulation: the placed shape used to start that run | The dressed result. Fitting with **Part to Seam** and hand adjustments made before the run are kept |
-| **Back to Guide** | -> the placement on the guide | The dressed result and anything you moved by hand |
+| **Back to Adjusted Shape** | After simulation: the adjusted shape kept at its start. With no result yet: the adjusted shape before pulling toward seams | The dressed result; with no result yet, the seam-fitting effect too. Hand moves, vertex edits, and folds are kept |
+| **Back to Placed Shape** | -> the placed shape rebuilt from the current placement settings, including flat placement | The dressed result and anything you moved by hand |
 | **Back to Flat** | -> flat where it is | The hand edits and the bent shape of the target pieces (their place and turn stay). Patterns and seams are kept |
-
-Before any simulation, **Back to Placed** instead restores the prepared shape from before **Part to Seam**. This differs from the return point after a simulation.
 
 Select pieces and press it to affect only those pieces; press it with nothing selected to affect the whole garment (a confirmation appears for the whole garment).
 Linked mirrored pieces go back together. Even with Back to Flat, the dressed shape of unselected pieces stays.
 
-<!-- figure: Figure 3: a piece's three forms and the three "go back" buttons -->
+<!-- figure: Figure 3: a piece's four forms and the three "go back" buttons -->
 
-When you fix a pattern, by default the placed shape and the dressed garment do not change right away (so that you don't wait at each fix). The next time you press **Live Sim** or another run, the fixes are **carried over to the placed shape and the dressed garment together** (no physics is calculated for that) and the run settles them. To see the 3D shape after every fix, turn on **3D Follows Edits** under **AC9 Run** in the Tool tab (each fix then takes a moment). **Update 3D** carries everything over at once.
+When you fix a pattern, by default the adjusted shape and the dressed garment do not change right away (so that you don't wait at each fix). The next time you press **Simulate** or another run, the fixes are **carried over to the adjusted shape and the dressed garment together** (no physics is calculated for that) and the run settles them. To see the 3D shape after every fix, turn on **3D Follows Edits** under **AC9 Run** in the Tool tab (each fix then takes a moment). **Update 3D** carries everything over at once.
 
 ## Garments and pieces
 
@@ -79,16 +78,16 @@ When you fix a pattern, by default the placed shape and the dressed garment do n
 
 | Button | What it does | History frames | How to stop |
 |---|---|---|---|
-| **Live Sim** | Sews from the placed shape (from the current shape once dressed) and keeps running until you stop it. You can pinch the cloth with **Ctrl+drag** | Not kept (last shape only) | Press the button again or **Esc** |
+| **Simulate** | Sews from the adjusted shape (from the current shape once dressed) and keeps running until you stop it. You can pinch the cloth with **Ctrl+drag** | Depends on recording settings and range ([Recording progress](features/run.md#recording-progress)) | Press the button again or **Esc** |
 
-**Live Sim** is both how you dress the garment and how you settle it after fixing. It doesn't stop by itself, so stop it once the garment has settled. With gravity enabled, normal Live Sim first sews placed pieces without gravity and then turns gravity on. You can also switch **Gravity** manually while it runs.
+**Simulate** is both how you dress the garment and how you settle it after fixing. It doesn't stop by itself, so stop it once the garment has settled. **Gravity** can be switched while it runs. To close the seams first, turn gravity off and run, then turn gravity on once they are closed.
 
-**Phase Sim**, which sews step by step and stops by itself, and **Local Sim**, which moves only the selected pieces, appear only when **Experimental Features** is turned on in the add-on preferences (see "Dress (run)").
+**Phase Sim**, which sews step by step and stops by itself, and the piece roles appear only when **Experimental Features** is turned on in the add-on preferences (see "Dress (run)").
 
 ### Continuing from the current shape
 
-- The second and later **Live Sim** runs, "Send to AC9 Cloth Retopo", and measuring the garment all use the garment's current shape. While the history frames are being played back, they use **the frame shown on screen**. Before you press, check that it is the last frame (**Shift+Right Arrow** jumps to the last frame).
-- To fix the shape of a middle frame by hand, press **Fix by Hand** on that frame. That frame becomes the garment's shape itself, and you can fix it in Edit Mode or Sculpt Mode. After fixing, press **Live Sim** and it continues from the fixed shape.
+- The second and later **Simulate** runs, "Send to AC9 Cloth Retopo", and measuring the garment all use the garment's current shape. While the history frames are being played back, they use **the frame shown on screen**. Before you press, check that it is the last frame (**Shift+Right Arrow** jumps to the last frame).
+- To fix the shape of a middle frame by hand, press **Fix by Hand** on that frame. That frame becomes the garment's shape itself, and you can fix it in Edit Mode or Sculpt Mode. After fixing, press **Simulate** and it continues from the fixed shape.
 
 <!-- figure: Figure 6: the flow of the calculation -->
 
@@ -107,5 +106,5 @@ When you fix a pattern, by default the placed shape and the dressed garment do n
 ## Reading the results
 
 - **Even with the same settings, the result changes a little each time you calculate.** Don't judge good or bad from a single result.
-- Red paint marks "candidates for a problem" (places inside the body, places where cloth crosses itself, places that haven't settled, and so on). It doesn't automatically mean the result is bad.
-- The setting that watches for problems (**Watch for Anomalies**) is off by default. Turn it on before **Live Sim**.
+- Distinguish confirmed red crossings from yellow candidates. No red marks alone do not prove a good result.
+- Run **Diagnose** for the current shape. Read its target, counts and unchecked items, and diagnose again after editing. Current diagnosis and past run records are separate; see [Diagnosis](features/placement.md).

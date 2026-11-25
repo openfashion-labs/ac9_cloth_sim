@@ -32,14 +32,17 @@ Hold it from **Edit Seams** in the **Pattern** panel (or from the tool column on
 - While you hold **Edit Seams**, the internal lines of all pieces also appear thin (a guide for lining up the ends of seams).
 - Drag the end (white dot) of a selected seam to change its section. It moves along outlines and internal lines and snaps to corners, notches, and the ends of other seams (Ctrl turns snapping off).
 - The two ends of the selected seam are joined with a dotted line, and the lengths of both sides and their difference are shown.
-- **M**: moves the side under the cursor to another place (click the destination; **F** flips the direction). A moved spot counts as newly sewn on the next **Live Sim**.
+- **M**: moves the side under the cursor to another place (click the destination; **F** flips the direction). A moved spot counts as newly sewn on the next **Simulate**.
 - **N**: places a notch and its partner. **Ctrl+N** places just one side. **X** or **Delete**: deletes the selected seam.
 - To undo: Ctrl+Z.
 
 ## Add Seam and Add Seam (M:N)
 
-- **Add Seam**: click a start and end point on one piece's outline, then click a start and end point on the partner piece (from the same end). The four points show the lengths of both sides and the difference; look it over and press Enter (or click once more) to add it. Clicking in the middle of an edge takes that whole edge (Ctrl+click for a point in the middle). Points snap to corners and notches, so you can sew from notch to notch. If a section is taken running the wrong way, press **F** to reverse the direction. Backspace steps back one, and Esc or right-click cancels. Seams you add are named "U1", "U2", and so on.
-- **Add Seam (M:N)** (called **Add M:N** in the **Pattern** panel): adds a seam where one side is made of several sections. Click a start and end point for each section on side A, then press Enter to move to the other side. Do the same on side B and press Enter to add it. Both sides are divided by the fraction of their joined length and go in as a bundle of one-to-one seams (the same group).
+- Select **One Edge** or **Two Points** in the **Tool Header** at the top of the viewport. The Tool tab on the right shows attributes of the selected item.
+- **One Edge**: click the highlighted edge. Outlines and internal rectangles use the same operation. **Two Points**: click the start and end anywhere on the line. The selection mode stays the same for sides A and B.
+- With the magnet on, points snap to corners and notches. Holding Ctrl temporarily inverts snapping while still picking the line. Internal rectangles offer all four corners. If an old line has no identifiable edges, the tool asks you to use Two Points instead of silently selecting the whole loop.
+- **Add Seam**: select side A, then side B from the matching end. Check their lengths and difference, then press Enter or click again to confirm. **F** changes the direction around a loop. Backspace undoes one edge selection or point input; Esc or right-click cancels. No seam is stored before confirmation. Added seams are named "U1", "U2", and so on.
+- **Add Seam (M:N)** (called **Add M:N** in the **Pattern** panel): uses the same selection and snapping rules. Add the required edges or sections on side A, finish each section, then press Enter to move to side B. Add the sections on B and press Enter to confirm. Both sides are divided by the fraction of their joined length and stored as a group of one-to-one seams.
 
 ## Settings for the selected seam (AC9 Seam)
 
@@ -50,7 +53,10 @@ Hold it from **Edit Seams** in the **Pattern** panel (or from the tool column on
 - **Off** or **On**: don't sew / sew that seam.
 - **Confirm**: marks it as checked (the warning goes away). Only appears on seams that have a warning.
 - **Delete**: deletes the seam.
-- **Fold (deg)**: the angle the two pieces keep across the seam (+ is a mountain fold, 0 means none). When you change it, the placed shape folds right away. Choose the piece that turns with **Turns**. Seams that continue in a straight line get the same angle. When it can't fold, the reason appears.
+- **Fold Angle** and **Direction**: the angle the two pieces keep across the seam (0 means none), and whether it is a **Mountain** or a **Valley** fold, seen from the face of the piece that turns. When you change them, the adjusted shape folds right away. Choose the piece that turns with **Turns**. Seams that continue in a straight line get the same angle. When it can't fold, the reason appears.
+
+See the [fold timing table](fold-roles.md#when-settings-apply) for how angle, direction and Turns affect the adjusted shape and a running simulation.
+
 - **Pull**: how the seam pulls the pieces together. **Straight**, or **Round** (passes around a body part; pick the part with **Part**).
 
 ## Seam lengths and notches (Lengths & Notches)

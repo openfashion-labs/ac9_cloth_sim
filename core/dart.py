@@ -339,12 +339,8 @@ def _split_seams_at(spec, name, e_in, e_out, gone=0.0, split_map=None):
             uo = u * L_o / max(L_k - gone, 1e-9)
             so = sm[o]
             if 'line' in so:
-                Lline = S.polyline_len(next(it for it in D.piece(spec, so['piece'])['internals']
-                                           if it['id'] == so['line'])['pts'])
-                sgn = 1.0 if so['to'] >= so['from'] else -1.0
-                mo = round(so['from'] + sgn * uo / max(Lline, 1e-9), 6)
-                o1 = dict(so, to=mo)
-                o2 = dict(so, **{'from': mo})
+                from .line_track import split_side
+                o1, o2 = split_side(so, uo / max(L_o, 1e-9))
             else:
                 mo = list(D.notch_at_arc(spec, so, uo))
                 mo[1] = round(float(mo[1]), 6)
@@ -615,6 +611,15 @@ def _arcs(spec, name, dt, eq, tq):
 
 
 def move_dart(spec, name, seam_id, eq, tq, side='auto', twins=True, mode='pivot', true=True, apex_follows=False):
+    """Publish all mirror moves and their material maps together, or leave the spec untouched."""
+    planned = copy.deepcopy(spec)
+    result = _move_dart_mutating(planned, name, seam_id, eq, tq, side, twins, mode, true, apex_follows)
+    spec.update(planned)
+    return result
+
+
+def _move_dart_mutating(spec, name, seam_id, eq, tq, side='auto', twins=True, mode='pivot', true=True,
+                       apex_follows=False, true_onto=1):
     """Move dart `seam_id` of piece `name` to the point (eq, tq) of its outline by pivoting about its apex: the outline
     between the dart and the new place turns by the dart's angle (the dart closes where it was and opens at the new
     place: same apex, same angle). side: 'after' turns the part after the dart, 'before' the part before it, 'short'
@@ -661,16 +666,11 @@ def move_dart(spec, name, seam_id, eq, tq, side='auto', twins=True, mode='pivot'
     if mode == 'shift':
         same = (lambda P: np.asarray(P, float).reshape(-1, 2))     # nothing turns: every point stays
         out, maps, turned = {name: _shift_one(spec, name, seam_id, eq, tq, apex_follows)}, {name: same}, 0
-        if twin:
-            out[twin[0]], maps[twin[0]] = _shift_one(spec, *twin[:4], apex_follows), same
     else:
         sid, turned, fn = _move_one(spec, name, seam_id, eq, tq, side)
         out, maps = {name: sid}, {name: fn}
-        if twin:
-            sid_b, _, fn_b = _move_one(spec, *twin)
-            out[twin[0]], maps[twin[0]] = sid_b, fn_b
     out = {nm: _keep_id(spec, olds[nm], sd) for nm, sd in out.items()}
-    trues = [(nm, sd, 1 if i == 0 else 2) for i, (nm, sd) in enumerate(out.items())]
+    trues = [(name, out[name], true_onto)]
     if mirror:
         ms, q, old_m = mirror
         e2, t2 = D.nearest_on_outline(D.piece(spec, name), q)
@@ -680,10 +680,16 @@ def move_dart(spec, name, seam_id, eq, tq, side='auto', twins=True, mode='pivot'
             sm, _, fn2 = _move_one(spec, name, ms, e2, t2, {'after': 'before', 'before': 'after'}[side])
             fn1 = maps[name]
             maps[name] = (lambda P, fn1=fn1, fn2=fn2: fn1(fn2(P)))     # new -> old through both moves
-        trues.append((name, _keep_id(spec, old_m, sm), 2))
+        trues.append((name, _keep_id(spec, old_m, sm), 3 - true_onto))
     if true:
         for nm, sd, onto in trues:
             _true_quiet(spec, nm, sd, onto=onto)
+    if twin:
+        more, _, _, other_maps = _move_dart_mutating(spec, *twin[:4], side=twin[4], twins=False,
+                                                    mode=mode, true=true, apex_follows=apex_follows,
+                                                    true_onto=3 - true_onto)
+        out.update(more)
+        maps.update(other_maps)
     return out, side, turned, maps
 
 

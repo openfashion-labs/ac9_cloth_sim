@@ -55,11 +55,26 @@ class StartCheck(unittest.TestCase):
         res = CS.compare(screen, ['A'], self.flat[:4], [0], self.X[:4], _mapper)
         self.assertTrue(res['A']['checked'])
 
-    def test_a_shape_without_triangles_of_another_size_is_not_compared(self):
+    def test_a_shape_without_triangles_of_another_size_is_said_not_compared(self):
         V, T, X = _square()
         screen = {'A': ('mirrored', (V[:3], T[:0], X[:3]), '')}
         res = CS.compare(screen, ['A'], self.flat[:4], [0], self.X[:4], _mapper)
-        self.assertFalse(res['A']['checked'])
+        self.assertTrue(res['A']['checked'])
+        self.assertEqual(res['A']['over'], [0, 1, 2, 3])
+        self.assertIn("was not compared", CS.lines(res)[1][0])
+
+    def test_a_shape_on_screen_not_read_is_red_not_silent(self):
+        # a garment whose mesh did not fit its job: the result pieces could not be read, and the check said nothing
+        # while a collar started 114 mm from where it was shown (2026-11-23)
+        screen = {'A': ('result', None, "the garment's mesh does not fit its job"), 'B': ('rule', None, '')}
+        res = CS.compare(screen, ['A', 'B'], self.flat, [0, 4], self.X, _mapper)
+        self.assertTrue(res['A']['checked'])
+        self.assertEqual(res['A']['over'], [0, 1, 2, 3])
+        self.assertEqual(len(res['A']['over_mm']), 4)
+        self.assertFalse(res['B']['checked'])
+        head, off = CS.lines(res)
+        self.assertIn("1 do NOT", head)
+        self.assertIn("does not fit its job", off[0])
 
     def test_a_hand_move_lost_to_the_rule_is_said(self):
         screen = {'A': ('rule', None, '', 'hand move'), 'B': ('rule', None, '', '')}

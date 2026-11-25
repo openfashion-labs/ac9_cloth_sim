@@ -7,7 +7,7 @@ slug: /
 # AC9 Cloth Sim Manual
 
 This is the manual for an add-on that loads garment patterns in Blender, sews them together, puts them on an avatar, and lets you check how the cloth settles.
-The current version is **0.3.0**. See [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) and [CHANGELOG](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) for the development stage and changes in each version. Features are missing, and the screens and steps will keep changing.
+It is currently an **alpha version (0.4.0)**. Features are missing, and the screens and steps will keep changing.
 
 ## Reading order
 

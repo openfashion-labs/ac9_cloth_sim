@@ -31,6 +31,7 @@ import bpy
 import numpy as np
 from mathutils import Matrix
 
+from . import garment_owner as GO
 from . import placed_view as PLV
 from . import store
 from .core import spec as S
@@ -97,7 +98,7 @@ def shapes(context, spec, *, preparation=None):
         return None, str(exc)
     X, took, _ = D._hand_placed(spec, res['pat'], list(res['X']))
     X = D._mirror_hand(X, took, res['pairs'], spec, res['pat']['names'])
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     job = D.job_or_from_mesh(context, g) if D.has_result(g) else None   # the job folder lost: made from the garment
     if job:
         try:
@@ -116,12 +117,10 @@ def _with_guide(res):
 
 def on_garment(spec, names):
     """Of `names`, the pieces that are part of the dressed garment now (in its result and not Reset)."""
-    from . import dress as D
-    g = bpy.data.objects.get(D.garment_name(spec))
-    if not D.has_result(g):
-        return []
-    done, back = D.garment_pieces(g), set(D.reset_pieces(g))
-    return [n for n in names if n in done and n not in back]
+    from . import control_basis as CB
+    on, g = CB.on_garment(bpy.context, spec)
+    result = CB.result_names(g)
+    return [n for n in names if n in on and n in result]
 
 
 @PB.prepared_consumer
@@ -130,7 +129,7 @@ def objects_for(context, spec, names, *, preparation=None):
     of them (as Show Placed does). Returns the spec as stored after."""
     from . import dress as D
     from . import placement as PL
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     want = set(PL.with_pairs(spec, list(names)))
     have = set(PLV.objects(spec))
     if not D.has_result(g):
@@ -149,11 +148,11 @@ def objects_for(context, spec, names, *, preparation=None):
 
 
 def mark_on_next_run(spec, names, *, preparation=None):
-    """On a dressed garment: `names` (and their pairs) are sewn on from their placed shapes by the next Simulate,
+    """On a dressed garment: `names` (and their pairs) are sewn on from their adjusted shapes by the next Simulate,
     as pieces Reset are (dress.RESET_PROP)."""
     from . import dress as D
     from . import placement as PL
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     if not D.has_result(g):
         return
     D.set_shown_as_placed(g, spec, set(D.reset_pieces(g)) | set(PL.with_pairs(spec, list(names))))
@@ -240,7 +239,7 @@ def place_by_partners(context, spec, piece, targets=None, *, preparation=None):
         store.put(context, old)
         PB.replan_source(preparation)
         return None, str(exc)
-    dressed = D.has_result(bpy.data.objects.get(D.garment_name(sp)))
+    dressed = D.has_result(D.garment(sp))
     PLV.build(context, sp, res['pat'], res['tris'], res['X'], res['pairs'],
               only=PL.with_pairs(sp, [piece]) if dressed else None)
     # the shapes as shapes() reads them, kept for the move that follows (it made them a third time: 1 s of 3.4)
@@ -334,7 +333,7 @@ def write_shape(ob, V, T, Y):
     n = len(me.vertices)
     fl, gen = me.attributes.get(PLV.FLAT_ATTR), me.attributes.get(PLV.GEN_ATTR)
     if fl is None or gen is None or len(gen.data) != n or n == 0:
-        return tx("{0}'s placed object has lost its layout points: Back to Guide first", ob.get(PLV.PROP))
+        return tx("{0}'s placed object has lost its layout points: Back to Placed Shape first", ob.get(PLV.PROP))
     Fp = np.empty(n * 2)
     fl.data.foreach_get('vector', Fp)
     Fp = Fp.reshape(-1, 2)
@@ -405,7 +404,7 @@ def move(context, spec, piece, got=None, bvh=None, targets=None, *, preparation=
                 continue
             result = PF.refold(context, piece, line, float(f['deg']), preparation=preparation)
             if result is None or not result[0]:
-                return PB.refuse(preparation, result[1] if result else tx("{0} has no placed shape: Place it first", piece))
+                return PB.refuse(preparation, result[1] if result else tx("{0} has no adjusted shape: Place it first", piece))
             spec = store.get(context)[0]
             got = None
         ok, msg = _move_prepared(context, spec, piece, got, bvh, targets, preparation=preparation)
@@ -436,7 +435,7 @@ def _move_prepared(context, spec, piece, got=None, bvh=None, targets=None, *, pr
         twin = next((o for o in PLV.objects(spec).values() if o.get(PLV.TWIN_PROP) == piece), None)
         if twin is not None:
             return PB.refuse(preparation, tx("{0} follows {1} (a pair): Part to Seam on {1}, both move", piece, twin[PLV.PROP]))
-        return PB.refuse(preparation, tx("{0} has no placed shape: Place it first", piece))
+        return PB.refuse(preparation, tx("{0} has no adjusted shape: Place it first", piece))
     if got is None:
         got, why = shapes(context, spec, preparation=preparation)
         if got is None:
@@ -503,9 +502,9 @@ def _move_prepared(context, spec, piece, got=None, bvh=None, targets=None, *, pr
                 "or through cloth (inside the body {3} -> {4}, through other cloth {5} -> {6}). Choose fewer targets, "
                 "or move it nearer by hand", piece, kept, ", ".join(p['partners']), now['inside'], num['inside'],
                 now_cross, num['cross']))
-    # the partners fitted to as the dressed garment shows them (no placed object of their own): Back to Placed after
-    # a simulation says when one of them goes back to its placed shape and leaves this piece off its seams
-    on_garment_now = D.has_result(bpy.data.objects.get(D.garment_name(spec)))
+    # the partners fitted to as the dressed garment shows them (no placed object of their own): Back to Adjusted Shape after
+    # a simulation says when one of them goes back to its adjusted shape and leaves this piece off its seams
+    on_garment_now = D.has_result(D.garment(spec))
     placed_now = set(PLV.objects(spec))
     p = dict(p, X=Y, stretch=_stretch(_edges(T), V, Y),
              dressed=sorted(n for n in p['partners'] if on_garment_now and n not in placed_now))
@@ -521,7 +520,7 @@ def _move_prepared(context, spec, piece, got=None, bvh=None, targets=None, *, pr
         msg = tx("{0} kept its shape, carried near {1}: sewn on, it would stretch {2:.1f} x. Gap {3}, the seams "
                  "close while simulating", piece, ", ".join(p['partners']), kept, U.fmt(bpy.context, p['gap'][0]))
     if left:
-        msg += tx("; {0} inside the body, {1} through other cloth: red (Settle, move it with Whole Pieces, or simulate from here)",
+        msg += tx("; {0} inside the body, {1} through other cloth; use Diagnose to locate them",
                   num['inside'], num['cross'])
     # a piece moved to this one before goes on its old place: say so (not followed)
     after = sorted(o[PLV.PROP] for o in {o.name: o for o in PLV.objects(spec).values()}.values()
@@ -561,52 +560,40 @@ class AC9_OT_SimMoveToSeam(bpy.types.Operator):
         from . import dress as D
         from . import placement as PL
         if D.AC9_OT_SimDress.running():
-            cls.poll_message_set("Not while a simulation runs")
+            cls.poll_message_set(tx("Not while a simulation runs"))
             return False
         # why it is grey, on the button's tooltip (user 2026-10-22: could not tell why it could not be pressed)
         sel = PL.selected_pieces(context)
         if not sel:
-            cls.poll_message_set("Select a piece first (on the pattern)")
+            cls.poll_message_set(tx("Select a piece first (on the pattern)"))
             return False
         # the selected piece's own state only, not its partners' (user 2026-10-24)
         worn = on_garment(spec, sel)
         if worn and len(worn) == len(sel):
-            cls.poll_message_set(tx("{0} is part of the dressed garment: Back to Placed it first (Placement)",
+            cls.poll_message_set(tx("{0} is part of the dressed garment: Back to Adjusted Shape it first (Placement)",
                                     ", ".join(worn[:3])))
             return False
         # not placed: placed by the pieces it is sewn to when they are (user 2026-10-22)
         if not any(n in spec['placement'] or sewn_to_placed(spec, n) for n in sel):
-            cls.poll_message_set("The selected piece is not placed: Place it first")
+            cls.poll_message_set(tx("The selected piece is not placed: Place it first"))
             return False
         return True
 
     def execute(self, context, *, preparation=None):
-        import copy
-        from . import placement as PL
         from . import piece_move as PM
+        from .view_state import VisibilityBackup
         if context.mode != 'OBJECT':
             self.report({'WARNING'}, tx("Return to Object Mode before correcting the current shapes"))
             return {'CANCELLED'}
         spec, _ = store.get(context)
-        selected = [ob.name for ob in SEL.objects(context)]
-        active = context.view_layer.objects.active.name if context.view_layer.objects.active else None
+        controls = PM.ControlSelectionBackup(context)
         from . import diagnose as DG
         live = {ob.name: (ob.data.name, tuple(ob.color), ob.hide_viewport, ob.get(DG.PROP))
                 for ob in set(PLV.objects(spec).values())}
         archive_names = {prop: {n: me.name for n, me in getter(spec).items()}
                          for prop, getter in ((PLV.KEEP_PROP, PLV._kept),
                                               (PLV.BEFORE_SEAM_PROP, PLV.before_seam))}
-        collections = set(bpy.data.collections.keys())
-        center = PLV._center_object()
-        center_matrix = center.matrix_world.copy() if center is not None else None
-        handle_state = copy.deepcopy(PM._state)
-        handle_matrices = {ob.name: ob.matrix_world.copy() for ob in PM.handles()}
-        layers = []
-        def remember(layer):
-            layers.append((layer, layer.exclude, layer.hide_viewport, layer.collection.hide_viewport))
-            for child in layer.children:
-                remember(child)
-        remember(context.view_layer.layer_collection)
+        visibility = VisibilityBackup(context)
         backup = PLV.PreparedResetBackup(context, spec)
         garment_mesh_name = backup.g.data.name if backup.g is not None else None
         groups = {ob.name: ([(g.name, g.lock_weight) for g in ob.vertex_groups],
@@ -617,7 +604,9 @@ class AC9_OT_SimMoveToSeam(bpy.types.Operator):
             # Group definitions live on the object, while weights live in its
             # mesh. Rebuild definitions before installing the untouched backup
             # mesh, so clearing the current definitions cannot erase old weights.
-            for name, (definitions, active_group) in groups.items():
+            # A canceled preparation has already installed it (dress.preparation): clearing then would empty
+            # the restored mesh's groups (the garment's mask of the pieces put back to placed: they showed twice).
+            for name, (definitions, active_group) in (() if backup._restored else groups.items()):
                 ob = context.scene.objects.get(name)
                 if ob is not None:
                     ob.vertex_groups.clear()
@@ -640,26 +629,15 @@ class AC9_OT_SimMoveToSeam(bpy.types.Operator):
                 for name, me in getter(spec).items():
                     if name in archive_names[prop]:
                         me.name = archive_names[prop][name]
-            if center is not None:
-                center.matrix_world = center_matrix
-            elif not PLV.objects():
-                made_center = PLV._center_object()
-                if made_center is not None:
-                    bpy.data.objects.remove(made_center, do_unlink=True)
-            coll = bpy.data.collections.get(PLV.COLL_NAME)
-            if coll is not None and coll.name not in collections and not coll.objects and not coll.children:
-                bpy.data.collections.remove(coll)
-            for layer, exclude, hidden, collection_hidden in layers:
-                layer.exclude, layer.hide_viewport = exclude, hidden
-                layer.collection.hide_viewport = collection_hidden
-            for name, matrix in handle_matrices.items():
-                ob = context.scene.objects.get(name)
-                if ob is not None:
-                    ob.matrix_world = matrix
-            PM._state.clear()
-            PM._state.update(handle_state)
-            PL.restore_selection(context, selected, active)
+            # PreparedResetBackup owns auxiliary objects and transient collection
+            # cleanup. Reacquire visibility paths after its structural changes.
+            visibility.restore(context)
+            controls.restore(context)
         try:
+            from . import place_targets
+            requested, _targets = place_targets.arguments(self, context)
+            moving, followers = place_targets.resolve_movers(context, spec, requested)
+            backup.isolate_shared_meshes(set(moving + followers))
             with PB.operation(context, owner=preparation, consumer_backup=backup) as preparation:
                 result = self._execute(context, preparation=preparation)
                 if 'CANCELLED' in result:
@@ -690,7 +668,7 @@ class AC9_OT_SimMoveToSeam(bpy.types.Operator):
                  if n in spec['placement'] or sewn_to_placed(spec, n)]
         worn = on_garment(spec, names)
         if worn:
-            self.report({'WARNING'}, tx("{0} is part of the dressed garment: Back to Placed it first (Placement)",
+            self.report({'WARNING'}, tx("{0} is part of the dressed garment: Back to Adjusted Shape it first (Placement)",
                                         ", ".join(worn)))
             names = [n for n in names if n not in worn]
         lines0 = []

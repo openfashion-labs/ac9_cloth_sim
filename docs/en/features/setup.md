@@ -17,7 +17,7 @@ What you do in this panel: bring a pattern into Blender, split garments apart an
 
 - Purpose: Load a pattern from a `BOM.xml` written by 3D garment software.
 - Prerequisite: You have a `BOM.xml` file.
-- Steps: Press **Import BOM** and choose a `BOM.xml`. The 3D garment, placement, and saved placed shapes of the current BOM are discarded. The body, other garments, and calculation results on disk are not deleted. If it fails, the original state is kept.
+- Steps: Press **Import BOM** and choose a `BOM.xml`. The 3D garment, placement, and saved adjusted shapes of the current BOM are discarded. The body, other garments, and calculation results on disk are not deleted. If it fails, the original state is kept.
 - Expected result: The pattern is laid out flat on the floor. The seams contained in the BOM are also loaded and appear in the **Seams** list. The screen shows "○ pieces, ○ seams".
 - When one BOM contains several garments, the pieces are split into groups per garment at import, and the partners of seams are decided within each group (a piece is never sewn to a piece of another garment). Groups whose classification is uncertain are shown in orange.
 - Hole shapes in the BOM (such as the diamond of a dart) are cut out of the piece (there is no cloth there).
@@ -34,7 +34,7 @@ Use this when you want to re-read the seams while keeping the dressed shape. Pre
 - Kept: the dressed shape, placement, piece On/Off and Freeze, fabrics, roles, folds, and manually made seams, garment classification, and names.
 - It updates only when the shapes and references of all pieces match. A parallel shift of the BOM's 2D layout is tolerated, and the current pattern arrangement is kept.
 - If the IDs of pieces, shapes, edges, or internal lines changed, or if a seam that you set by hand or that has references would disappear, nothing is changed and the reason is shown.
-- To settle the updated seams, run Live Sim next.
+- To settle the updated seams, run Simulate next.
 - With a fresh import, other versions of settings that shared the old 3D are also retired under the name "previous". Even if you choose an old version, the old placement and results do not come back.
 
 ## Seams from 3D Drape (FBX)
@@ -76,7 +76,7 @@ Use this when you want to re-read the seams while keeping the dressed shape. Pre
   - Put the garment mesh in the **Mesh** field (an object separate from the body): click it in a 3D view with the eyedropper at the right of the field, or pick it by name. With the field empty, the active object is used.
 - Steps: Put the garment mesh in the **Mesh** field and press **From Mesh**.
 - Expected result: Flat patterns are laid out on the floor and a dressed garment `AC9_Garment_<name>` is created, starting dressed on the body in the shape you modeled. The original mesh is hidden. The screen shows "○ pieces, ○ seams" and the number of points that are inside the body. The places that are inside are painted red.
-- Then press **Live Sim** and the cloth drapes and settles.
+- Then press **Simulate** and the cloth drapes and settles.
 - Limitations: This is the "as built" state; the cloth has not settled. If the UVs have not been unwrapped, it stops with an error saying there are no UVs.
 
 ## Add Avatar
@@ -115,4 +115,4 @@ When seams land on another garment or another piece, first read the FBX exported
 
 ## Display
 
-- **Overlays** (the eye button and the list): Toggles what the add-on draws on screen. The list contains **Seam Lines**, **Seam Lengths**, **Notches**, **Piece Colors**, **Fabric Colors**, **Piece Names**, **Guides**, **Measurements**, and, under **Diagnose**, **Problems** (shows problems the add-on found in red; on by default) and **Stretch** (colors the stretch from the pattern: no color up to 1.05 times, yellow at 1.2 times, red at 1.5 times, and blue for shrinking), and **Face Side** (colors the cloth's face blue and its back red; the face is the side the pattern is seen from; it shows with Thickness on too). There is also **Thickness** (adds cloth thickness to the placed pieces and the dressed garment for looks only; it is not used by the simulation) and the side the thickness is added to (**Inside**, **Center**, **Outside**).
+- **Overlays** (the eye button and list): Toggles seam lines, lengths, notches, piece colors, fabric colors, names, guides, and measurements. **Diagnosis Display** selects one of None, Problem Areas, Stretch, and Face Side. It shares the diagnosis panel's Display setting; changing it does not run diagnosis. Problem Areas shows a current valid diagnosis, while Stretch and Face Side show the displayed shape. Stretch is clear up to 1.05, yellow at 1.2, red at 1.5, and blue when compressed. Face Side is blue on the face and red on the back, including with thickness visible. **Thickness** and its side (**Inside**, **Center**, **Outside**) affect appearance only, not simulation.

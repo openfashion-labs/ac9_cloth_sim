@@ -509,7 +509,7 @@ def snapshot(context, spec, *, preparation=None):
     import bpy
     from . import display_state as DS, placed_view as PV, dress as D
     from .core import spec as S
-    g = context.scene.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     states = DS.snapshot(spec, g)
     out, raw = {}, None
     obs = PV.objects(spec)
@@ -519,7 +519,7 @@ def snapshot(context, spec, *, preparation=None):
         ob = obs[name]
         hs = PV.hand_shape(ob)
         if hs is None:
-            raise ValueError("The placed shape has no pattern correspondence: " + name)
+            raise ValueError("The adjusted shape has no pattern correspondence: " + name)
         V, T, X = hs
         if np.linalg.det(np.asarray(ob.matrix_world)[:3,:3]) < 0:
             T=T[:,::-1]
@@ -684,7 +684,7 @@ def move_selected(context, names, ring_ok=False, *, preparation=None):
                     ob=PV.objects(spec).get(n)
                     hs=PV.hand_shape(ob) if ob is not None else None
                     if hs is None or hs[2].shape!=shapes[n]['X'].shape or not np.allclose(hs[2],shapes[n]['X'],atol=1e-3):
-                        raise ValueError("The saved placed shape differs from the guide: show it first")
+                        raise ValueError("The saved adjusted shape differs from the guide: show it first")
             for n,W,num in plans:
                 row=shapes[n];delta=W[0]-row['X'][0]
                 if row['owner']=='result':

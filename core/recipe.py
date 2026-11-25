@@ -41,6 +41,23 @@ BASE = {"fps": 60, "substeps": 10, "density": 0.14, "tri_ke": 3000.0, "tri_ka": 
 # Jacket bodice, wool (276 g/m2, 18 uN m), 6 mm, 3 runs: hems -7..+14 mm from the reference, 2 cloth crossings.
 C_HEX = 0.75
 FOLD_PRESS = 10.0     # a set-angle fold line's hinges x the cloth's bending (physical() below)
+# The cap on each pattern stitch's pull while sewing without gravity (user 2026-11-22: the sewing speed does not
+# depend on the fabric). The solver raises a capped stitch's rest length to its length - cap / stitch stiffness every
+# frame, so the cap is how far a far seam is reeled in per frame: 0.9 N per mm of mesh edge, 5.4 N on 6 mm = 5.4 mm a
+# frame at the sewing stiffness 1000 N/m. Before, it was the garment's default fabric's (lambda + 2 mu) x 0.1 x h --
+# the same 5.4 N for a 3000 N/m fabric, but 0.504 N for a 280 N/m jersey and 0.027 N for a rib, which reeled a seam
+# 341 mm apart in 0.5 mm a frame (a coat's shoulder still 31 mm open after 600 frames, the garment then dropped under
+# gravity: 16 crossings, 464 points in the body); and pieces with their own fabric were capped by the default's.
+# 5.4 N on the same coat in jersey, poplin and rib: closed in 65-67 frames, no crossing, the sewing stretch max 1.40
+# (jersey, 49 edges over 1.2); 1.5 N was worse (84 crossings while floating 230 frames); 16 N was turned down before
+# (a coat crossed itself). DECISIONS cloth-sim-stitch-cap-constant-2026-11-22,
+# docs/reviews/REVIEW_fable_stitch_cap_fabric_2026-11-22, experiments/claude_stitch_cap_fabric_2026-11-22.
+STITCH_CAP_N_PER_MM = 0.9
+
+
+def stitch_cap_N(h_mm):
+    """The pull cap of one pattern stitch (N) on a mesh of h_mm: the same for every fabric."""
+    return STITCH_CAP_N_PER_MM * h_mm
 
 
 def physical(stages, weight_gsm, bending_uNm, h_mm, mesh_independent=False, membrane=None, kappa_y=None):
@@ -55,7 +72,7 @@ def physical(stages, weight_gsm, bending_uNm, h_mm, mesh_independent=False, memb
     ku, kv, ks = membrane if membrane is not None else (BASE['tri_ke'], BASE['tri_ka'], 29.0)
     kap = FA.bend_hyst() if kappa_y is None else float(kappa_y)
     for _label, cfg in stages:
-        cfg.update(tri_ke=float(ku), tri_ka=float(kv))   # the fabric's stretch (the stitch cap below reads them)
+        cfg.update(tri_ke=float(ku), tri_ka=float(kv))   # the fabric's stretch
         cfg.update(density=weight_gsm / 1000.0, edge_ke=ke, edge_kd=1e-4 * ke, init_xv=True,
                    self_margin=0.0003, self_gap=0.00015)
         if mesh_independent:
@@ -63,7 +80,9 @@ def physical(stages, weight_gsm, bending_uNm, h_mm, mesh_independent=False, memb
         sb = dict(cfg.get('seam_bend') or BASE['seam_bend'])
         sb['ke'] = 2.5 * ke
         if 'fold_ke' in sb:
-            sb['fold_ke'] = ke
+            # a seam's set fold is a pressed crease like a fold line's (FOLD_PRESS): at 1 x the bending, below the
+            # plain seam hinges' 2.5 x, a coat's collar set to 90 deg opened back to standing (ended at 25..39 deg)
+            sb['fold_ke'] = FOLD_PRESS * ke
         cfg['seam_bend'] = sb
         # Coulomb friction in every stage, and a cap on each pattern stitch's pull (2026-10-16, DECISIONS
         # cloth-sim-all-stage-coulomb-2026-10-16). With Newton's friction_epsilon 1e-2 the friction below 10 mm/s is
@@ -78,10 +97,10 @@ def physical(stages, weight_gsm, bending_uNm, h_mm, mesh_independent=False, memb
         cfg['friction_epsilon'] = 1e-4
         if cfg.get('gravity_z', -9.81) == 0.0:
             cfg['friction_epsilon'] = 1e-3
-            cfg['stitch_cap_N'] = (cfg.get('tri_ka', BASE['tri_ka']) + 2.0 * cfg.get('tri_ke', BASE['tri_ke'])) * 0.1 * h_mm * 1e-3
+            cfg['stitch_cap_N'] = stitch_cap_N(h_mm)
         if cfg.get('sew_first'):
             # Live sews without gravity first (solver/newton_vbd.py sew_first): the same cap as the stages without gravity
-            cfg['sew_first'] = dict(cfg['sew_first'], cap_N=(cfg.get('tri_ka', BASE['tri_ka']) + 2.0 * cfg.get('tri_ke', BASE['tri_ke'])) * 0.1 * h_mm * 1e-3)
+            cfg['sew_first'] = dict(cfg['sew_first'], cap_N=stitch_cap_N(h_mm))
         # Orthotropic membrane (user 2026-10-17, DECISIONS cloth-sim-aniso-membrane-first-2026-10-17): stretch along
         # the flat x / y (tri_ke / tri_ka) and the shear apart, after Baraff-Witkin. Shear 29 N/m = cotton shirting,
         # KES G 0.52 gf/(cm deg) x 56.2 (a physical value, not a matched one). The isotropic membrane held shear as stiff as
@@ -221,18 +240,24 @@ def seam_fold_deg(spec, names):
     seam only (+ = mountain seen from outside, as on internal lines). Per seam, not per pair of pieces (DECISIONS
     cloth-sim-seam-fold-2026-10-23): two pieces can share several seams (a back vent's top and the side seam), and
     by the pair the seam not folded got the angle too and a second angle on the same two pieces was dropped."""
-    # the solver's seam hinges have the opposite sign (+ = the turning piece out, the collar turned down): placed
-    # inwards at +30 the shirt's yoke started at -36.5 there and ended at -1.7..-4.3 (2026-10-23)
+    # + = mountain seen from the face of the piece that turns (its winding normal); the solver measures each hinge
+    # from that piece (seam_turn_pieces) and takes rest_deg_seams with the opposite sign (its rest = -value)
     return {str(sm['id']): -deg for sm, deg, _ in S.seam_folds(spec)
+            if sm['a']['piece'] in names and sm['b']['piece'] in names}
+
+
+def seam_turn_pieces(spec, names):
+    """{seam id: the piece that turns} for the folded seams between the given pieces (spec.seam_folds)."""
+    return {str(sm['id']): t for sm, _deg, t in S.seam_folds(spec)
             if sm['a']['piece'] in names and sm['b']['piece'] in names}
 
 
 def _with_seam_folds(base, spec, names):
     sf = seam_fold_deg(spec, names)
     if sf:
-        # the fold hinges at 0.3 x the seam hinges' stiffness: at 1.0 the turned-down collar pulled the shirt's stand
-        # into the neck (6 vertices inside; 0, 0, 0 in three runs at 0.3, the collar down at the back in all, 2026-09-29)
-        base['seam_bend'] = dict(base.get('seam_bend') or BASE['seam_bend'], rest_deg_seams=sf, fold_ke=0.3)
+        # fold_ke here is a placeholder: physical() sets it to FOLD_PRESS x the cloth's bending, as on fold lines
+        base['seam_bend'] = dict(base.get('seam_bend') or BASE['seam_bend'], rest_deg_seams=sf, fold_ke=0.3,
+                                 turn_seams=seam_turn_pieces(spec, names))
 
 
 def frozen(spec, names):
@@ -262,19 +287,32 @@ SEW_RAMP_FRAMES = 60              # Ordinary sewing from the current shape (user
 # gap is under 3 mm, holds the velocity at 0 for 24 frames so the sewing's momentum and stretch go without throwing
 # the garment, then turns the gravity on; the bend hysteresis waits until the garment is quiet (or 600 frames). A
 # Live going on from a sewn result skips all of it (solver/newton_vbd.py sew_first).
-# heavy: while a piece still floats (a collar placed by a garment already sewn), the sewn pieces weigh 10x so the
-# stitches bring the light piece to them rather than lifting them (x30 / x100 stretched them under their own weight)
+# hold: while a piece still floats (a collar placed again on a garment already sewn), the sewn pieces are held still
+# so the stitches bring the piece to them rather than lifting the garment; let go once it is sewn, or when the widest
+# stitch gap has not closed for hold_stall frames (a partner it cannot reach; twice the sewing's own 30-frame stall,
+# so a piece the sewing counts as sewn by its stall rule stays held through relax_frames). Keep hold_stall > 30 + relax_frames (now 54, a margin of 6 frames; lengthening
+# relax_frames must raise it too, tests/test_live_sew_first.py checks it). The scene switch "Freeze Garment While
+# Sewing" turns it off (dress.py): both sides then pull. Weighing the sewn pieces 10x instead still let the garment
+# rise and wrinkle on still test garments.
 LIVE_SEW_FIRST = {'gap_max_mm': 3.0, 'zero_v': True, 'relax_frames': 24, 'quiet_mm': 0.05, 'hyst_after': 600,
-                  'max_frames': 600, 'heavy': 10}
+                  'max_frames': 600, 'hold': True, 'hold_stall': 60}
 # The stitches slow to a stop as they arrive instead of all meeting at full speed (solver stitch_ramp_shape): only
 # where the sewing runs with gravity from the current shape -- Live and Continue's gravity stage. The no-gravity
 # stage that sews pieces added since keeps the linear ramp (its stitch force cap reshapes the pull, untested there).
 SEW_RAMP_SHAPE = 'ease_out'
+# A Live that starts by sewing (from the adjusted shape) first frees what crosses: cloth passing through cloth of
+# another piece loses its cloth contacts (with two rings) and cloth inside the body gets a push out, so the stitches
+# can carry it back through (solver untangle_free / deep_push); only while it still gets fewer crossings, at most 30
+# frames, then the ordinary Live. A Live going on from a sewn garment runs without it (sewing_only). On a test coat
+# whose sleeves crossed each other and the bodice at the start: 714 crossing edges -> 25-51 at frame 300 (391-423
+# without), 300 frames 21.7-22.9 s against 22.8-23.0 s (no measurable cost); freed all the way it ends at 57-110 (the freed cloth makes new crossings at the seams).
+LIVE_UNTANGLE = {'rings': 2, 'seams': True, 'idle': 3, 'flat': 3, 'max_frames': 30, 'sewing_only': True}
+LIVE_DEEP_PUSH = {'cap_mm': 5, 'with_free': True}
 
 
 def live_params(spec, names, gravity, active_pieces=None):
     """What a Live stage takes while it runs (user 2026-10-23, solver live_params): the spec's values the person can
-    change then -- the folds' angles, the seams switched off, the pieces held (Freeze), the whole-piece elastics --
+    change then -- the folds' angles (fold lines' and, user 2026-11-22, seams'), the seams switched off, the pieces held (Freeze), the whole-piece elastics --
     and gravity on / off. The add-on writes it to the job's params.json whenever it changes; the solver eases each
     change in. Changed in the spec, so they stay as the pieces' settings after the run."""
     from . import elastic as EL
@@ -285,6 +323,16 @@ def live_params(spec, names, gravity, active_pieces=None):
             'frozen': sorted(held),
             'strengthen_pieces': S.strengthen_pieces(spec, names),
             'elastic': {e['piece']: e['ratio'] for e in EL.solver_entries(spec, names, []) if 'line' not in e}}
+    # a seam's fold angle / direction (user 2026-11-22), in the solver's sign as seam_fold_deg (rest = -value), and
+    # the piece that turns: the solver changes the seams folded when the run began, measured from the same piece.
+    # A seam let go keeps its fold (Seam On / Off is a separate value)
+    sf = [(sm, deg, t) for sm, deg, t in S.seam_folds(spec, enabled_only=False)
+          if sm['a']['piece'] in names and sm['b']['piece'] in names]
+    result['seam_fold'] = {str(sm['id']): -deg for sm, deg, _ in sf}
+    # only the Turns a person set: the default one follows the other seams' lengths, so switching another seam off
+    # could change it although nobody touched this seam's Turns (the solver keeps the run's piece for these)
+    set_ = {f.get('seam'): f.get('turn') for f in spec.get('folds', []) if f.get('seam') is not None}
+    result['seam_turn'] = {str(sm['id']): t for sm, _deg, t in sf if set_.get(sm['id']) == t}
     from .fold_reference import terminal_field
     result['fold_terminal']=terminal_field(spec,active_pieces if active_pieces is not None else names)
     return result
@@ -314,7 +362,8 @@ def continue_stages(spec, names, pattern_path, crop, new=(), live=False):
         return 'live', [("live (until stopped)",
                          dict(base, frames=LIVE_FRAMES, live=True, active_pieces=names, frozen_pieces=fz,
                               stitch_ramp_frames=SEW_RAMP_FRAMES, stitch_ramp_shape=SEW_RAMP_SHAPE, live_every=2,
-                              sew_first=dict(LIVE_SEW_FIRST)))]
+                              sew_first=dict(LIVE_SEW_FIRST), untangle_free=dict(LIVE_UNTANGLE),
+                              deep_push=dict(LIVE_DEEP_PUSH)))]
     # Pieces added since are sewn on without gravity first, as a first Dress sews (user 2026-11-04): under gravity a
     # whole garment added over another (a jacket over a shirt, its shoulders 160-205 mm apart on the placement
     # cylinder) fell 14 mm while the ramp was weak and was then reeled in through the inner garment (21 cloth edges

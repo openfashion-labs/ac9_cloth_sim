@@ -8,6 +8,7 @@ A stage that fails or is stopped ends the run; each stage folder keeps its own s
 Usage: python run_stages.py <scene.idx.npz> <avatar.npz> <stage dir> [<stage dir> ...]
 """
 import contextlib
+import faulthandler
 import gc
 import json
 import os
@@ -17,6 +18,8 @@ import time
 import traceback
 from process_tree import join_owned_job
 join_owned_job()
+from runtime_guard import verify_actual_environment
+verify_actual_environment()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 from lifecycle_trace import mark as _trace, directory as _trace_dir
@@ -135,6 +138,21 @@ if sys.argv[1:2] == ['--standby']:
     sys.stdout.flush(); sys.stderr.flush()
     os.dup2(_fd, 1); os.dup2(_fd, 2)
     sys.argv = [sys.argv[0]] + _req['args']
+def _note_reason(path, reason):
+    """The stage's stop reason into its run_log.json (written if missing, kept if it already has an error)."""
+    try:
+        rl = json.load(open(path, encoding='utf-8')) if os.path.exists(path) else {'t_total': 0}
+    except (OSError, ValueError):
+        rl = {'t_total': 0}
+    if not rl.get('error'):
+        rl['error'] = reason
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(rl, f, default=str)
+        except OSError:
+            pass
+
+
 idx_f, av_f, *stage_dirs = sys.argv[1:]
 for sd in stage_dirs:
     _trace('stage_begin', stage=sd)
@@ -145,13 +163,22 @@ for sd in stage_dirs:
         pass
     code = 0
     cleanup = []
-    with open(os.path.join(sd, 'stdout.txt'), 'w', encoding='utf-8') as log,             contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+    # line buffered: a process that dies in native code keeps what it printed up to then
+    with open(os.path.join(sd, 'stdout.txt'), 'w', encoding='utf-8', buffering=1) as log,             contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
         sys.argv = [os.path.join(HERE, 'newton_vbd.py'), idx_f, av_f, os.path.join(sd, 'config.json'), sd]
+        try:
+            faulthandler.enable(file=log, all_threads=True)   # a native crash leaves the Python stack in stdout.txt
+        except (OSError, ValueError, RuntimeError):
+            pass
         try:
             runpy.run_path(sys.argv[0], run_name='__main__', init_globals={
                 '_AC9_T0': time.perf_counter(), '_AC9_CLEANUP': cleanup.append})
-        except SystemExit:
-            pass
+        except SystemExit as exc:
+            # newton_vbd stops with a reason for the person (a squashed triangle: place it again...): it was dropped
+            # here before, and the stage said only 'see stdout.txt', with no reason there either
+            if isinstance(exc.code, str):
+                print(exc.code)
+                _note_reason(os.path.join(sd, 'run_log.json'), exc.code)
         except Exception:
             traceback.print_exc()
             code = 1
@@ -163,6 +190,10 @@ for sd in stage_dirs:
                 except Exception:
                     traceback.print_exc()
                     code = 1
+            try:
+                faulthandler.disable()       # before stdout.txt closes: its file number may be reused
+            except Exception:
+                pass
     _trace('stage_end', stage=sd, code=code)
     if code:
         _end(code)

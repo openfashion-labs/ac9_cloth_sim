@@ -15,11 +15,12 @@ def capture(context, h, *, spec=None):
     settings = presets.resolve(getattr(props, 'preset', ''), props,
                                environ=None if __import__('bpy').app.background else {})
     digest = hashlib.sha256()
-    own = 'AC9_Garment_' + spec.get('name', '')
+    from . import garment_owner
+    own = garment_owner.garment(spec, context)
     objects = [props.body] if props.body else []
     for obj in context.scene.objects:
         if obj.type == 'MESH' and obj not in objects and (obj.get('ac9_collider') or
-                (obj.name.startswith('AC9_Garment_') and obj.name != own)):
+                (obj.name.startswith('AC9_Garment_') and obj != own)):
             objects.append(obj)
     for obj in sorted(objects, key=lambda v: v.name):
         digest.update(obj.name.encode('utf8'))
@@ -44,30 +45,30 @@ def prepare(context, h, previous, shown, folder, gate, last_frame):
         return None, None
     gate_file = os.path.join(previous, 'resume_gate.json')
     if not os.path.exists(gate_file):
-        return None, 'No saved simulation state; Live rebuilds from the shown shape'
+        return None, 'No saved simulation state; Simulate rebuilds from the shown shape'
     with open(gate_file, encoding='utf8') as source:
         old_gate = json.load(source)
     if gate != old_gate:
-        return None, 'Inputs changed; Live rebuilds from the shown shape'
+        return None, 'Inputs changed; Simulate rebuilds from the shown shape'
     from . import result_reference as RR
     try:
         info = dict(RR.open_result(previous).info)
     except ValueError:
-        return None, 'The saved result cannot be read; Live rebuilds from the shown shape'
+        return None, 'The saved result cannot be read; Simulate rebuilds from the shown shape'
     if info.get('kind') != 'live' or len(info.get('stages', [])) != 1:
-        return None, 'This result has no full Live checkpoint; Live rebuilds from the shown shape'
+        return None, 'This result has no full Simulate checkpoint; Simulate rebuilds from the shown shape'
     checkpoint = os.path.join(previous, 's1', 'live_checkpoint.npz')
     if not os.path.exists(checkpoint):
-        return None, 'No valid simulation checkpoint; Live rebuilds from the shown shape'
+        return None, 'No valid simulation checkpoint; Simulate rebuilds from the shown shape'
     log_path=os.path.join(previous,'s1','run_log.json')
     if os.path.exists(log_path):
         with open(log_path,encoding='utf8') as source:checkpoint_status=json.load(source).get('checkpoint',{})
         if checkpoint_status.get('status')=='unavailable':
-            return None,'Full simulation state is unavailable; Live rebuilds from the shown shape'
+            return None,'Full simulation state is unavailable; Simulate rebuilds from the shown shape'
     final = last_frame(previous)
     shown = np.asarray(shown, float)
     if final is None or shown.shape != final.shape or not np.isfinite(shown).all() or not np.isfinite(final).all() or np.max(np.linalg.norm(shown-final*1000.,axis=1)) > .001:
-        return None, 'The garment was edited; Live rebuilds from the shown shape'
+        return None, 'The garment was edited; Simulate rebuilds from the shown shape'
     # Confirm the visible last frame is actually the checkpoint's accepted shape.
     with np.load(checkpoint, allow_pickle=False) as archive:
         manifest = json.loads(archive['manifest'].tobytes())
@@ -75,7 +76,7 @@ def prepare(context, h, previous, shown, folder, gate, last_frame):
         saved_source = {key: value for key, value in manifest.get('fingerprint', {}).items()
                         if key.endswith('.py') and not key.startswith('input:')}
         if saved_source != source_fingerprint():
-            return None, 'Simulation code changed; Live rebuilds from the shown shape'
+            return None, 'Simulation code changed; Simulate rebuilds from the shown shape'
         if manifest.get('fingerprint',{}).get('start_validation_caller') != 'addon':
             raise ValueError('The saved state used a different simulation entry point; previous result kept')
         if manifest.get('fingerprint',{}).get('start_validation_override') != os.environ.get('AC9_START_CHECK_ALLOW'):
@@ -92,7 +93,7 @@ def prepare(context, h, previous, shown, folder, gate, last_frame):
     # gave a FileNotFoundError half way through the copy)
     need = [RR.INDEX, RR.AVATAR, RR.PATTERN, RR.SPEC, os.path.join('s1', 'config.json')]
     if not all(os.path.isfile(os.path.join(previous, n)) for n in need):
-        return None, 'Some saved files are missing; Live rebuilds from the shown shape'
+        return None, 'Some saved files are missing; Simulate rebuilds from the shown shape'
     os.makedirs(folder, exist_ok=True)
     for name in (RR.INDEX, RR.AVATAR, RR.PATTERN, RR.SPEC):
         shutil.copy2(os.path.join(previous,name),os.path.join(folder,name))

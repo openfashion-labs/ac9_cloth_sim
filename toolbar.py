@@ -16,7 +16,7 @@ The tools that start one of the sidebar's modal operators (Measure, Draw, Add Se
 itself: the click is fed to the operator as its first (start_modal), so one click with the tool does what the
 button and a click did."""
 import json
-from .i18n import rpt, tx
+from .i18n import CTX, rpt, tx
 
 import numpy as np
 
@@ -203,20 +203,29 @@ def center_under(context, mx, my):
     return ob
 
 
+def placement_guides(context, spec):
+    """The guides available to both Place hover and its placement gesture."""
+    if not spec or not spec.get('guides'):
+        return {}
+    from . import view_visibility as VV
+    props = getattr(getattr(context, 'scene', None), 'ac9_cloth_sim', None)
+    body = getattr(props, 'body', None)
+    if not VV.allows_world(context, spec) or (body is not None and not VV.object_allowed(context, body)):
+        return {}
+    return spec['guides']
+
+
 def _guide_under(context, event):
     """True when a placement guide (the cylinders round the avatar) is under the cursor."""
     spec = store.get(context)[0]
-    if not spec or not spec.get('guides') or context.region_data is None:
-        return False
-    from . import view_visibility as VV
-    body = getattr(context.scene.ac9_cloth_sim, 'body', None)
-    if not VV.allows_world(context, spec) or (body is not None and not VV.object_allowed(context, body)):
+    guides = placement_guides(context, spec)
+    if not guides or context.region_data is None:
         return False
     from .core import body_axes as BA
     xy = (event.mouse_region_x, event.mouse_region_y)
     o = np.array(region_2d_to_origin_3d(context.region, context.region_data, xy)) * 1000.0
     d = np.array(region_2d_to_vector_3d(context.region, context.region_data, xy))
-    return BA.ray_hit(spec['guides'], o, d) is not None
+    return BA.ray_hit(guides, o, d) is not None
 
 
 def placed_piece(context, ob, idx):
@@ -247,8 +256,14 @@ def garment_piece(ob, idx):
 def select_object(context, ob, extend=False, face_index=None):
     """Make `ob` the selected active object (a click on a placed piece's object: as Blender's click select, so G /
     R move it next and the Placement panel shows its move)."""
-    off = extend and ob.select_get() and context.view_layer.objects.active == ob
+    if SEL._kind(ob) is not None and not SEL.owns(context, ob):
+        return False
     names = SEL._names(ob)
+    if names and face_index is not None:
+        from . import placed_view as PLV
+        name = PLV.placed_face_piece(context, ob, face_index)
+        names = [name] if name is not None else []
+    off = extend and bool(names) and all(n in SEL.ids(context) for n in names)
     if names:                                       # a piece's object: its pieces picked in every view
         SEL.apply(context, names, 'SUB' if off else 'ADD' if extend else 'SET', active=names[0], view='world')
     else:
@@ -270,7 +285,7 @@ def select_object(context, ob, extend=False, face_index=None):
 def select_piece(context, name, extend=False):
     """Make the pattern piece object `name` the selected active object (the Tool tab then shows it)."""
     ob = PV.piece_objects().get(name)
-    if ob is None:
+    if ob is None or not SEL.owns(context, ob):
         return False
     off = extend and ob.select_get() and context.view_layer.objects.active == ob
     SEL.apply(context, [name], 'SUB' if off else 'ADD' if extend else 'SET', active=name, view='pattern')
@@ -283,6 +298,8 @@ def pick_garment_piece(context, g, name, extend=False):
     """A click on the dressed garment's piece `name`: a handle at its center, selected, to move or turn the piece on
     the garment with G / R (piece_move.py, user 2026-10-14 b-A)."""
     from . import piece_move as PM
+    if g != PM._garment(context):
+        return False
     if PM._live() or not len(PM.piece_verts(g, [name])):
         return False
     # handled even when a Shift-click took the last garment piece out (no handle left): a None here sent the click
@@ -390,7 +407,7 @@ class AC9_OT_SimToolHover(bpy.types.Operator):
     bl_label = "AC9 Tool Hover"
     bl_options = {'INTERNAL'}
 
-    tool: StringProperty()
+    tool: StringProperty(options={'HIDDEN'})
 
     def invoke(self, context, event):
         if context.area is not None and context.area.type == 'VIEW_3D' and self.tool in WORKS:
@@ -440,18 +457,14 @@ def drag_px(context):
         return 3
 
 
-_move_instead = {'on': False}    # Place found the placed piece pressed on off its guide: the press moves it itself
 _skipped_worn = []               # the pieces on the dressed garment Place left out of its last drag (said in one line)
 
 
 class AC9_OT_SimPlacePress(bpy.types.Operator):
-    """(internal) The Place tool's press (user 2026-11-17, DECISIONS cloth-sim-place-click-drag-box-2026-11-17). Let
-    go without moving: a click, which only selects -- the piece under it (Shift: adds or takes it out), or on nothing
-    the selection dropped, as Blender's click, with no undo step. Moved past the drag threshold: a drag -- on a placed piece or a piece of
-    the dressed garment it moves that piece, anywhere else it places the selected pieces there (also pieces already
-    placed or dressed: Ctrl+Z puts them back). Nothing depends on what else is selected."""
+    """Click selection and drag placement use distinct input paths; a drag keeps the press's logical selection."""
     bl_idname = "ac9_cloth_sim.place_press"
     bl_label = "Select"
+    bl_description = "Select"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     def invoke(self, context, event):
@@ -459,6 +472,8 @@ class AC9_OT_SimPlacePress(bpy.types.Operator):
         _press.update(kind=None, ob=None, idx=-1, event=None)
         if self.p['event'] is None:
             return {'CANCELLED'}
+        self.p['selection'] = tuple(SEL.pieces(context))
+        self.p['owner'] = store.text(context)
         ev = self.p['event']
         self.xy = (ev.mouse_region_x, ev.mouse_region_y)
         context.window_manager.modal_handler_add(self)
@@ -471,8 +486,6 @@ class AC9_OT_SimPlacePress(bpy.types.Operator):
     def modal(self, context, event):
         if event.type in _PASS:
             return {'PASS_THROUGH'}
-        if getattr(self, 'movers', None):
-            return self._moving(context, event)
         if event.type == 'MOUSEMOVE':
             dx, dy = event.mouse_region_x - self.xy[0], event.mouse_region_y - self.xy[1]
             if dx * dx + dy * dy > drag_px(context) ** 2:
@@ -499,48 +512,9 @@ class AC9_OT_SimPlacePress(bpy.types.Operator):
             return _branch_done('click_nothing_shift', {'CANCELLED'})
         SEL.deselect_all(context)
         SEL._drop_seam(context)
+        from . import garment_mark as GM
+        GM.clear(context)
         return _branch_done('click_nothing', {'CANCELLED'})
-
-    # ---- a piece dragged: moved as G moves it, in the view's plane through it (Blender's G called from here did not
-    # take over the held button: it ended without moving, GUI probe 2026-11-17)
-    def _start_move(self, context, event):
-        from bpy_extras.view3d_utils import region_2d_to_location_3d
-        obs = [o for o in SEL.objects(context)
-               if SEL._kind(o) == 'world' and not (o.parent is not None and o.parent.select_get())]
-        if not obs or context.region is None or context.region_data is None:
-            return {'CANCELLED'}
-        self.movers = [(o, o.matrix_world.translation.copy()) for o in obs]
-        self.ref = obs[0].matrix_world.translation.copy()
-        self.p0 = region_2d_to_location_3d(context.region, context.region_data, self.xy, self.ref)
-        self._move_to(context, event)
-        context.area.header_text_set(tx("Move: release to keep   Esc / right click: cancel"))
-        return {'RUNNING_MODAL'}
-
-    def _move_to(self, context, event):
-        from bpy_extras.view3d_utils import region_2d_to_location_3d
-        p = region_2d_to_location_3d(context.region, context.region_data,
-                                     (event.mouse_region_x, event.mouse_region_y), self.ref)
-        d = p - self.p0
-        for o, w0 in self.movers:
-            m = o.matrix_world.copy()
-            m.translation = w0 + d
-            o.matrix_world = m
-
-    def _moving(self, context, event):
-        if event.type == 'MOUSEMOVE':
-            self._move_to(context, event)
-            return {'RUNNING_MODAL'}
-        if event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
-            context.area.header_text_set(None)
-            return {'FINISHED'}                          # this operator's undo step
-        if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
-            for o, w0 in self.movers:
-                m = o.matrix_world.copy()
-                m.translation = w0
-                o.matrix_world = m
-            context.area.header_text_set(None)
-            return {'CANCELLED'}
-        return {'RUNNING_MODAL'}
 
     def _drag(self, context, event):
         try:
@@ -551,7 +525,7 @@ class AC9_OT_SimPlacePress(bpy.types.Operator):
     def _worn_note(self):
         """One line in the status bar when the drag left pieces on the dressed garment out (user 2026-11-17)."""
         if _skipped_worn:
-            self.report({'WARNING'}, rpt("{0}: on the dressed garment, not placed (Back to Placed first)",
+            self.report({'WARNING'}, rpt("{0}: on the dressed garment, not placed (Back to Adjusted Shape first)",
                                          ', '.join(_skipped_worn)))
             _skipped_worn.clear()
 
@@ -561,17 +535,10 @@ class AC9_OT_SimPlacePress(bpy.types.Operator):
         # G / R or Whole Pieces
         ev, kind, ob, idx = self.p['event'], self.p['kind'], self._ob(), self.p['idx']
         _skipped_worn.clear()
-        if kind == 'PLACED' and ob is not None:
-            if not ob.select_get():
-                select_object(context, ob, extend=ev.shift, face_index=idx)
-            _move_instead['on'] = False
-            r = _call("ac9_cloth_sim.place", ev, dragged=True)
-            if _move_instead['on']:                       # pressed off its guide: moved here, as G moves it
-                _move_instead['on'] = False
-                _branch['name'] = 'drag_move_free'
-                return self._start_move(context, event)
-            return _branch_done('drag_move' if r is not None else 'drag_move_none', {'CANCELLED'})
-        if not SEL.pieces(context):
+        selected = tuple(SEL.pieces(context))
+        if selected != self.p.get('selection', selected) or ('owner' in self.p and store.text(context) != self.p['owner']):
+            return {'CANCELLED'}  # another input replaced the press's intent; never select a new target here
+        if not selected:
             set_note(context, ev, "Place: click pieces first (Shift: more), then drag to where they go")
             return _branch_done('no_pieces', {'CANCELLED'})
         r = _call("ac9_cloth_sim.place", ev, dragged=True)
@@ -587,7 +554,7 @@ class AC9_OT_SimToolClick(bpy.types.Operator):
     bl_label = "AC9 Tool Click"
     bl_options = {'INTERNAL'}
 
-    tool: StringProperty()
+    tool: StringProperty(options={'HIDDEN'})
 
     @CL.logged
     def invoke(self, context, event):
@@ -595,6 +562,9 @@ class AC9_OT_SimToolClick(bpy.types.Operator):
             return {'PASS_THROUGH'}
         kind, ob, idx = under(context, event.mouse_region_x, event.mouse_region_y)
         t = self.tool
+        if t != 'PLACE' and kind in ('NONE', 'PLANE') and not event.shift:
+            from . import garment_mark as GM
+            GM.clear(context)
         _trace.append((t, kind, ob.name if ob else None, event.value, event.shift))
         del _trace[:-20]
         if not hint(context, event, t, kind):
@@ -667,7 +637,7 @@ class AC9_OT_SimPatternToolsSwitch(bpy.types.Operator):
     bl_label = "Use Tool"
     bl_options = {'INTERNAL'}
 
-    tool: StringProperty()
+    tool: StringProperty(options={'HIDDEN'})
 
     @classmethod
     def poll(cls, context):
@@ -719,7 +689,7 @@ def tool_button(layout, context, tool_id, text, icon):
 # ---------------------------------------------------------------- the tools
 
 def works_on(layout, tool):
-    layout.label(text=tx("Works on: ") + tx(WORKS[tool][0]), icon='INFO')
+    layout.label(text_ctxt=CTX, text=tx("Works on: ") + tx(WORKS[tool][0]), icon='INFO')
 
 
 # what each tool does, one line in its header after "Works on" (user 2026-10-21: only Edit Pieces and Edit Seams
@@ -731,8 +701,8 @@ KEYS = {
     'ELLIPSE': "drag, or click two corners  Shift circle  Alt from center",
     'IRECT': "drag inside a piece, or click two corners  Shift square  Alt from center",
     'IELLIPSE': "drag inside a piece, or click two corners  Shift circle  Alt from center",
-    'ADD_SEAM': "click start and end on piece A, then on piece B (same end first)  Enter / click: add  F other way",
-    'ADD_SEAM_MN': "side A: click start and end of each stretch, Enter  side B: the same, Enter: add",
+    'ADD_SEAM': "select A, then B  Enter / click: add  Ctrl: invert snapping  F: other way",
+    'ADD_SEAM_MN': "select stretches on A, Enter  select stretches on B, Enter: add  Ctrl: invert snapping",
     'MEASURE': "click: keep the ring  Tab direction  Ctrl+wheel tilt (Shift 1 deg)  click a line: pick",
     'TAPE_ALONG': "click points  Enter: keep  Backspace undo  Esc / right-click: cancel  click a line: pick",
     'TAPE_STRAIGHT': "click two points: pulled taut (over bulges, across hollows)  click a line: pick",
@@ -746,7 +716,16 @@ MENU_TOOLS = {'MOVE_LEVEL', 'PLACE'}       # these show a right-click menu (draf
 
 
 def _keys(layout, tool):
-    layout.label(text=tx(KEYS[tool]) + tx("  X/Del delete") + (tx("  right-click: menu") if tool in MENU_TOOLS else ""))
+    layout.label(text_ctxt=CTX, text=tx(KEYS[tool]) + tx("  X/Del delete") + (tx("  right-click: menu") if tool in MENU_TOOLS else ""))
+
+
+def draw_seam_settings(context, layout):
+    """Tool Header: how the active tool works; target attributes stay in Tool."""
+    row = layout.row(align=True)
+    row.label(text="Selection", text_ctxt=CTX)
+    row.prop(context.window_manager, 'ac9_seam_pick_mode', expand=True)
+    wm = context.window_manager
+    layout.prop(wm, 'ac9_pattern_snap', text='', icon='SNAP_ON' if wm.ac9_pattern_snap else 'SNAP_OFF')
 
 
 # X / Delete in every AC9 tool (user 2026-10-21): the corner, notch or line end under the cursor, else the picked
@@ -810,11 +789,15 @@ class AC9_WT_AddSeam(bpy.types.WorkSpaceTool):
     bl_icon = "ops.curve.pen"
     bl_widget = None
     bl_keymap = (
-        ("ac9_cloth_sim.tool_hover", {"type": 'MOUSEMOVE', "value": 'ANY'}, {"properties": [("tool", 'ADD_SEAM')]}),
+        ("ac9_cloth_sim.tool_hover", {"type": 'MOUSEMOVE', "value": 'ANY', "any": True}, {"properties": [("tool", 'ADD_SEAM')]}),
+        ("ac9_cloth_sim.tool_hover", {"type": 'LEFT_CTRL', "value": 'ANY', "any": True}, {"properties": [("tool", 'ADD_SEAM')]}),
+        ("ac9_cloth_sim.tool_hover", {"type": 'RIGHT_CTRL', "value": 'ANY', "any": True}, {"properties": [("tool", 'ADD_SEAM')]}),
         ("ac9_cloth_sim.tool_click", {"type": 'LEFTMOUSE', "value": 'PRESS'}, {"properties": [("tool", 'ADD_SEAM')]}),
+        ("ac9_cloth_sim.tool_click", {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True}, {"properties": [("tool", 'ADD_SEAM')]}),
     ) + DELETE_KEYS + DRAW_MENU_KEYS
 
     def draw_settings(context, layout, tool):
+        draw_seam_settings(context, layout)
         works_on(layout, 'ADD_SEAM')
         _keys(layout, 'ADD_SEAM')
 
@@ -830,11 +813,15 @@ class AC9_WT_AddSeamMN(bpy.types.WorkSpaceTool):
     bl_icon = "ops.curve.pen"
     bl_widget = None
     bl_keymap = (
-        ("ac9_cloth_sim.tool_hover", {"type": 'MOUSEMOVE', "value": 'ANY'}, {"properties": [("tool", 'ADD_SEAM_MN')]}),
+        ("ac9_cloth_sim.tool_hover", {"type": 'MOUSEMOVE', "value": 'ANY', "any": True}, {"properties": [("tool", 'ADD_SEAM_MN')]}),
+        ("ac9_cloth_sim.tool_hover", {"type": 'LEFT_CTRL', "value": 'ANY', "any": True}, {"properties": [("tool", 'ADD_SEAM_MN')]}),
+        ("ac9_cloth_sim.tool_hover", {"type": 'RIGHT_CTRL', "value": 'ANY', "any": True}, {"properties": [("tool", 'ADD_SEAM_MN')]}),
         ("ac9_cloth_sim.tool_click", {"type": 'LEFTMOUSE', "value": 'PRESS'}, {"properties": [("tool", 'ADD_SEAM_MN')]}),
+        ("ac9_cloth_sim.tool_click", {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True}, {"properties": [("tool", 'ADD_SEAM_MN')]}),
     ) + DELETE_KEYS + DRAW_MENU_KEYS
 
     def draw_settings(context, layout, tool):
+        draw_seam_settings(context, layout)
         works_on(layout, 'ADD_SEAM_MN')
         _keys(layout, 'ADD_SEAM_MN')
 
@@ -939,7 +926,7 @@ class AC9_WT_Place(bpy.types.WorkSpaceTool):
     bl_description = ("Click a piece to select it (Shift: more; on nothing: deselect). Drag from a guide, a surface, the "
                       "dressed garment or the ground to place the selected pieces there, release to keep; drag a placed "
                       "piece to slide it round its guide. Pieces on the dressed garment are not placed again: Back to "
-                      "Placed first")
+                      "Adjusted Shape first")
     bl_icon = "ops.mesh.primitive_cylinder_add_gizmo"
     bl_widget = None
     bl_keymap = (
@@ -1203,7 +1190,7 @@ class AC9_OT_SimPickObject(bpy.types.Operator):
 
     # the scene property (scene.ac9_cloth_sim) it sets. Blender's own eyedropper is drawn only in an empty object
     # field, so a field already set (the body) gets this button (user 2026-11-17)
-    prop: StringProperty(default="body", options={'SKIP_SAVE'})
+    prop: StringProperty(default="body", options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):

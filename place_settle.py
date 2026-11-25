@@ -241,6 +241,24 @@ def measure(Y, V, T, fixed, body, others):
             'stretch': round(float(np.percentile(r, 99)), 3)}
 
 
+def object_verts(ob, V, flags):
+    """flags (bool per vertex of the pattern mesh with layout points V) on the placed object's own vertices."""
+    flags = np.asarray(flags, bool)
+    n = len(ob.data.vertices)
+    if n == len(flags):
+        return flags
+    # an object made before the pattern was re-meshed: by its layout points
+    from mathutils.kdtree import KDTree
+    fl = ob.data.attributes.get(PLV.FLAT_ATTR)
+    Fp = np.empty(n * 2)
+    fl.data.foreach_get('vector', Fp)
+    kd = KDTree(len(V))
+    for k, q in enumerate(np.asarray(V, float)):
+        kd.insert((q[0], q[1], 0.0), k)
+    kd.balance()
+    return np.array([flags[kd.find((q[0], q[1], 0.0))[1]] for q in Fp.reshape(-1, 2)], bool)
+
+
 def mark(ob, V, T, num):
     """What is left after settling, on the placed object: red in the Overlays' Problems (diagnose.mark), and its
     vertices in the group LEFT_GROUP."""
@@ -252,19 +270,7 @@ def mark(ob, V, T, num):
     if vg is not None:
         ob.vertex_groups.remove(vg)
     if left.any():
-        n = len(ob.data.vertices)
-        if n == len(left):
-            on = left
-        else:                             # an object made before the pattern was re-meshed: by its layout points
-            from mathutils.kdtree import KDTree
-            fl = ob.data.attributes.get(PLV.FLAT_ATTR)
-            Fp = np.empty(n * 2)
-            fl.data.foreach_get('vector', Fp)
-            kd = KDTree(len(V))
-            for k, q in enumerate(np.asarray(V, float)):
-                kd.insert((q[0], q[1], 0.0), k)
-            kd.balance()
-            on = np.array([left[kd.find((q[0], q[1], 0.0))[1]] for q in Fp.reshape(-1, 2)], bool)
+        on = object_verts(ob, V, left)
         vg = ob.vertex_groups.new(name=LEFT_GROUP)
         vg.add(np.nonzero(on)[0].tolist(), 1.0, 'REPLACE')
         DG.mark(ob, 'left', np.nonzero(on)[0], f"{num['inside']} inside the body, {num['cross']} through cloth")
@@ -315,12 +321,12 @@ def report(piece, num, left):
     msg = tx("{0} settled: inside the body {1} -> {2}, through other cloth {3} -> {4}", piece,
              b['inside'], num['inside'], b['cross'], num['cross'])
     if left:
-        msg += tx(" ({0} vertices left red: move it with Whole Pieces, or simulate from here)", left)
+        msg += tx(" ({0} affected vertices; use Diagnose to locate them)", left)
     return msg
 
 
 class AC9_OT_SimSettle(bpy.types.Operator):
-    """Tidy the selected placed pieces with no physics: out of the body, onto their side of the pieces they are sewn to, their edges back to length. What is left is marked red"""
+    """Tidy selected placed pieces without physics. Use Diagnose afterwards to inspect the remaining intrusion and crossings"""
     bl_idname = "ac9_cloth_sim.settle_placed"
     bl_label = "Settle"
     bl_options = {'REGISTER', 'UNDO'}
@@ -333,15 +339,15 @@ class AC9_OT_SimSettle(bpy.types.Operator):
         from . import dress as D
         from . import placement as PL
         if D.AC9_OT_SimDress.running():
-            cls.poll_message_set("Not while a simulation runs")
+            cls.poll_message_set(tx("Not while a simulation runs"))
             return False
         sel = PL.selected_pieces(context)
         if not sel:
-            cls.poll_message_set("Select a piece first (on the pattern)")
+            cls.poll_message_set(tx("Select a piece first (on the pattern)"))
             return False
         obs = PLV.objects(spec)
         if not any(n in obs for n in sel):
-            cls.poll_message_set("Works on placed shapes: Place it, or Back to Placed on the garment")
+            cls.poll_message_set(tx("Works on adjusted shapes: Place it, or Back to Adjusted Shape on the garment"))
             return False
         return True
 
@@ -363,7 +369,7 @@ class AC9_OT_SimSettle(bpy.types.Operator):
         for n in names:
             ob = obs[n]
             if PLV.has_edits(ob):
-                self.report({'WARNING'}, tx("{0}'s placed shape was edited vertex by vertex: Back to Guide first", n))
+                self.report({'WARNING'}, tx("{0}'s adjusted shape was edited vertex by vertex: Back to Placed Shape first", n))
                 continue
             pat, tris, X = got
             i = [str(m) for m in pat['names']].index(n)

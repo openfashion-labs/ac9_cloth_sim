@@ -105,7 +105,7 @@ class AC9_OT_SimAddDart(bpy.types.Operator):
                 except (ValueError, StopIteration):
                     cut = None
                 if cut:
-                    col.label(text=rpt("Too long for the piece: {0} mm", round(cut)), icon='INFO')
+                    col.label(text_ctxt=CTX, text=rpt("Too long for the piece: {0} mm", round(cut)), icon='INFO')
 
     def _make(self, spec):
         """(the copy with the dart, pieces changed, darts made, marks moved, the length used when it was cut down
@@ -219,8 +219,8 @@ class AC9_OT_SimMoveDart(bpy.types.Operator):
         txt += ")"
         if self.trial and self.trial[3]:
             txt += tx("   cannot: {0}", self.trial[3])
-        txt += ("   click the outline: move   S: Pivot / Shift   Tab: side to turn   A: apex follows (Shift)"
-                "   Esc / right click: cancel")
+        txt += tx("   click the outline: move   S: Pivot / Shift   Tab: side to turn   A: apex follows (Shift)"
+                  "   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
     def _end(self, context):
@@ -465,7 +465,7 @@ def draw_dart_rows(layout, context, spec, act, viewport=True):
     if dt is None:
         return
     box = layout.box()
-    box.label(text=tx("Dart {0:.1f} deg, legs {1}", dt['deg'], U.fmt(bpy.context, dt['length'])) + ("" if act.get('enabled', True) else tx(" (off)")))
+    box.label(text_ctxt=CTX, text=tx("Dart {0:.1f} deg, legs {1}", dt['deg'], U.fmt(bpy.context, dt['length'])) + ("" if act.get('enabled', True) else tx(" (off)")))
     row = box.row(align=True)
     if viewport:
         row.operator("ac9_cloth_sim.move_dart", text="Move")
@@ -477,7 +477,7 @@ def draw_dart_rows(layout, context, spec, act, viewport=True):
     if kink > 1.0:
         box.operator("ac9_cloth_sim.close_dart", text=tx("True Mouth ({0:.0f} deg)", kink))
     if not viewport:
-        box.label(text="Move: right-click a leg, Edit Pieces", icon='INFO')
+        box.label(text_ctxt=CTX, text="Move: right-click a leg, Edit Pieces", icon='INFO')
 
 
 CLASSES = (AC9_OT_SimAddDart, AC9_OT_SimMoveDart, AC9_OT_SimCloseDart, AC9_OT_SimFoldDart)

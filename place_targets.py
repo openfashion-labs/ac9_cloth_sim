@@ -21,7 +21,7 @@ def resolve_movers(context, spec, requested):
     from . import placement as PL, place_seam as PS
     names = list(dict.fromkeys(requested))
     if not names or PS.on_garment(spec, names):
-        raise ValueError(tx("Select placed pieces to move; use Back to Placed for dressed pieces"))
+        raise ValueError(tx("Select placed pieces to move; use Back to Adjusted Shape for dressed pieces"))
     if any(n not in spec.get('placement', {}) and not PS.sewn_to_placed(spec, n) for n in names):
         raise ValueError(tx("Place the moving pieces first"))
     names = PL.lead_only(spec, names)
@@ -59,7 +59,7 @@ def validate(context, requested, targets, got=None):
         got, why = PS.shapes(context, spec)
         if got is None:
             raise ValueError(why)
-    available = {n: scope.partner_names(got, n, movers + followers) for n in movers}
+    available = {n: scope.partner_names(got, n, movers + followers, spec=spec) for n in movers}
     if set(targets) - {p for row in available.values() for p in row}:
         raise ValueError(tx("Targets must share an enabled seam with a moving piece"))
     missing = [n for n in movers if not set(available[n]) & set(targets)]
@@ -117,7 +117,7 @@ def invoke(op, context, event):
         got, why = PS.shapes(context, spec)
         if got is None:
             raise ValueError(why)
-        available = {n: scope.partner_names(got, n, movers + followers) for n in movers}
+        available = {n: scope.partner_names(got, n, movers + followers, spec=spec) for n in movers}
         missing = [n for n, partners in available.items() if not partners]
         if missing:
             raise ValueError(tx("No enabled external seam for: {0}", ', '.join(missing)))

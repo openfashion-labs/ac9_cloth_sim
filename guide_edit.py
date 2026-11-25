@@ -272,7 +272,7 @@ def _restore_session():
 class AC9_OT_SimEditGuides(bpy.types.Operator):
     """Edit the placement guides by hand: each becomes a wire cylinder to move (G), turn (R) and scale (S, the radius;
     along its axis, the length). With Mirror on, a left / right pair follows as its mirror image. Done puts the
-    placed shapes back on the new guides"""
+    adjusted shapes back on the new guides"""
     bl_idname = "ac9_cloth_sim.edit_guides"
     bl_label = "Edit Guides"
     bl_options = {'REGISTER', 'UNDO'}
@@ -299,7 +299,7 @@ class AC9_OT_SimEditGuides(bpy.types.Operator):
                 try:
                     with PB.operation(context) as preparation:
                         res = D.prepare(context, context.scene.ac9_cloth_sim.mesh_size, shapes_only=True, placed_only=True, preparation=preparation)
-                        g = bpy.data.objects.get(D.garment_name(sp))
+                        g = D.garment(sp)
                         from . import placement
                         placement.replace_prepared(context, sp, res, reset=had,
                                                    only=set(had) if D.has_result(g) else None)
@@ -309,7 +309,7 @@ class AC9_OT_SimEditGuides(bpy.types.Operator):
                         rebuilt = True
                 except ValueError as exc:
                     self.report({'WARNING'}, str(exc))
-            self.report({'INFO'}, rpt("Guides written") + (rpt("; placed shapes made again on them") if rebuilt else ""))
+            self.report({'INFO'}, rpt("Guides written") + (rpt("; adjusted shapes made again on them") if rebuilt else ""))
             return {'FINISHED'}
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')

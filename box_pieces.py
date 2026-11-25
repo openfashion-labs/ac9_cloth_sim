@@ -47,11 +47,12 @@ def _world(ev, flat):
 
 
 def garment_names(context, rect):
-    """The pieces of the dressed garment with a face center inside rect (pieces put back to their placed shapes by a
+    """The pieces of the dressed garment with a face center inside rect (pieces put back to their adjusted shapes by a
     Reset are not on the garment: their placed objects answer for them)."""
     from . import view_visibility as VV
     spec = store.get(context)[0]
-    worn, g = SEL._worn(context, spec)
+    from . import control_basis as CB
+    worn, g = CB.on_garment(context, spec)
     if g is None or not worn or not VV.object_allowed(context, g):
         return []
     ev = g.evaluated_get(context.evaluated_depsgraph_get())
@@ -79,7 +80,8 @@ def placed_names(context, rect):
     spec = store.get(context)[0]
     if spec is None:
         return []
-    worn, _ = SEL._worn(context, spec)
+    from . import control_basis as CB
+    worn, _ = CB.on_garment(context, spec)
     dg = context.evaluated_depsgraph_get()
     out = []
     for ob in {o.as_pointer(): o for o in PLV.objects(spec).values()}.values():

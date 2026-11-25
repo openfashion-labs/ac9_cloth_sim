@@ -13,7 +13,7 @@ compared without them (solver/lay.py lay_piece bridge). The solver's code runs i
 solver/lay_once.py), with its check: laid, the band must have no more vertices in the body and edges through other
 cloth than placed, else it stays. A laid band's vertices and their made-at positions are rewritten and it gets
 LAID_PROP: Simulate takes it as the user's shape but still lays it again on the sewn edge (dress.py: not 'hand'),
-Fold and Part to Seam leave it alone, Back to Guide drops it.
+Fold and Part to Seam leave it alone, Back to Placed Shape drops it.
 
 Not laid: a piece with a fold of 90 degrees or more (a folded band, laid as one layer only), a piece not placed."""
 import json
@@ -45,12 +45,16 @@ def _object(spec, piece):
 def _run(context, arrays):
     """solver/lay_once.py on arrays; returns (row dict, X or None) or raises RuntimeError."""
     from . import dress as D
+    from . import distribution as runtime
+    reason=runtime.launch_error()
+    if reason:raise RuntimeError(tx(reason))
     py = D.newton_python(context)
     if py is None:
         raise RuntimeError(tx("No solver Python: set it in the add-on's preferences"))
     env = dict(os.environ)
     if os.path.normcase(py) == os.path.normcase(sys.executable):
         env['PYTHONPATH'] = os.pathsep.join((D.solver_path() or []) + [x for x in [env.get('PYTHONPATH')] if x])
+    env=runtime.runtime_environment(py,env)
     with tempfile.TemporaryDirectory(prefix='ac9_lay_') as d:
         src, dst = os.path.join(d, 'in.npz'), os.path.join(d, 'out.npz')
         np.savez(src, **arrays)
@@ -105,9 +109,9 @@ def lay(context, spec, piece, got=None, targets=None, *, preparation=None):
     from . import placement as PL
     ob = _object(spec, piece)
     if ob is None:
-        return PB.refuse(preparation, tx("{0} has no placed shape: Place it first", piece))
+        return PB.refuse(preparation, tx("{0} has no adjusted shape: Place it first", piece))
     if PLV.has_edits(ob):
-        return PB.refuse(preparation, tx("{0}'s placed shape was edited vertex by vertex: Back to Guide first", piece))
+        return PB.refuse(preparation, tx("{0}'s adjusted shape was edited vertex by vertex: Back to Placed Shape first", piece))
     if any(f.get('piece') == piece and abs(float(f.get('deg') or 0)) >= 90.0 for f in spec.get('folds', [])):
         return PB.refuse(preparation, tx("{0} has a fold of 90 degrees or more: Band on Edge lays one layer", piece))
     from .core import place_targets as TS
@@ -143,7 +147,7 @@ def lay(context, spec, piece, got=None, targets=None, *, preparation=None):
     bad = _squashed(Vk, tris[k], Xr)
     if bad:
         return PB.refuse(preparation, tx("{0} not laid: {1} triangles would be squashed flat", piece, bad))
-    # the shape before it, as Part to Seam keeps it: Back to Placed puts this back (user 2026-11-01: the two the same,
+    # the shape before it, as Part to Seam keeps it: Back to Adjusted Shape puts this back (user 2026-11-01: the two the same,
     # back to the shape on the guide before the press)
     PLV.save_before_seam(ob, spec)
     why = PS.write_shape(ob, Vk, tris[k], Xr)
@@ -168,7 +172,7 @@ def lay(context, spec, piece, got=None, targets=None, *, preparation=None):
     if num['inside'] or num['cross']:
         msg += tx("; inside the body {0}, through other cloth {1}", num['inside'], num['cross'])
         if left:
-            msg += tx(" ({0} vertices left red: move it with Whole Pieces, or simulate from here)", left)
+            msg += tx(" ({0} affected vertices; use Diagnose to locate them)", left)
     if row.get('ratio_off'):
         msg += tx("; its sewn edge is {0:.2f} times its length", row['ratio'])
     return True, msg
@@ -204,23 +208,23 @@ class AC9_OT_SimLayOnEdge(bpy.types.Operator):
         from . import dress as D
         from . import placement as PL
         if D.AC9_OT_SimDress.running():
-            cls.poll_message_set("Not while a simulation runs")
+            cls.poll_message_set(tx("Not while a simulation runs"))
             return False
         # why it is grey, on the button's tooltip (user 2026-10-22: could not tell why it could not be pressed)
         sel = PL.selected_pieces(context)
         if not sel:
-            cls.poll_message_set("Select a piece first (on the pattern)")
+            cls.poll_message_set(tx("Select a piece first (on the pattern)"))
             return False
         from . import place_seam as PS
         # the selected piece's own state only, not its partners' (user 2026-10-24)
         worn = PS.on_garment(spec, sel)
         if worn and len(worn) == len(sel):
-            cls.poll_message_set(tx("{0} is part of the dressed garment: Back to Placed it first (Placement)",
+            cls.poll_message_set(tx("{0} is part of the dressed garment: Back to Adjusted Shape it first (Placement)",
                                     ", ".join(worn[:3])))
             return False
         # not placed: placed by the pieces it is sewn to when they are (user 2026-10-22)
         if not any(n in spec['placement'] or PS.sewn_to_placed(spec, n) for n in sel):
-            cls.poll_message_set("The selected piece is not placed: Place it first")
+            cls.poll_message_set(tx("The selected piece is not placed: Place it first"))
             return False
         return True
 
@@ -240,7 +244,7 @@ class AC9_OT_SimLayOnEdge(bpy.types.Operator):
                  if n in spec['placement'] or PS.sewn_to_placed(spec, n)]
         worn = PS.on_garment(spec, names)
         if worn:
-            self.report({'WARNING'}, tx("{0} is part of the dressed garment: Back to Placed it first (Placement)",
+            self.report({'WARNING'}, tx("{0} is part of the dressed garment: Back to Adjusted Shape it first (Placement)",
                                         ", ".join(worn)))
             names = [n for n in names if n not in worn]
         lines0 = []

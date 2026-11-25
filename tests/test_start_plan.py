@@ -129,7 +129,7 @@ class Take(unittest.TestCase):
 
     def test_drop_from_steps(self):
         lines = ["  put back by Reset, from the garment's shape: A, B", "  not in the last result, from their "
-                 "placed shapes: A", "  (continued from j; new pieces: A)", "  mirrored start: A_R <- A"]
+                 "adjusted shapes: A", "  (continued from j; new pieces: A)", "  mirrored start: A_R <- A"]
         self.assertEqual(SP.drop_from_steps(lines, ['A']),
                          ["  put back by Reset, from the garment's shape: B", "  (continued from j; new pieces: A)",
                           "  mirrored start: A_R <- A"])

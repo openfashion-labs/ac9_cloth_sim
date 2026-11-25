@@ -53,6 +53,21 @@ class TestScope(unittest.TestCase):
         self.assertEqual(len(sp['seams']), 4)
         self.assertTrue(all(s['enabled'] for s in sp['seams']))
 
+    def test_unplaced_clone_uses_enabled_authored_seams_without_changing_spec(self):
+        import copy
+        spec={'pieces':[{'name':'new','enabled':True}], 'placement':{}, 'seams':[
+            {'id':'on','a':{'piece':'new'},'b':{'piece':'front'},'enabled':True},
+            {'id':'off','a':{'piece':'new'},'b':{'piece':'back'},'enabled':False},
+            {'id':'self','a':{'piece':'new'},'b':{'piece':'new'},'enabled':True}]}
+        before=copy.deepcopy(spec)
+        self.assertEqual(P.partner_names(self.got,'new',spec=spec),['front'])
+        self.assertEqual(spec,before)
+        self.assertEqual(P.partner_names(self.got,'new',['front'],spec=spec),[])
+        spec['pieces'][0]['enabled']=False
+        self.assertEqual(P.partner_names(self.got,'new',spec=spec),[])
+        spec['pieces'][0]['enabled']=True;spec['placement']['new']={}
+        self.assertEqual(P.partner_names(self.got,'new',spec=spec),[])
+
 
 if __name__ == '__main__':
     unittest.main()

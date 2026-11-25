@@ -32,7 +32,7 @@ def _check(values):
 
 
 def preflight(spec, settings):
-    """Run before any result, handle, placed shape or preparation is changed."""
+    """Run before any result, handle, adjusted shape or preparation is changed."""
     _check(settings)
     _check(settings.get('cfg_override'))
     layered = [p.get('name', '?') for p in (spec or {}).get('pieces', [])
@@ -54,7 +54,7 @@ def validate_config(cfg):
         raise ValueError('Invalid AC9 Native 3 mode')
     _check(cfg)
     if not cfg.get('live'):
-        raise ValueError('AC9 Native 3 is available only in Live Sim')
+        raise ValueError('AC9 Native 3 is available only in Simulate')
     if not cfg.get('graph', True) or not cfg.get('self_contact', True):
         raise ValueError('AC9 Native 3 requires graph execution and self contact')
 

@@ -69,6 +69,9 @@ The tools for fixing patterns are split into two. **Whole Pieces moves a piece a
 - **Duplicate** in **Selected Pieces**: copies the selected pieces just beside the originals. Seams between the copied pieces are copied too. The copies are unplaced, so place them with **Place**.
 - **Delete** in **Selected Pieces**: deletes the selected pieces. Their seams, placement, and fold lines are deleted along with them.
 
+
+See [Folds](fold-roles.md) for internal-line fold settings and the conditions for changes during Simulate.
+
 ## Left/right pairs
 
 Symmetric pieces are connected as a "left/right pair", and fixing one side also fixes the other as a mirror image.
@@ -80,10 +83,10 @@ Symmetric pieces are connected as a "left/right pair", and fixing one side also 
 
 ## Reflecting an edited pattern on the dressed garment
 
-When you edit a pattern, the edited shape is carried onto the current garment right away. But it is only carried over; the cloth has not settled. Pressing **Live Sim** continues the calculation from the current shape of the garment, and the whole garment settles into the edited pattern (see the "Run" section). If the shape cannot be carried over (the cloth flips over, the area becomes 0), it stops and shows the reason.
+When you edit a pattern, the edited shape is carried onto the current garment right away. But it is only carried over; the cloth has not settled. Pressing **Simulate** continues the calculation from the current shape of the garment, and the whole garment settles into the edited pattern (see the "Run" section). If the shape cannot be carried over (the cloth flips over, the area becomes 0), it stops and shows the reason.
 
-- **3D Follows Edits** (in **AC9 Run** on the Tool tab, below the run buttons): off by default. While it is off, pattern edits go only into the pattern, and the dressed garment and the placed shape wait as they are until the next run (you can keep editing the pattern without waiting for 3D). Press it to carry each edit to 3D as described above (each edit then takes a moment).
-- If there are edits waiting, **Update 3D** next to it turns red and "3D not updated" appears in the tool's options row. Press **Update 3D**, press **3D Follows Edits** again, or run the next **Live Sim**, and they are all carried to 3D together (no physics calculation).
+- **3D Follows Edits** (in **AC9 Run** on the Tool tab, below the run buttons): off by default. While it is off, pattern edits go only into the pattern, and the dressed garment and the adjusted shape wait as they are until the next run (you can keep editing the pattern without waiting for 3D). Press it to carry each edit to 3D as described above (each edit then takes a moment).
+- If there are edits waiting, **Update 3D** next to it turns red and "3D not updated" appears in the tool's options row. Press **Update 3D**, press **3D Follows Edits** again, or run the next **Simulate**, and they are all carried to 3D together (no physics calculation).
 
 ## Notches, darts, and slash and spread
 
@@ -93,7 +96,7 @@ When you edit a pattern, the edited shape is carried onto the current garment ri
 
 ## Buttons (Fasteners)
 
-A button is not a seam. It pulls the button and the buttonhole together only during the simulation to fasten them. Remove it and run **Live Sim**, and it opens.
+A button is not a seam. It pulls the button and the buttonhole together only during the simulation to fasten them. Remove it and run **Simulate**, and it opens.
 
 - Partner: select a piece and click the partner piece with the eyedropper of **Closes Onto** in **AC9 Piece**, and the buttonhole attaches to the partner. A button on a piece with no partner is decorative.
 - **Fasteners** in the **Pattern** panel: choose a style, then **Add Button** (one per click, Esc to finish), **Line Up** (lines them up along an internal line; a dialog asks the count and spacing first), **From BOM** (places them at the button-attaching seams in the BOM), the **Your own button** field (a button mesh you made, clicked with the eyedropper at the right of the field or picked by name, is added as a style and becomes the current one; model it with its origin at the middle of its back, +Z out of the cloth, in meters).

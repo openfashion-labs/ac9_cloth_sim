@@ -1,0 +1,646 @@
+{
+  "declarations": [
+    "REVIEWED_AST:NUMERIC_INPUT:29a32ba926fc98f82001467240ef0a0e581e80a9a0544471c112422f1250f186",
+    "REVIEWED_AST:STATE_MENU:338630dc8def0b7183f5448fd06adeadf0c0bc821ac157f68be2b09b5665e127",
+    "REVIEWED_AST:SYM_KEEP_LEFT:072ba49428492c28cafd15f8e8756bf22e754c9267ff46ba59638e139f32569c",
+    "REVIEWED_AST:SYM_KEEP_RIGHT:80bc70defd87814283a74ecc2a276896e9af2b03395c667985747819cfe5b2fc",
+    "REVIEWED_AST:_MENU_ITEMS:c2dbabf380532c3ec416319470a587a3649e96ebd024ff9bb16b8cb2518953c0",
+    "REVIEWED_AST:_MENU_ITEMS_T:ba56a06f51b82671c5c9b060e552f23c3e41413d48dd0f247dd118ecbfd0b936",
+    "REVIEWED_AST:_corner_rows:c1177f1627efcb9cc72978338c56422669eadb2f5201a5793b82fd6c4f9ad60f",
+    "REVIEWED_AST:_csel:591327d2ebf759c7561d99eda3ea36c9a9156aab0f6105e78635378d9fca6913",
+    "REVIEWED_AST:_dart_hit:fbc869b898d5007c291f10246d8c1bd14707da23d890a80040d88a05e0765579",
+    "REVIEWED_AST:_esel:c326994c1d3922bda23e8f7da9d84e464c36da797eb52f3dd66f3cb946860b88",
+    "REVIEWED_AST:_exists:370479b0f489898ea832c48ff4a6347bc3250cd1d8d4e9f02018559dc0074cb5",
+    "REVIEWED_AST:_imore:64c6e53508cd69a8804512e1e8b3d1d251904d2ecd549d0c4f479f0a526cc8f6",
+    "REVIEWED_AST:_ipoint_smooth_rows:a3fb6048b0c9a3912faf4995e96d582425459bcc938e2c754cbb368ed2e273a0",
+    "REVIEWED_AST:_isel:42954bef994c4e43ccb449e451f7ee6d2302a688cabd3fa4780ea600717ece2a",
+    "REVIEWED_AST:_psel:7f4477a454434e4a40bfe7eb1fce5009911ea51649061031408dc2deac2a466f",
+    "REVIEWED_AST:corner_eid:1edd38cf6776ea27de95f6539f22c19753d5183fe23482951b5af269842fa6c2",
+    "REVIEWED_AST:edit_item:ddfca8c7a2ccf8fde6ee88ecaa0fb34cc39fee380de5e0cf0d581afd47f10a44",
+    "REVIEWED_AST:in_picked:581391d8acb99143ffed3bffce9a625ad172931075c44cdcaaffb5f796fdd3c9",
+    "REVIEWED_AST:ipoint_index:847973b17713baca7768e2f25e7ba79400bdc0a030dfa52f6f926fe65107b060",
+    "REVIEWED_AST:ipoint_key:75e2b393276074058749404296cd0c38245421f06a7ced57cf58cf100f8ad458",
+    "REVIEWED_AST:ipoint_of:f08e45c484a092a6dffcc39f2981d864a77c04d7f5ccfe09da5d4965c2ed2827",
+    "REVIEWED_AST:menu_items:370ccb699f353d28dc46a8f733ff374388619e803432aa72d70c5738c6d11a08",
+    "REVIEWED_AST:numeric_row:1a1a2d13712fc404dc0e4266b39832e9f45bb8dd7dad1b81a256ab1099aa5f65",
+    "REVIEWED_AST:picked_lines:a87a52f9e76605b997ca2dffec3ee409bb88fec7583149a94cee3a0259d0116c",
+    "REVIEWED_AST:selected_edges:d42592bfc1c4ad2b4f61361912bce9539eda0eb71c5516f7b55b9cf1ce488ffc",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.add_dart'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.clear_placement'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.cut_line'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.delete_piece'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.duplicate_pieces'), Constant(value='follow=True')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.match_length'), Constant(value='side=a')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.match_length'), Constant(value='side=b')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.mirror_copy'), Constant(value='follow=True')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.mirror_pose'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.parallel_line'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_edit'), Constant(value='CURVE')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_edit'), Constant(value='NOTCH')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_edit'), Constant(value='REMOVE')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_edit'), Constant(value='SPLIT')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=MOVE')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=ROTATE')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=SCALE')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.piece_label'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.reset'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.reset_placed'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.seam_edit'), Constant(value='DELETE')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.seam_edit'), Constant(value='TOGGLE')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.seam_move_side'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.seam_notch'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.seam_notch'), Constant(value='one_side=True')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.spread'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.swap_sides'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.symmetrize'), Constant(value='keep=LEFT')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.symmetrize'), Constant(value='keep=RIGHT')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.unlink_pair'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.delete_selected'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=MOVE')], ctx=Load())",
+    "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=ROTATE')], ctx=Load())",
+    "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=SCALE')], ctx=Load())",
+    "_corner_rows:CALL:Attribute(value=Name(id='D', ctx=Load()), attr='corner_of_handle', ctx=Load())",
+    "_corner_rows:CALL:Attribute(value=Name(id='D', ctx=Load()), attr='is_smooth', ctx=Load())",
+    "_corner_rows:CALL:Attribute(value=Name(id='D', ctx=Load()), attr='piece', ctx=Load())",
+    "_corner_rows:OP:ac9_cloth_sim.corner_smooth",
+    "_corner_rows:Tuple(elts=[Constant(value='ac9_cloth_sim.corner_smooth'), Constant(value=''), Dict(keys=[Constant(value='piece'), Constant(value='corner'), Constant(value='smooth')], values=[Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Name(id='k', ctx=Load()), UnaryOp(op=Not(), operand=Name(id='on', ctx=Load()))])], ctx=Load())",
+    "_ipoint_smooth_rows:CALL:Attribute(value=Name(id='D', ctx=Load()), attr='internal', ctx=Load())",
+    "_ipoint_smooth_rows:CALL:Attribute(value=Name(id='D', ctx=Load()), attr='piece', ctx=Load())",
+    "_ipoint_smooth_rows:CALL:Attribute(value=Name(id='IL', ctx=Load()), attr='editable', ctx=Load())",
+    "_ipoint_smooth_rows:CALL:Attribute(value=Name(id='IL', ctx=Load()), attr='is_smooth', ctx=Load())",
+    "_ipoint_smooth_rows:CALL:Attribute(value=Name(id='IL', ctx=Load()), attr='shape', ctx=Load())",
+    "_ipoint_smooth_rows:CALL:Name(id='int', ctx=Load())",
+    "_ipoint_smooth_rows:CALL:Name(id='len', ctx=Load())",
+    "_ipoint_smooth_rows:OP:ac9_cloth_sim.ipoint_smooth",
+    "_ipoint_smooth_rows:Tuple(elts=[Constant(value='ac9_cloth_sim.ipoint_smooth'), Constant(value=''), Dict(keys=[Constant(value='piece'), Constant(value='line'), Constant(value='vertex'), Constant(value='smooth')], values=[Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=2), ctx=Load()), Name(id='k', ctx=Load()), UnaryOp(op=Not(), operand=Name(id='on', ctx=Load()))])], ctx=Load())",
+    "menu_items:CALL:Attribute(value=BoolOp(op=Or(), values=[Name(id='pc', ctx=Load()), Dict()]), attr='get', ctx=Load())",
+    "menu_items:CALL:Attribute(value=Name(id='_MENU_ITEMS', ctx=Load()), attr='get', ctx=Load())",
+    "menu_items:CALL:Attribute(value=Name(id='it', ctx=Load()), attr='get', ctx=Load())",
+    "menu_items:CALL:Attribute(value=Name(id='sm', ctx=Load()), attr='get', ctx=Load())",
+    "menu_items:CALL:Attribute(value=Name(id='spec', ctx=Load()), attr='get', ctx=Load())",
+    "menu_items:CALL:Attribute(value=Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), attr='startswith', ctx=Load())",
+    "menu_items:CALL:Name(id='_corner_rows', ctx=Load())",
+    "menu_items:CALL:Name(id='_dart_hit', ctx=Load())",
+    "menu_items:CALL:Name(id='_ipoint_smooth_rows', ctx=Load())",
+    "menu_items:CALL:Name(id='bool', ctx=Load())",
+    "menu_items:CALL:Name(id='list', ctx=Load())",
+    "menu_items:CALL:Name(id='next', ctx=Load())",
+    "menu_items:CALL:Name(id='numeric_row', ctx=Load())",
+    "menu_items:OP:ac9_cloth_sim.clone_shape",
+    "menu_items:OP:ac9_cloth_sim.cut_out",
+    "menu_items:OP:ac9_cloth_sim.hide_pieces",
+    "menu_items:OP:ac9_cloth_sim.measure_delete",
+    "menu_items:OP:ac9_cloth_sim.measure_mirror",
+    "menu_items:OP:ac9_cloth_sim.move_dart",
+    "menu_items:OP:transform.rotate",
+    "menu_items:OP:transform.translate",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.clone_shape'), Constant(value=''), Dict(keys=[Constant(value='piece'), Constant(value='line'), Constant(value='sew')], values=[Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=2), ctx=Load()), Constant(value=True)])], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.clone_shape'), Constant(value=''), Dict(keys=[Constant(value='piece'), Constant(value='line')], values=[Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=2), ctx=Load())])], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.cut_out'), Constant(value=''), Dict(keys=[Constant(value='piece'), Constant(value='line')], values=[Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=2), ctx=Load())])], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.hide_pieces'), Constant(value='')], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.measure_delete'), Constant(value='')], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.measure_mirror'), Constant(value='')], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.move_dart'), Constant(value='')], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='transform.rotate'), Constant(value='')], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='transform.translate'), Constant(value='')], ctx=Load())",
+    "menu_items:Tuple(elts=[Name(id='STATE_MENU', ctx=Load()), Constant(value='')], ctx=Load())",
+    "numeric_row:CALL:Attribute(value=Name(id='json', ctx=Load()), attr='dumps', ctx=Load())",
+    "numeric_row:CALL:Attribute(value=Subscript(value=Name(id='me', ctx=Load()), slice=Constant(value=0), ctx=Load()), attr='upper', ctx=Load())",
+    "numeric_row:CALL:Name(id='edit_item', ctx=Load())",
+    "numeric_row:CALL:Name(id='in_picked', ctx=Load())",
+    "numeric_row:CALL:Name(id='len', ctx=Load())",
+    "numeric_row:CALL:Name(id='list', ctx=Load())",
+    "numeric_row:CALL:Name(id='picked_lines', ctx=Load())",
+    "numeric_row:OP:ac9_cloth_sim.set_gap",
+    "numeric_row:Tuple(elts=[Constant(value='ac9_cloth_sim.set_gap'), Constant(value=''), Dict(keys=[Constant(value='kind'), Constant(value='items'), Constant(value='_invoke')], values=[Constant(value='MULTI'), Call(func=Attribute(value=Name(id='json', ctx=Load()), attr='dumps', ctx=Load()), args=[ListComp(elt=Call(func=Name(id='list', ctx=Load()), args=[Name(id='x', ctx=Load())]), generators=[comprehension(target=Name(id='x', ctx=Store()), iter=Name(id='sel', ctx=Load()), is_async=0)])]), Constant(value=True)])], ctx=Load())",
+    "numeric_row:Tuple(elts=[Constant(value='ac9_cloth_sim.set_gap'), Constant(value=''), Dict(keys=[Constant(value='kind'), Constant(value='piece'), Constant(value='_invoke')], values=[Constant(value='PIECE'), Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Constant(value=True)])], ctx=Load())",
+    "numeric_row:Tuple(elts=[Constant(value='ac9_cloth_sim.set_gap'), Constant(value=''), Dict(keys=[Constant(value='kind'), Constant(value='piece'), Constant(value='thing'), Constant(value='_invoke')], values=[Call(func=Attribute(value=Subscript(value=Name(id='me', ctx=Load()), slice=Constant(value=0), ctx=Load()), attr='upper', ctx=Load())), Subscript(value=Name(id='me', ctx=Load()), slice=Constant(value=1), ctx=Load()), Subscript(value=Name(id='me', ctx=Load()), slice=Constant(value=2), ctx=Load()), Constant(value=True)])], ctx=Load())"
+  ],
+  "runtime": {
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"PIECE\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.duplicate_pieces\", \"follow=True\", {}]": {
+      "tests": [],
+      "outside_symmetry": "選択した物の独立複製。鏡側の新規複製を強制しない既存契約。"
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.mirror_copy\", \"follow=True\", {}]": {
+      "tests": [],
+      "outside_symmetry": "明示的な鏡の対の作成。fixture()で各面を構築して検証。"
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.symmetrize\", \"keep=LEFT\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.symmetrize\", \"keep=RIGHT\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.pattern_transform\", \"mode=MOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.pattern_transform\", \"mode=ROTATE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.pattern_transform\", \"mode=SCALE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.piece_label\", \"\", {}]": {
+      "tests": [],
+      "outside_symmetry": "名前は選択対象だけ。鏡側の名前は変更しない既存契約。"
+    },
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.delete_piece\", \"\", {}]": {
+      "tests": [],
+      "outside_symmetry": "選択した型紙を削除。鏡の相手を自動削除しない既存契約。"
+    },
+    "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"EDGE\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.pattern_edit\", \"SPLIT\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.parallel_line\", \"\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.pattern_edit\", \"CURVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.pattern_edit\", \"NOTCH\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.add_dart\", \"\", {}]": {
+      "tests": [
+        "test_command_symmetry.py:test_move_dart_keeps_both_mirrors_and_maps"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"corner\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"CORNER\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"corner\", \"ac9_cloth_sim.corner_smooth\", \"\", {\"smooth\": true}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"corner\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"handle\", \"ac9_cloth_sim.corner_smooth\", \"\", {\"smooth\": true}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"ILINE\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.cut_line\", \"\", {}]": {
+      "tests": [
+        "test_command_symmetry.py:test_cut_all_four_lines_and_return_all_halves",
+        "test_command_symmetry.py:test_central_cut_uses_the_parent_reflection"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.spread\", \"\", {}]": {
+      "tests": [
+        "test_command_symmetry.py:test_spread_keeps_both_mirrors",
+        "test_command_symmetry.py:test_reversed_resampled_spread_uses_geometric_direction"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.parallel_line\", \"\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.pattern_edit\", \"SPLIT\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.pattern_edit\", \"CURVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"inode\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"IPOINT\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"inode\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"ihandle\", \"ac9_cloth_sim.pattern_edit\", \"CURVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iend\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"IPOINT\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iend\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"notch\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"PIECE\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.duplicate_pieces\", \"follow=True\", {}]": {
+      "tests": [],
+      "outside_symmetry": "選択した物の独立複製。鏡側の新規複製を強制しない既存契約。"
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.mirror_copy\", \"follow=True\", {}]": {
+      "tests": [],
+      "outside_symmetry": "明示的な鏡の対の作成。fixture()で各面を構築して検証。"
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.symmetrize\", \"keep=LEFT\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.symmetrize\", \"keep=RIGHT\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.pattern_transform\", \"mode=MOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.pattern_transform\", \"mode=ROTATE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.pattern_transform\", \"mode=SCALE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.piece_label\", \"\", {}]": {
+      "tests": [],
+      "outside_symmetry": "名前は選択対象だけ。鏡側の名前は変更しない既存契約。"
+    },
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.delete_piece\", \"\", {}]": {
+      "tests": [],
+      "outside_symmetry": "選択した型紙を削除。鏡の相手を自動削除しない既存契約。"
+    },
+    "[\"TRANSFORM_PATTERN\", \"edge\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"EDGE\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"edge\", \"ac9_cloth_sim.pattern_edit\", \"SPLIT\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"edge\", \"ac9_cloth_sim.parallel_line\", \"\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"edge\", \"ac9_cloth_sim.pattern_edit\", \"CURVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"edge\", \"ac9_cloth_sim.pattern_edit\", \"NOTCH\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"edge\", \"ac9_cloth_sim.add_dart\", \"\", {}]": {
+      "tests": [
+        "test_command_symmetry.py:test_move_dart_keeps_both_mirrors_and_maps"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"corner\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"CORNER\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"corner\", \"ac9_cloth_sim.corner_smooth\", \"\", {\"smooth\": true}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"corner\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"handle\", \"ac9_cloth_sim.corner_smooth\", \"\", {\"smooth\": true}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.pattern_transform\", \"mode=MOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.pattern_transform\", \"mode=ROTATE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.pattern_transform\", \"mode=SCALE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_parallel_and_whole_transforms",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.delete_selected\", \"\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"inode\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"IPOINT\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"inode\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"ihandle\", \"ac9_cloth_sim.pattern_edit\", \"CURVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iend\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"IPOINT\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iend\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"notch\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits",
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"DRAW\", \"piece\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"PIECE\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"DRAW\", \"iline\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"ILINE\"}]": {
+      "tests": [
+        "test_numeric_size.py:test_symmetric_piece",
+        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"corner\", \"ac9_cloth_sim.corner_smooth\", \"\", {\"smooth\": false}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"handle\", \"ac9_cloth_sim.corner_smooth\", \"\", {\"smooth\": false}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"corner\", \"ac9_cloth_sim.corner_smooth\", \"\", {\"smooth\": false}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"handle\", \"ac9_cloth_sim.corner_smooth\", \"\", {\"smooth\": false}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_outline_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.cut_out\", \"\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.clone_shape\", \"\", {}]": {
+      "tests": [
+        "test_command_symmetry.py:test_clone_and_sew_every_counterpart"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.clone_shape\", \"\", {\"sew\": true}]": {
+      "tests": [
+        "test_command_symmetry.py:test_clone_and_sew_every_counterpart"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"inode\", \"ac9_cloth_sim.ipoint_smooth\", \"\", {\"smooth\": true}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"ihandle\", \"ac9_cloth_sim.ipoint_smooth\", \"\", {\"smooth\": true}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.cut_out\", \"\", {}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.clone_shape\", \"\", {}]": {
+      "tests": [
+        "test_command_symmetry.py:test_clone_and_sew_every_counterpart"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.clone_shape\", \"\", {\"sew\": true}]": {
+      "tests": [
+        "test_command_symmetry.py:test_clone_and_sew_every_counterpart"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"inode\", \"ac9_cloth_sim.ipoint_smooth\", \"\", {\"smooth\": true}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"ihandle\", \"ac9_cloth_sim.ipoint_smooth\", \"\", {\"smooth\": true}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"inode\", \"ac9_cloth_sim.ipoint_smooth\", \"\", {\"smooth\": false}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"TRANSFORM_PATTERN\", \"inode\", \"ac9_cloth_sim.ipoint_smooth\", \"\", {\"smooth\": false}]": {
+      "tests": [
+        "test_edit_symmetry.py:test_internal_edits"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.move_dart\", \"\", {}]": {
+      "tests": [
+        "test_command_symmetry.py:test_move_dart_keeps_both_mirrors_and_maps"
+      ],
+      "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"corner\", \"ac9_cloth_sim.move_dart\", \"\", {}]": {
+      "tests": [
+        "test_command_symmetry.py:test_move_dart_keeps_both_mirrors_and_maps"
+      ],
+      "outside_symmetry": null
+    }
+  }
+}

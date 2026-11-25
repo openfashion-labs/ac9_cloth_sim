@@ -6,11 +6,13 @@ partners may lie apart where they are not sewn yet).
   python lay_once.py <in.npz> <out.npz>
 
 in: X (n, 3) mm, flat (n, 2) mm, vp (n,) piece, E (m, 2) stitches, F (t, 3), fp (t,) the cloth's triangles and their
-piece, B (b, 3) mm, T (c, 3) the body, names, piece. out: X (n_k, 3) mm the band laid (absent when the placed shape
+piece, B (b, 3) mm, T (c, 3) the body, names, piece. out: X (n_k, 3) mm the band laid (absent when the adjusted shape
 stays), row (JSON: the run_log 'lay' row)."""
 import json
 import os
 import sys
+from runtime_guard import verify_actual_environment
+verify_actual_environment()
 
 import numpy as np
 

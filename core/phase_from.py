@@ -1,7 +1,7 @@
 """Phase Sim again from a frame of an earlier Phase Sim: the rest of that run's steps, not a new plan.
 
 A Phase Sim's frames on the timeline are its stages' frames joined (every 2nd solver step, and always the last).
-Pressing Phase Sim again with the timeline on frame f -- or after pieces were put back to their placed shapes at
+Pressing Phase Sim again with the timeline on frame f -- or after pieces were put back to their adjusted shapes at
 frame f -- goes on from there as the same run would have: the stage f falls in, from f's place in it, then the stages
 after it. Before, it ran the Continue stages (gravity, then close), so pieces that wait in the first run (a sleeve
 until the bodice hangs) were sewn at once.

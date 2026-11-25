@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Which side of an internal line is a fold's side A: the line's "hand".
 
-A fold names the two sides of its line A and B (Turns: the side that turns on the placed shape; Layers: the side
+A fold names the two sides of its line A and B (Turns: the side that turns on the adjusted shape; Layers: the side
 simulated). A is the left of the line walked from its first point when the line's "hand" is +1 (the default, no
 key stored), the right when it is -1. The hand is written on a line when the line is made or linked as the mirror
 image of another (Mirror Copy, a piece edited symmetrically, a fold carried to the twin), so that A on the mirror
@@ -33,9 +33,10 @@ def shape_only(piece):
     """The piece dict with its lines' hands left out, for the keys that stand for the pattern's shape (the mesh, the
     shape kept before sewing, the carry): a hand names a fold's sides and moves nothing."""
     its = piece.get('internals')
-    if not its or not any(HAND_KEY in it for it in its):
+    ignored = {HAND_KEY, 'mirror_id'}
+    if not its or not any(ignored.intersection(it) for it in its):
         return piece
-    return dict(piece, internals=[{k: v for k, v in it.items() if k != HAND_KEY} for it in its])
+    return dict(piece, internals=[{k: v for k, v in it.items() if k not in ignored} for it in its])
 
 
 def a_left(line):

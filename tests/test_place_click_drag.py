@@ -16,6 +16,7 @@ import json
 import sys
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ARGS = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
@@ -178,6 +179,34 @@ class PlaceClickDrag(unittest.TestCase):
         self.assertFalse(getattr(op, 'movers', None))
         self.assertEqual(self.g.matrix_world, m0)
 
+    def test_drag_over_unselected_piece_keeps_selection(self):
+        for shift in (False, True):
+            SEL.apply(bpy.context, ['B'], active='B')
+            op = self.press('PLACED', self.placed, shift=shift)
+            op.p['selection'] = ('B',)
+            op._worn_note = lambda: None
+            calls = []
+            with patch.object(TB, '_call', side_effect=lambda *a, **k: calls.append(SEL.pieces(bpy.context)) or {'RUNNING_MODAL'}):
+                TB.AC9_OT_SimPlacePress._drag_(op, bpy.context, op.p['event'])
+            self.assertEqual(calls, [['B']])
+            self.assertEqual(self.picked(), ['B'])
+
+    def test_drag_with_empty_selection_does_not_grab_piece(self):
+        op = self.press('PLACED', self.placed)
+        with patch.object(TB, '_call') as call, patch.object(TB, 'set_note'):
+            self.assertEqual(TB.AC9_OT_SimPlacePress._drag_(op, bpy.context, op.p['event']), {'CANCELLED'})
+            call.assert_not_called()
+        self.assertEqual(self.picked(), [])
+
+    def test_drag_refuses_changed_selection_since_press(self):
+        SEL.apply(bpy.context, ['B'], active='B')
+        op = self.press('PLACED', self.placed)
+        op.p['selection'] = ('A',)
+        with patch.object(TB, '_call') as call:
+            self.assertEqual(TB.AC9_OT_SimPlacePress._drag_(op, bpy.context, op.p['event']), {'CANCELLED'})
+            call.assert_not_called()
+        self.assertEqual(self.picked(), ['B'])
+
     def test_worn_pieces_are_left_out(self):
         spec = ST.get(bpy.context)[0]
         self.assertEqual(PL.split_worn(spec, ['A', 'B', 'C', 'E']), (['A', 'B'], ['C', 'E']))
@@ -194,11 +223,11 @@ class PlaceClickDrag(unittest.TestCase):
         spec = ST.get(bpy.context)[0]
         labels = {k: [r[0] for r in DTL.menu_items(spec, (k, 'A')) if r is not None] for k in ('placed', 'garment')}
         for k in ('placed', 'garment'):
-            for want in ("Move", "Rotate", "Back to Guide", "Back to Flat", "Mirror Placement", "Swap Sides", "State",
+            for want in ("Move", "Rotate", "Back to Placed Shape", "Back to Flat", "Mirror Placement", "Swap Sides", "State",
                          "Hide"):
                 self.assertIn(want, labels[k], k)
-        self.assertNotIn("Back to Placed", labels['placed'])
-        self.assertIn("Back to Placed", labels['garment'])
+        self.assertNotIn("Back to Adjusted Shape", labels['placed'])
+        self.assertIn("Back to Adjusted Shape", labels['garment'])
 
     # ---- sliding on the guide wherever the piece is held
 
@@ -220,6 +249,97 @@ class PlaceClickDrag(unittest.TestCase):
         self.assertAlmostEqual(hit[2], near[1], places=6)
         # along the axis: nothing
         self.assertIsNone(BA.ray_nearest(g, [0, 0, -1000], [0, 0, 1]))
+
+    def guide_gesture(self):
+        # Valid finite cylinders: torso starts above the lower part of the leg and covers its upper part.
+        guides={n:dict(o=[0,0,0],R=np.eye(3).tolist(),r=r,h0=lo,h1=hi)
+                for n,r,lo,hi in [('torso',150.,60.,200.),('leg_L',70.,0.,100.)]}
+        op=types.SimpleNamespace(guides=guides,kind=None,rel_guide=None,_drag_guide=None,rel=None,
+                                 ctrl=True,dragged=True,live=True,pressed=False,mouse=(0,0))
+        op._hit=lambda c,x,y,**k:PL.AC9_OT_SimPlace._hit(op,c,x,y,**k)
+        op._status=lambda *_:None
+        op._slide_center=lambda *a:PL.AC9_OT_SimPlace._slide_center(op,*a)
+        ctx=types.SimpleNamespace(region=None,region_data=None,area=types.SimpleNamespace(tag_redraw=lambda:None))
+        origin=np.array([30.,-1000.,20.])
+        self.enterContext(patch.object(PL,'region_2d_to_origin_3d',side_effect=lambda *a:origin/1000.))
+        self.enterContext(patch.object(PL,'region_2d_to_vector_3d',return_value=np.array([0.,1.,0.])))
+        self.enterContext(patch.object(PL,'flat_hit',return_value=None))
+        op.hit=op._hit(ctx,0,0)
+        return op,ctx,origin
+
+    def guide_event(self,op,ctx,type,value='PRESS',ctrl=True):
+        return PL.AC9_OT_SimPlace._modal(op,ctx,types.SimpleNamespace(type=type,value=value,ctrl=ctrl,
+                                                        mouse_region_x=0,mouse_region_y=0))
+
+    def test_drag_guide_stays_on_first_cylinder_through_overlap(self):
+        op,ctx,o=self.guide_gesture()
+        self.assertEqual(op.hit[0],'leg_L')
+        self.guide_event(op,ctx,'LEFTMOUSE')
+        o[2]=80.
+        self.assertEqual(BA.ray_hit(op.guides,o,[0,1,0])[0],'torso')
+        self.guide_event(op,ctx,'MOUSEMOVE')
+        self.assertEqual(op.hit[0],'leg_L')
+        self.guide_event(op,ctx,'LEFT_CTRL','PRESS')
+        self.assertEqual(op.hit[0],'leg_L')
+        self.assertEqual(op._hit(ctx,0,0)[0],'leg_L')  # release uses this same hit path
+
+    def test_new_drag_can_choose_another_cylinder(self):
+        op,ctx,o=self.guide_gesture()
+        self.guide_event(op,ctx,'LEFTMOUSE')
+        o[2]=80.
+        other=types.SimpleNamespace(**{k:v for k,v in vars(op).items() if not k.startswith('_')})
+        other.kind=None;other.rel_guide=None;other._drag_guide=None;other.pressed=False
+        other._hit=lambda c,x,y,**k:PL.AC9_OT_SimPlace._hit(other,c,x,y,**k)
+        other._status=lambda *_:None
+        other.hit=other._hit(ctx,0,0)
+        self.guide_event(other,ctx,'LEFTMOUSE')
+        self.assertEqual(other.hit[0],'torso')
+        self.assertEqual(other._drag_guide,'torso')
+        self.assertEqual(op._hit(ctx,0,0)[0],'leg_L')
+
+    def test_drag_from_empty_space_locks_first_valid_guide(self):
+        op,ctx,o=self.guide_gesture();op.hit=None
+        self.guide_event(op,ctx,'MOUSEMOVE')
+        self.assertTrue(op.pressed)
+        self.assertEqual(op._drag_guide,'leg_L')
+        o[2]=80.;self.guide_event(op,ctx,'MOUSEMOVE')
+        self.assertEqual(op.hit[0],'leg_L')
+
+    def test_locked_guide_uses_nearest_point_when_cursor_leaves_it(self):
+        op,ctx,o=self.guide_gesture();self.guide_event(op,ctx,'LEFTMOUSE')
+        o[:]=[100.,-1000.,80.]
+        self.assertEqual(BA.ray_hit(op.guides,o,[0,1,0])[0],'torso')
+        self.guide_event(op,ctx,'MOUSEMOVE');self.assertEqual(op.hit[0],'leg_L')
+        o[2]=300.;self.guide_event(op,ctx,'MOUSEMOVE')
+        self.assertEqual(op.hit[0],'leg_L');self.assertEqual(op.hit[2],100.)
+
+    def test_locked_new_torso_placement_keeps_center_snapping(self):
+        op,ctx,o=self.guide_gesture();o[2]=80.;op.hit=op._hit(ctx,0,0)
+        self.guide_event(op,ctx,'LEFTMOUSE')
+        with patch.object(PL,'location_3d_to_region_2d',return_value=__import__('mathutils').Vector((10.,10.))) as project:
+            self.guide_event(op,ctx,'LEFT_CTRL','RELEASE',ctrl=False)
+            self.assertTrue(project.called)
+            self.assertEqual(op.hit[0],'torso');self.assertIsNotNone(op.hit[4])
+
+    def test_hover_can_change_guides_until_press(self):
+        op,ctx,o=self.guide_gesture();o[2]=80.
+        self.assertEqual(op._hit(ctx,0,0)[0],'torso')
+        self.assertIsNone(op._drag_guide)
+
+    def test_flat_gesture_does_not_acquire_a_cylinder(self):
+        op,ctx,o=self.guide_gesture()
+        flat=(S.FLAT,dict(o=[0,0,0],R=np.eye(3).tolist()),'ground',1.,None)
+        op.hit=flat;self.guide_event(op,ctx,'LEFTMOUSE')
+        o[2]=80.
+        with patch.object(PL,'flat_hit',return_value=flat):
+            self.guide_event(op,ctx,'MOUSEMOVE')
+        self.assertEqual(op.hit[0],S.FLAT);self.assertIsNone(op._drag_guide)
+
+    def test_locked_guide_keeps_last_hit_when_axis_view_has_no_solution(self):
+        op,ctx,o=self.guide_gesture();self.guide_event(op,ctx,'LEFTMOUSE');hit=op.hit
+        with patch.object(PL,'region_2d_to_vector_3d',return_value=np.array([0.,0.,1.])):
+            self.guide_event(op,ctx,'MOUSEMOVE')
+        self.assertEqual(op.hit,hit)
 
     # ---- the box: pieces one by one, also on the dressed garment
 

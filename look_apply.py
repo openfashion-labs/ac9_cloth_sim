@@ -81,7 +81,7 @@ def apply_all(context, spec):
     from . import dress as D
     from . import pattern_view as PV
     from . import placed_view as PLV
-    apply_garment(bpy.data.objects.get(D.garment_name(spec)), spec)
+    apply_garment(D.garment(spec), spec)
     for n, ob in PV.piece_objects().items():
         ensure_uv_flat(ob.data)
         apply_piece(ob, spec, n)

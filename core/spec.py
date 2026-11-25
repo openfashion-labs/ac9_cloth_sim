@@ -33,6 +33,8 @@ external tool (MCP) all read and write the same thing.
                                                            # "hand": -1 optional (2026-11-19, core/fold_hand.py): a
                                                            # fold's side A is the right of the line, not its left (a
                                                            # mirror line: A the mirror image of A on its partner)
+                                                           # "mirror_id": shared persistent identity of authored
+                                                           # counterpart lines within this document's mirror pair
          "enabled": bool,
          "frozen": bool,                    # optional: stays put in the simulation (still touched, still sewn)
          "contact": bool,                   # optional, default true; false with frozen = nothing touches it, the
@@ -52,6 +54,7 @@ external tool (MCP) all read and write the same thing.
          "mesh_mm": float,                  # optional (2026-10-08): this piece's own mesh size (the Piece Mesh); a
                                             # mirrored pair takes the finer of its two (core/pattern_build.py)
          "family": str, "mirrored": bool,   # optional: a drawn piece and its mirrored copy share a family (twins)
+         "placement_unlinked": bool,        # optional: independent placement retained while either/both are unplaced
          "mirror_edit": bool,               # optional (2026-10-21): a piece symmetric about its center line, edited
                                             # on one side is edited on the other too (core/draft.symmetric_edit)
          "closes_onto": name,               # optional (2026-10-22): the piece it buttons onto, set by hand (Closes
@@ -77,13 +80,13 @@ external tool (MCP) all read and write the same thing.
                                             # mirrored pair = placed independently (a monster's arms, 2026-10-10);
                                             # "pose": {"loc": [x, y, z] mm, "rot": [x, y, z] deg} = the piece moved
                                             # by hand from where the numbers put it (2026-10-14, placed_view.py): the
-                                            # placed shape is turned by rot (Euler XYZ) about its own middle (the
+                                            # adjusted shape is turned by rot (Euler XYZ) about its own middle (the
                                             # center of its bounding box as made) and moved by loc. Absent = not
                                             # moved. A mirrored pair's twin holds the mirror image (mirror_pose)
       "pairs": [[piece, piece], ...],        # optional: two pieces placed as mirror images though not drawn as a
                                             # mirrored copy (Pair, 2026-10-10); their meshes stay their own
       "folds": [{"piece": name, "line": internal id, "deg": float}    # + = mountain seen from the pattern's face; optional
-                                            # "side": "A" / "B", the side Fold turns on the placed shape (A: the left
+                                            # "side": "A" / "B", the side Fold turns on the adjusted shape (A: the left
                                             # walking the line from its first point, the right on a line with hand -1
                                             # (above), so a mirror pair's A is one side; not read by the solver, 10/24)
                                             # "side": "NONE" keeps the angle but skips the placed turn (10/30).
@@ -138,7 +141,8 @@ still what everything else reads.
 Coordinates are the 2D pattern layout in mm. A SIDE is a stretch of one piece:
 
     outline:  {"piece": name, "from": [edge id, t], "to": [edge id, t], "dir": +1 | -1}
-    internal: {"piece": name, "line": internal id, "from": t, "to": t}
+    internal: {"piece": name, "line": internal id, "from": t, "to": t, "wrap": int (optional)}
+              t in [0,1]; signed span = (to - from + wrap) * line length. Absent wrap keeps legacy direct span.
 
 Cut restates interval, line, zipper and point owners and split-seam dependents on the corresponding half.
 Elastic bands are partitioned only when their finite-width field can be preserved; an unrepresentable band or
@@ -324,6 +328,16 @@ def in_holes(Q, hole_rings):
 
 PIECE_STATES = ('active', 'freeze', 'off_pattern', 'off_all')
 
+# A fold's direction, on an internal line and on a seam alike (one table for both fields): seen from the face of the
+# side that turns (an internal line's Side A / B, a seam's turning piece). The ids 'IN' / 'OUT' are not saved: they
+# are read from the sign of the fold's deg (+ = mountain).
+FOLD_DIRECTIONS = [
+    ('IN', "Mountain", "A mountain fold seen from the pattern's face: the side turns behind the face (in "
+     "towards the body when the face looks out)", 0),
+    ('OUT', "Valley", "A valley fold seen from the pattern's face: the side turns over onto the face (out "
+     "away from the body when the face looks out)", 1)]
+
+
 # The one place the states' screen names and tooltips are written (user 2026-11-17: the menu and the buttons
 # named the same state two ways, written in three places). Every button, menu, list, header, translation and the manuals read these; the stored
 # keys above never change (old files open). tests/test_state_names.py checks each display against this table.
@@ -339,6 +353,27 @@ STATE_NAMES = {
 def state_name(state):
     """The screen name of a piece state (English; tx() translates it)."""
     return STATE_NAMES[state][0]
+
+
+# The one place the runs' screen names are written: the run buttons, the operator's modes, the play key's name in the
+# preferences, the status and result lines read these (user 2026-11-23: the main run is named Simulate, one button later
+# stepping by the pieces' sew order). Keyed by the operator's mode and by the panel button that started a run (both
+# are stored in a result's job.json: the keys never change). The sentences that name a run (tooltips, reports, the
+# manuals) write the same word; tests/test_run_names.py checks them against this table and finds the old names nowhere.
+RUN_NAMES = {
+    'LIVE': "Simulate",           # the main run: from the shape on screen until stopped
+    'START': "Phase Sim",         # Experimental: in stages from the placement
+    'SIMULATE': "Phase Sim",      # the panel button of Phase Sim
+    'CONTINUE': "Continue",
+    'LOCAL': "Local Sim",
+    'REDRESS': "Restart",
+}
+PLAY_KEY_NAME = RUN_NAMES['LIVE'] + " (Start / Stop)"   # the preferences' hotkey row (live_key.py)
+
+
+def run_name(key):
+    """The screen name of a run, by its mode or its panel button (English; tx() translates it)."""
+    return RUN_NAMES[key]
 
 
 def piece_state(pc):
@@ -403,11 +438,19 @@ def piece_index(spec):
 def side_polyline(spec, side, outlines=None, step=1.0):
     pc = piece_index(spec)[side['piece']]
     if 'line' in side:
-        P = next(np.asarray(x['pts'], float) for x in pc['internals'] if x['id'] == side['line'])
-        cum = np.r_[0, np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]
-        a, b = side['from'] * cum[-1], side['to'] * cum[-1]
-        s = np.linspace(a, b, max(2, int(abs(b - a) / step) + 1))
-        return np.stack([np.interp(s, cum, P[:, 0]), np.interp(s, cum, P[:, 1])], 1)
+        if 'wrap' not in side:
+            # Preserve sampling of existing files exactly; marked new sides use
+            # authored stations so the displayed path and sewing path agree.
+            P = next(np.asarray(x['pts'], float) for x in pc['internals'] if x['id'] == side['line'])
+            cum = np.r_[0, np.cumsum(np.linalg.norm(np.diff(P, axis=0), axis=1))]
+            a, b = side['from'] * cum[-1], side['to'] * cum[-1]
+            s = np.linspace(a, b, max(2, int(abs(b-a) / step) + 1))
+            return np.stack([np.interp(s,cum,P[:,0]),np.interp(s,cum,P[:,1])],1)
+        from .line_track import LineTrack, side_span, sample
+        it = next(x for x in pc['internals'] if x['id'] == side['line'])
+        tr = LineTrack(it['pts'], it.get('closed', False))
+        a, b, _ = side_span(side, tr.L)
+        return sample(tr, a, b, step)
     ol = outlines[side['piece']] if outlines else Outline(pc)
     return ol.side_polyline(side, step)
 
@@ -464,14 +507,15 @@ def seam_run(spec, seam, tol_mm=1.0, max_deg=30.0):
     return [s['id'] for s in run]
 
 
-def seam_folds(spec):
+def seam_folds(spec, enabled_only=True):
     """[(seam, deg, turn piece)] for the folds set on enabled seams, a piece sewn to itself too (a dart, a one-piece
-    sleeve's underarm: user 2026-10-23, every seam alike; the turn piece is then the piece itself)."""
+    sleeve's underarm: user 2026-10-23, every seam alike; the turn piece is then the piece itself). enabled_only
+    False: the switched-off seams' folds too (a Live run keeps a seam's fold while it is let go)."""
     by = {sm['id']: sm for sm in spec.get('seams', [])}
     out = []
     for f in spec.get('folds', []):
         sm = by.get(f.get('seam'))
-        if sm is None or not sm.get('enabled', True) or not f.get('deg'):
+        if sm is None or (enabled_only and not sm.get('enabled', True)) or not f.get('deg'):
             continue
         t = f.get('turn') if f.get('turn') in (sm['a']['piece'], sm['b']['piece']) else turn_default(spec, sm)
         out.append((sm, float(f['deg']), t))
@@ -508,6 +552,7 @@ def check(spec):
 
 
 MIRROR_GUIDE = {'arm_L': 'arm_R', 'arm_R': 'arm_L', 'leg_L': 'leg_R', 'leg_R': 'leg_L'}
+UNPLACE_NAME = 'Return to Unplaced'
 
 
 def twins(spec, any_state=False):
@@ -530,11 +575,17 @@ def twins(spec, any_state=False):
     return out
 
 
+def pair_unlinked(spec, a, b):
+    """Independent placement survives removal of both placement records."""
+    pl = spec.get('placement', {})
+    return bool(pl.get(a, {}).get('unlinked') or pl.get(b, {}).get('unlinked') or
+                any(pc.get('placement_unlinked') for pc in spec['pieces'] if pc['name'] in (a, b)))
+
+
 def linked_twins(spec):
     """twins() whose placement is linked: not set apart by "unlinked" on either piece (Unlink, user 2026-10-10: a
     pair may be placed independently, a monster with its arms in different places; the pattern stays mirrored)."""
-    pl = spec.get('placement', {})
-    return [(a, b) for a, b in twins(spec) if not (pl.get(a, {}).get('unlinked') or pl.get(b, {}).get('unlinked'))]
+    return [(a, b) for a, b in twins(spec) if not pair_unlinked(spec, a, b)]
 
 
 def placement_pairs(spec):
@@ -859,6 +910,9 @@ def mirrored_placement(pa, ol_a, ol_b, pose='mirror', cx=0.0):
         out = dict(pa, guide=MIRROR_GUIDE.get(pa['guide'], pa['guide']), theta=180.0 - float(pa['theta']),
                    anchor=(cb + d).tolist())
     out.pop('pose', None)
+    if axis_of(ol_a.layout) == 0 and out.get('ends') in ('left', 'right'):
+        # drawn mirrored left / right: the same end of the garment is the other end of b's pattern (Ends, closure.py)
+        out['ends'] = 'right' if out['ends'] == 'left' else 'left'
     if out.get('spin'):                       # the mirror image turned the other way
         out['spin'] = -float(out['spin'])
     p = mirror_pose(pa.get('pose'), plane) if pose == 'mirror' else pose

@@ -23,10 +23,22 @@ def filter_stitches(got, piece, targets):
     return scoped, tris, xyz
 
 
-def partner_names(got, piece, excluded=()):
+def partner_names(got, piece, excluded=(), spec=None):
     pat = got[0]
     names = list(map(str, pat['names']))
     if piece not in names:
+        # A freshly cloned pocket is deliberately unplaced and absent from prepare's
+        # mesh. Its authored enabled seams still identify the placed target to pick.
+        if spec is not None and piece not in spec.get('placement', {}):
+            pc = next((p for p in spec.get('pieces', []) if p['name'] == piece), None)
+            if pc is None or not pc.get('enabled', True):return []
+            partners = set()
+            for sm in spec.get('seams', []):
+                if not sm.get('enabled', True):continue
+                a, b = sm['a']['piece'], sm['b']['piece']
+                if a == piece and b in names:partners.add(b)
+                if b == piece and a in names:partners.add(a)
+            return sorted(partners - set(excluded) - {piece})
         return []
     i = names.index(piece)
     st = np.asarray(pat['stitch']).reshape(-1, 4)

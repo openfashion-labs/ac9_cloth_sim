@@ -26,8 +26,30 @@ import collections
 import numpy as np
 
 
+class _Rows:
+    """Each vertex's triangles in ascending order, as a list (what a per-vertex append loop built: 0.07 s of every
+    fresh model on a test T-shirt, 2026-11-21; this is one stable sort)."""
+    def __init__(self, vertices, values, count):
+        order = np.argsort(vertices, kind='stable')
+        self.values = values[order].tolist()
+        self.starts = np.r_[0, np.cumsum(np.bincount(vertices, minlength=count))].tolist()
+
+    def __getitem__(self, v):
+        return self.values[self.starts[v]:self.starts[v + 1]]
+
+    def __len__(self):
+        return len(self.starts) - 1
+
+    def __iter__(self):
+        return (self[v] for v in range(len(self)))
+
+    def __eq__(self, other):
+        return list(self) == list(other)
+
+
 class Untangler:
-    def __init__(self, solver, F, tri_piece, n_cloth, cfg, flat=None, fold=None, body=None, stitched=None):
+    def __init__(self, solver, F, tri_piece, n_cloth, cfg, flat=None, fold=None, body=None, stitched=None,
+                 *, topology_cache=None):
         self.det = solver.trimesh_collision_detector
         # room for the pairs per triangle; the arrays are made on the first call (tri_mesh_collision.py L1002)
         self.det.triangle_triangle_collision_buffer_pre_alloc = int(cfg.get('pairs_per_tri', 32))
@@ -113,15 +135,28 @@ class Untangler:
         self.mirror_tol = float(cfg.get('mirror_tol_mm', 15.0)) / 1000.0
         self.cross_piece_only = bool(cfg.get('cross_piece_only', False))   # test: leave a piece's own crossings alone
         self.dump = cfg.get('dump')                    # diagnosis: the first call's pairs and positions (.npz)
-        nb = [[] for _ in range(self.n)]
-        for i, j, k in self.F:
-            nb[i] += (j, k); nb[j] += (i, k); nb[k] += (i, j)
-        self.nb = [np.unique(x) for x in nb]
-        vt = [[] for _ in range(self.n)]
-        for t, (i, j, k) in enumerate(self.F):
-            vt[i].append(t); vt[j].append(t); vt[k].append(t)
-        self.vt = vt
+        self.nb, self.vt = self.topology(self.F, self.n, topology_cache)
         self.log = {'frames': [], 'moved': 0, 'skipped_both_big': 0, 'reverted': 0, 'shallow_last': 0, 'deep_last': 0}
+
+    @staticmethod
+    def topology(faces, count, cache=None):
+        """Read-only adjacency; no crossing age, positions or detector survives."""
+        saved = cache.get('untangle') if cache is not None else None
+        if saved is not None and saved['count'] == count and np.array_equal(saved['faces'], faces):
+            return saved['nb'], saved['vt']
+        # each vertex's sorted, distinct neighbors, in one sort (a np.unique per vertex took 0.2 s on a 6-piece
+        # T-shirt, 2026-11-21); a vertex in no face keeps np.unique([])'s empty array
+        fa = np.asarray(faces)
+        src = fa[:, [0, 0, 1, 1, 2, 2]].ravel(); dst = fa[:, [1, 2, 0, 2, 0, 1]].ravel()
+        o = np.lexsort((dst, src)); src, dst = src[o], dst[o]
+        keep = np.ones(len(src), bool); keep[1:] = (src[1:] != src[:-1]) | (dst[1:] != dst[:-1])
+        src, dst = src[keep], dst[keep]
+        cut = np.searchsorted(src, np.arange(count + 1))
+        nb = [dst[cut[v]:cut[v + 1]].copy() if cut[v + 1] > cut[v] else np.unique([]) for v in range(count)]
+        vt = _Rows(fa.ravel(), np.repeat(np.arange(len(fa)), 3), count)
+        if cache is not None:
+            cache['untangle'] = dict(count=count, faces=np.array(faces, copy=True), nb=nb, vt=vt)
+        return nb, vt
 
     # ---- detection
     def pairs(self, q_wp):

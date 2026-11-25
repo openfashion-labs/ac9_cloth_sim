@@ -83,12 +83,13 @@ def followers(old_spec, new_spec, reset=()):
     """Pieces the edit did not change that are sewn only to sides the edit moved (or to each other): a hem's
     turn-up, a cuff, a facing. They are carried along whole with what they are sewn to (carry), instead of staying
     where they hung and holding the moved side back -- the hem let down 30 mm stayed on its unchanged turn-up and
-    the 30 mm of cloth had nowhere to go (2026-10-08). reset: pieces a Reset put back to their placed shapes; they
+    the 30 mm of cloth had nowhere to go (2026-10-08). reset: pieces a Reset put back to their adjusted shapes; they
     are no follower and nothing follows them. Returns [set of piece names] (one per connected group)."""
     po = {p['name']: p for p in old_spec['pieces']}
     pn = {p['name']: p for p in new_spec['pieces']}
     ol_o, ol_n = S.Outlines(po), S.Outlines(pn)
     old = {sm['id']: sm for sm in old_spec.get('seams', []) if sm.get('enabled', True)}
+    split = _split_seam_ids(old_spec, new_spec)
     links = []                      # (piece, other piece, the other's side moved)
     for sm in new_spec.get('seams', []):
         so = old.get(sm['id'])
@@ -100,7 +101,7 @@ def followers(old_spec, new_spec, reset=()):
                 continue
             # moved with the edit: the side's ends moved in the layout because q's outline changed. A seam end slid
             # along an outline that did not change (a seam re-attached) moves no cloth (2026-10-14)
-            mv = (q not in reset and 'line' not in sm[o] and 'line' not in so[o] and q in pn
+            mv = (sm['id'] not in split and q not in reset and 'line' not in sm[o] and 'line' not in so[o] and q in pn
                   and not _same_outline(po[q], pn[q]) and _side_moved(ol_o, ol_n, so[o], sm[o]) > MOVED_MM)
             links.append((p, q, mv))
     C = {n for n in pn if n in po and n not in reset and _same_outline(po[n], pn[n])}
@@ -181,6 +182,74 @@ def fold_error(spec, name, V, tris):
                      name, np.asarray(places), seams)
 
 
+def _split_seam_ids(old_spec, new_spec):
+    """Old seam IDs now naming only a fragment of their former sewn interval.
+
+    Adding a dart splits a seam at its mouth and retains the ID on one fragment. The unchanged partner's
+    intervals prove the split: two or more enabled seams partition exactly the former interval, without overlap.
+    None of those fragments is the old whole seam. Carry them where drawn, as Add Dart's immediate back-map does,
+    rather than stretching the retained fragment across the old whole seam. A shortened/re-attached seam without
+    a complete partition keeps the ordinary carry rule.
+    """
+    po = {p['name']: p for p in old_spec['pieces']}
+    pn = {p['name']: p for p in new_spec['pieces']}
+    split = set()
+    for so in old_spec.get('seams', []):
+        if not so.get('enabled', True) or so['a']['piece'] == so['b']['piece']:
+            continue
+        for anchor, other in (('a', 'b'), ('b', 'a')):
+            sd, target = so[anchor], so[other]
+            n, m = sd['piece'], target['piece']
+            if ('line' in sd or 'line' in target or n not in pn or m not in pn or n not in po or m not in po
+                    or not _same_outline(po[n], pn[n]) or _same_outline(po[m], pn[m])):
+                continue
+            ol = S.Outline(po[n])
+            span = ol.span(sd)
+            if abs(span) < 1e-6:
+                continue
+            sign, length = (1 if span > 0 else -1), abs(span)
+            start = ol.s_of(*sd['from'])
+            intervals = []
+            for sn in new_spec.get('seams', []):
+                if not sn.get('enabled', True):
+                    continue
+                for a, b in (('a', 'b'), ('b', 'a')):
+                    sa, sb = sn[a], sn[b]
+                    if (sa['piece'] != n or sb['piece'] != m or 'line' in sa or 'line' in sb
+                            or sa.get('dir', 1) != sd.get('dir', 1)):
+                        continue
+                    uv = [float((sign * (ol.s_of(*sa[e]) - start)) % ol.L) for e in ('from', 'to')]
+                    uv = [0.0 if v > ol.L - 1e-6 else v for v in uv]
+                    if -1e-6 <= uv[0] < uv[1] <= length + 1e-6:
+                        intervals.append((uv[0], uv[1], sn['id'], sb))
+            intervals.sort(key=lambda x: x[:3])
+            if (len(intervals) >= 2 and any(sid == so['id'] for _, _, sid, _ in intervals)
+                    and abs(intervals[0][0]) < 1e-6 and abs(intervals[-1][1] - length) < 1e-6
+                    and all(abs(x[1] - y[0]) < 1e-6 for x, y in zip(intervals, intervals[1:]))):
+                # A partition on the partner alone is not enough: re-attaching both fragments to the same
+                # interval of the edited piece is not a split. Neither side may use any cloth interval twice.
+                edited = S.Outline(pn[m])
+                arcs = []
+                for _, _, _, side in intervals:
+                    span1 = edited.span(side)
+                    lo = (edited.s_of(*side['from']) + min(0.0, span1)) % edited.L
+                    hi = lo + abs(span1)
+                    if abs(span1) < 1e-6 or side.get('dir', 1) != target.get('dir', 1):
+                        arcs = None
+                        break
+                    arcs.append((lo, min(hi, edited.L)))
+                    if hi > edited.L:
+                        arcs.append((0.0, hi - edited.L))
+                if arcs is None:
+                    continue
+                arcs.sort()
+                if any(y[0] < x[1] - 1e-6 for x, y in zip(arcs, arcs[1:])):
+                    continue
+                split.add(so['id'])
+                break
+    return split
+
+
 def _sewn_sides(old_spec, new_spec, skip=()):
     """[(piece, new side, old side, base end 'from' | 'to', scale)] for the outline sides of seams in both specs. The
     base end is the end whose two sides moved least in the layout (the sum over both sides; from on a tie); scale = L_ref / Lo_ref, the
@@ -193,10 +262,11 @@ def _sewn_sides(old_spec, new_spec, skip=()):
     pn = {p['name']: p for p in new_spec['pieces']}
     ol_o, ol_n = S.Outlines(po), S.Outlines(pn)
     old = {sm['id']: sm for sm in old_spec.get('seams', []) if sm.get('enabled', True)}
+    split = _split_seam_ids(old_spec, new_spec)
     out = []
     for sm in new_spec.get('seams', []):
         so = old.get(sm['id'])
-        if so is None or not sm.get('enabled', True):
+        if so is None or sm['id'] in split or not sm.get('enabled', True):
             continue
         if sm['a']['piece'] in skip or sm['b']['piece'] in skip:
             continue
@@ -529,8 +599,8 @@ def carry(old_spec, new_spec, old_pat, old_idx, X_old, new_pat, new_tris, rigid=
     spec meshed (pattern_build + triangulate). Returns ({piece: (n, 3)}, report). Pieces the last result did not have
     are left out. rigid: {piece: (R, t)} for pieces the edit moved whole in the layout (new = R @ old + t), or {piece:
     function new -> old} for one moved in parts (back_map): the map is that motion undone, so they hang as they did. Pieces sewn only to sides the edit moved (followers: a turn-up, a
-    cuff) are carried whole with them. reset: pieces a Reset put back to their placed shapes (X_old holds those
-    shapes): each is laid on its own placed shape where drawn, and its seams hold nothing (2026-10-20: a sleeve
+    cuff) are carried whole with them. reset: pieces a Reset put back to their adjusted shapes (X_old holds those
+    shapes): each is laid on its own adjusted shape where drawn, and its seams hold nothing (2026-10-20: a sleeve
     edited, then Reset, was still carried and refused). sources: {new piece: the piece it was cut from} (core/cut.py):
     the new piece is laid on that piece's cloth where drawn (with rigid, else as the plain carry). Raises ValueError
     when the edit would lay cloth folded over itself."""
@@ -572,7 +642,7 @@ def _carry(old_spec, new_spec, old_pat, old_idx, X_old, new_pat, new_tris, rigid
         Xo = X_old[offs[j]:offs[j + 1]]
         T = F[fp == j] - offs[j]
         Vn = np.asarray(new_pat[f"V{i}"], float)
-        if n in reset:                                  # its placed shape, the new pattern laid on it where drawn
+        if n in reset:                                  # its adjusted shape, the new pattern laid on it where drawn
             out[n] = Xo.copy() if len(Vn) == len(Vo) and same_layout(Vn, Vo) else bind(Vn, Vo, T, Xo)
             rep['pieces'][n] = 'reset (placed)'
             continue

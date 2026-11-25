@@ -3,7 +3,7 @@
 pattern. Notches are put, slid and removed with the Edit Pieces tool (N, drag, X); Match Notches lays one side's
 notches where the other's are (the ease spread in proportion); Notches from BOM reads the BOM's."""
 import textwrap
-from .i18n import rpt, tx, wrap
+from .i18n import CTX, rpt, tx, wrap
 from . import units as U
 
 import blf
@@ -38,7 +38,7 @@ class AC9_OT_SimMatchNotches(bpy.types.Operator):
     bl_label = "Match Notches"
     bl_options = {'REGISTER', 'UNDO'}
 
-    side: bpy.props.EnumProperty(items=[('a', "A", "Move side A's notches"), ('b', "B", "Move side B's notches")])
+    side: bpy.props.EnumProperty(items=[('a', "A", "Move side A's notches"), ('b', "B", "Move side B's notches")], options={'HIDDEN'})
 
     @classmethod
     def poll(cls, context):
@@ -103,12 +103,12 @@ class AC9_PT_SimWalk(bpy.types.Panel):
         spec, outlines = store.get(context)
         sm = store.active_seam(context, spec)
         if sm is None:
-            layout.label(text="Pick a seam in the list")
+            layout.label(text_ctxt=CTX, text="Pick a seam in the list")
             return
         try:
             w = _walk(context, spec, outlines, sm)
         except Exception:
-            layout.label(text="This seam cannot be walked", icon='ERROR')
+            layout.label(text_ctxt=CTX, text="This seam cannot be walked", icon='ERROR')
             return
         col = layout.column(align=True)
         col.label(text=tx("Ease-in {0} ({1:+.1f} %)", U.fmt(context, w['ease'], signed=True), w['pct']))
@@ -121,13 +121,13 @@ class AC9_PT_SimWalk(bpy.types.Panel):
         if len(w['segments']) > 1:
             box = layout.box()
             c = box.column(align=True)
-            c.label(text="   A / B        ease-in   total")
+            c.label(text_ctxt=CTX, text="   A / B        ease-in   total")
             for i, g in enumerate(w['segments'][:MAX_ROWS]):
                 at = U.num(context, g['cum'], signed=True) if i < len(w['segments']) - 1 else "end"
                 c.label(text=tx("{0}  {1} / {2}   {3}   {4}", i + 1, U.num(context, g['la']), U.num(context, g['lb']), U.num(context, g['ease'], signed=True), at))
             if len(w['segments']) > MAX_ROWS:
                 c.label(text=tx("... {0} more", len(w['segments']) - MAX_ROWS))
-        layout.label(text="Lay the notches of")
+        layout.label(text_ctxt=CTX, text="Lay the notches of")
         row = layout.row(align=True)
         row.operator("ac9_cloth_sim.match_notches", text="A").side = 'a'     # as the seam's buttons (user 2026-10-23)
         row.operator("ac9_cloth_sim.match_notches", text="B").side = 'b'

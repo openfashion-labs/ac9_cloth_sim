@@ -5,9 +5,19 @@ text is a key of the dictionary registered here (bpy.app.translations); Preferen
 picks the language. Text put together at run time (an f-string) goes through tx() / rpt() instead, with the
 English as a format string: tx("Pair: {0}", name). Its Japanese must have the same {} fields.
 
-A word Blender itself translates (Delete, Name, Settings ...) is left out unless its Japanese differs from ours:
-the dictionary is global, so a key here also changes Blender's own UI where the same English appears.
-No new English text needs an entry to work; one without an entry stays English (check: ja_ui check_missing.py).
+The dictionary is shared by Blender and every add-on, and a word is looked up in Blender's own translation first,
+then in the add-ons' dictionaries in the order they were registered: the first one that has the word wins. So a
+plain word in the default context ("Setup", "Fold", "Count") can come out as Blender's word or as another add-on's
+(one that maps "Setup" to "Setup" kept our panel English). Our own interface is therefore looked up in our own
+context CTX, where nobody else has entries: own_context() gives it to every panel, menu, operator and property of
+the add-on before they are registered, and a layout.label / menu / popover with English text passes
+text_ctxt=CTX (tx() looks in CTX first). The entries also stay in the default context for what Blender always
+looks up there (tooltips, reports, labels built from a variable). tests/test_i18n_context.py checks it.
+An operator's or menu's docstring becomes its tooltip as one line (own_context), so the entry is the one-line form.
+English without an entry stays English on screen, without an error: tests/test_i18n_coverage.py finds it (every
+registered label and tooltip, every literal shown in the source, every text drawn in sample states, and what tx() /
+rpt() missed). The Japanese is added once, while a release is prepared: during development the test fails only on a
+button's name and lists the rest in docs/translation_ledger.md; the release check (--release) fails on any of it.
 """
 import re
 import unicodedata
@@ -34,9 +44,17 @@ def _fill(s, msg, args):
         return msg.format(*args)          # a broken translation shows the English rather than failing a draw
 
 
+# texts tx() / rpt() found no translation for (bounded): tests/test_i18n_coverage.py fails on the English ones
+MISSES = set()
+
+
 def _look(get, msg):
     s = get(msg, CTX)
-    return get(msg) if s == msg else s    # a word only Blender translates
+    if s == msg:
+        s = get(msg)                      # a word only Blender translates
+        if s == msg and len(MISSES) < 2000:
+            MISSES.add(msg)
+    return s
 
 
 # the end of the report of an operator whose numbers are adjusted afterwards in the Redo panel (user 2026-10-23,
@@ -98,14 +116,48 @@ def wrap(text, width):
     return lines
 
 
+def one_line(text):
+    """A docstring as one line: the form an operator's or menu's tooltip and its dictionary entry take."""
+    return " ".join(text.split())
+
+
 def _dictionary():
     d = {}
     for en, ja in JA.items():
+        en = one_line(en) if '\n' in en else en          # an entry copied from a wrapped docstring
         for ctx in ('*', 'Operator', CTX):
             d[(ctx, en)] = ja
     for en, ja in JA_CTX.items():
-        d[(CTX, en)] = ja
+        d[(CTX, one_line(en) if '\n' in en else en)] = ja
     return {'ja_JP': d}
+
+
+def _own_kinds():
+    t = bpy.types
+    return (t.Panel, t.Menu, t.Operator)
+
+
+def own_context(modules):
+    """Give CTX to the add-on's panels, menus and operators (bl_translation_context) and to the properties they and
+    the property groups declare (translation_context), unless one sets its own. Run before the classes are
+    registered: Blender reads both at registration."""
+    kinds = _own_kinds()
+    for mod in modules:
+        for cls in list(vars(mod).values()):
+            if not (isinstance(cls, type) and cls.__module__ == mod.__name__ and issubclass(cls, bpy.types.bpy_struct)):
+                continue
+            if issubclass(cls, kinds) and not getattr(cls, 'bl_translation_context', None):
+                cls.bl_translation_context = CTX
+            doc = cls.__dict__.get('__doc__')
+            if (issubclass(cls, (bpy.types.Operator, bpy.types.Menu)) and doc
+                    and not cls.__dict__.get('bl_description')):
+                # Blender keeps a docstring's line breaks in the tooltip, so a tooltip wrapped over two lines
+                # never met its dictionary entry (re-wrapping the docstring dropped the Japanese without a word)
+                cls.bl_description = one_line(doc)
+            for value in cls.__dict__.get('__annotations__', {}).values():
+                keywords = getattr(value, 'keywords', None)     # bpy.props' deferred property
+                if isinstance(keywords, dict) and 'translation_context' not in keywords:
+                    keywords['translation_context'] = CTX
 
 
 def register():

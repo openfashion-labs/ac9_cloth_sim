@@ -39,9 +39,12 @@ class NativeThreeIOTests(unittest.TestCase):
             ('LIVE', 1, False, True, 0),
         ]:
             effective = dict(settings, native_three=selected, fast_live=accurate)
-            instance = SimpleNamespace(info={'settings': effective}, stage_dirs=['s'] * stages, mode=mode, _native_io=None)
+            instance = SimpleNamespace(info={'settings': effective}, stage_dirs=['s'] * stages, mode=mode,
+                                       _native_io=None, _archive_lease={})
             with patch.object(B, 'FrontendRuntime') as owner:
-                exec(code, {'__package__': PACKAGE, 'self': instance, 'cfg1': 'MUST_NOT_BE_READ'})
+                exec(code, {'__package__': PACKAGE, 'self': instance, 'cfg1': 'MUST_NOT_BE_READ',
+                            'JA': SimpleNamespace(worker_temp=lambda context: str(self.root), recovery_path=lambda path: None),
+                            'bpy': SimpleNamespace(context=None), 'd': str(self.stage)})
                 self.assertEqual(owner.call_count, expected, (mode, stages, selected, accurate))
 
     def setUp(self):
@@ -98,6 +101,35 @@ class NativeThreeIOTests(unittest.TestCase):
         self.assertTrue(bridge.close())
         self.assertFalse(bridge.owner.directory.exists())
         self.assertEqual(json.loads((self.stage / M.DESCRIPTOR).read_text())['phase'], 'retired')
+
+    def test_every_name_dress_routes_through_the_runtime_is_allowed(self):
+        # A name passed to _stage_file / _control_file goes to FrontendRuntime.path under Native 3, which refuses
+        # names it does not know; a refused name stopped every default Live before its first frame.
+        source = ast.parse((Path(__file__).resolve().parents[1] / 'dress.py').read_text(encoding='utf8'))
+        names = set()
+        for node in ast.walk(source):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ('_stage_file', '_control_file')):
+                self.assertTrue(node.args and isinstance(node.args[0], ast.Constant),
+                                'a name routed through the runtime must be a literal: ' + ast.unparse(node))
+                names.add(node.args[0].value)
+        self.assertTrue(names)
+        bridge = B.FrontendRuntime(self.cfg_path)
+        try:
+            for name in sorted(names):
+                self.assertEqual(Path(bridge.path(name)).name, name)
+                self.assertIn(name, M.KNOWN_FILES)
+            self.assertIn(Path(bridge.console_path()).name, M.KNOWN_FILES)
+        finally:
+            self.assertTrue(bridge.close())
+
+    def test_a_leftover_temporary_write_does_not_block_cleanup(self):
+        for name in ('grab.json.tmp', 'params.json.tmp'):
+            bridge = B.FrontendRuntime(self.cfg_path)
+            (bridge.owner.directory / name).write_text('{}', encoding='utf8')
+            self.assertTrue(bridge.close(), name)
+            self.assertFalse(bridge.owner.directory.exists(), name)
+            self.cfg_path.write_text(json.dumps(self.original), encoding='utf8')
 
     def test_config_replacement_failure_preserves_original_and_aborts_owner(self):
         before = self.cfg_path.read_bytes()

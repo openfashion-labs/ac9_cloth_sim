@@ -13,6 +13,7 @@ The carry to 3D is the plain one (core/transfer.carry: every point where it was 
 partners): measured on trousers, it lays the added cloth out along the leg, where turning the moved part back and
 folding the opening onto the old cut line left a crease Simulate did not undo (2026-10-10).
 """
+import copy
 import numpy as np
 from ._i18n import rpt, length as len_text
 
@@ -76,6 +77,8 @@ def _marks(spec, name):
 
 
 def _spread_one(spec, name, line_id, amount, mode, hinge, side, keep=None):
+    if seams_on_line(spec, name, line_id):
+        raise ValueError(rpt("the line is sewn: cut along a line that is not part of a seam"))
     pc = D.piece(spec, name)
     it = D.internal(pc, line_id)
     P = np.asarray(it['pts'], float)
@@ -137,13 +140,18 @@ def _spread_one(spec, name, line_id, amount, mode, hinge, side, keep=None):
         Q = np.asarray(jt['pts'], float)
         if not len(Q):
             continue
-        inside = DT._inside(region, Q)
+        moving_arc = _arc_pts(pc, moving)
+        inside = DT._inside(region, Q) | (D._dist_to_polyline(Q, moving_arc) < 0.001)
         if jt.get('kind') == 'baseline':
             if inside.all():
                 jt['pts'] = D._r(fwd(Q))
                 moved_lines += 1
             continue
         if inside.any():
+            if inside.all():
+                D.xform_internal(jt, fwd)
+                moved_lines += 1
+                continue
             Q = Q.copy()
             Q[inside] = fwd(Q[inside])
             jt['pts'] = D._r(Q)
@@ -184,6 +192,14 @@ def _spread_one(spec, name, line_id, amount, mode, hinge, side, keep=None):
 
 
 def spread(spec, name, line_id, amount, mode='hinge', hinge='start', side='auto', twins=True):
+    """Apply the complete mirrored edit atomically; a later refusal changes nothing."""
+    planned = copy.deepcopy(spec)
+    out = _spread_mutating(planned, name, line_id, amount, mode, hinge, side, twins)
+    spec.update(planned)
+    return out
+
+
+def _spread_mutating(spec, name, line_id, amount, mode='hinge', hinge='start', side='auto', twins=True):
     """Slash piece `name` along internal line `line_id` (drawn from outline to outline) and open it `amount` mm: mode
     'hinge' turns one side about the line's `hinge` end ('start' / 'end'), 'parallel' moves it square to the line.
     side: 'auto' (the side without the anchor and grain line), 'a' (the outline from the line's start forward to its
@@ -201,7 +217,8 @@ def spread(spec, name, line_id, amount, mode='hinge', hinge='start', side='auto'
         if tw:
             Pa = M(D.internal(D.piece(spec, name), line_id)['pts'])
             Pb = np.asarray(D.internal(D.piece(spec, tw), lid_b)['pts'], float)
-            rev = len(Pa) == len(Pb) and np.abs(Pb[::-1] - Pa).max() < np.abs(Pb - Pa).max()
+            from . import fold_hand as FH
+            rev = not FH.same_direction(Pa, Pb)
             h_b = {'start': 'end', 'end': 'start'}[hinge] if rev else hinge
             # the mirror image runs the outline the other way: side a there is side b here (the same line order)
             s_b = side if side == 'auto' else ({'a': 'b', 'b': 'a'}[side] if not rev else side)
@@ -212,6 +229,9 @@ def spread(spec, name, line_id, amount, mode='hinge', hinge='start', side='auto'
     selfm = None
     if ms is not None and ms != line_id:
         c = D.self_axis(pc0)[0]
+        self_axis = list(pc0.get('mirror_axis') or [*c, D.axis_angle(pc0)])
+        _, self_u = D.self_axis(pc0)
+        self_normal = np.array([self_u[1], -self_u[0]])
         selfm = (ms, {'start': 'end', 'end': 'start'}[hinge] if w == -1 else hinge,
                  side if side == 'auto' else ({'a': 'b', 'b': 'a'}[side] if w != -1 else side), c)
     sym_edit = ms == line_id and _on_center_line(pc0, line_id)
@@ -232,8 +252,18 @@ def spread(spec, name, line_id, amount, mode='hinge', hinge='start', side='auto'
         _recenter(spec, name, axis, mode, amount, H, dl, Pl)
     if selfm:
         out[name]['more'] = [_spread_one(spec, name, selfm[0], amount, mode, selfm[1], selfm[2], keep=[selfm[3]])]
+        pc = D.piece(spec, name)
+        projection = S.Outline(pc).B @ self_normal
+        displacement = (projection.min() + projection.max()) * .5 - np.asarray(self_axis[:2]) @ self_normal
+        if abs(displacement) > 1e-9:
+            D.transform_piece(spec, name, shift=-displacement * self_normal)
+        pc['mirror_axis'] = self_axis
     if twin:
-        out[twin[0]] = _spread_one(spec, twin[0], twin[1], amount, mode, twin[2], twin[3])
+        s_b = twin[3]
+        if side == 'auto' and not on_axis:
+            chosen = out[name]['side']
+            s_b = chosen if rev else {'a': 'b', 'b': 'a'}[chosen]
+        out.update(_spread_mutating(spec, twin[0], twin[1], amount, mode, twin[2], s_b, twins=False))
     return out
 
 

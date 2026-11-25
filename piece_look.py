@@ -113,10 +113,21 @@ def _fabric_fills(context, spec):
     return out
 
 
+# the pieces a run holds still while a re-placed piece is sewn on (Freeze Garment While Sewing): Freeze's color,
+# fainter, while it lasts -- the reason a grab there does nothing
+HELD_FILL = FREEZE_FILL[:3] + (0.25,)
+
+
 def _states(spec):
     if not _mark['colors']:
-        return {pc['name']: 'active' for pc in spec['pieces']}
-    return _states_all(spec)
+        st = {pc['name']: 'active' for pc in spec['pieces']}
+    else:
+        st = _states_all(spec)
+    from . import dress as DR
+    for n in DR.AC9_OT_SimDress.held_pieces():
+        if st.get(n) == 'active':
+            st[n] = 'held'
+    return st
 
 
 def _states_all(spec):
@@ -176,7 +187,7 @@ def _rim_raw(name, state, sel, P, closed=True, in3d=False):
     if name in sel:
         out.append(((_dashes if in3d and state in ('off_pattern', 'off_all') else _pairs)(P, closed), _sel_color(name),
                     'sel'))
-    if state == 'freeze':
+    if state in ('freeze', 'held'):
         out.append((_pairs(P, closed), FREEZE, 'state'))
     elif state == 'off_pattern':
         out.append((_dashes(P, closed), OFF_PATTERN, 'state'))
@@ -189,6 +200,8 @@ def _fill_color(name, state, sel, in3d=False, fab=None):
     """fab: {piece: rgba} the fabric tints (Fabric Colors on): over the selection's, under Freeze / Off's."""
     if state == 'freeze':
         return FREEZE_FILL
+    if state == 'held':
+        return HELD_FILL
     if in3d and state == 'off_pattern':
         return None
     if in3d and state in ('off_all', 'hidden'):
@@ -387,7 +400,7 @@ def _data3d(context, spec, outlines, rv3d):
     sel = _selected(context)
     st = _states(spec)
     fab = _fabric_fills(context, spec) if _mark['colors'] else None
-    ob = bpy.data.objects.get(DR.garment_name(spec))
+    ob = DR.garment(spec)
     display = DS.snapshot(spec, ob)
     visible = VV.world_names(context, spec, display=display)
     # a hidden piece (piece_hide) is drawn in 3D only while it is picked: its rim alone, solid (an Off piece's is
@@ -567,14 +580,14 @@ def _draw_view():
 
 def garment_marked(context):
     """The picked pieces this module marks on the dressed garment (shown there from its result in a viewport that
-    shows the world; not put back to their placed shapes): selection.marks()."""
+    shows the world; not put back to their adjusted shapes): selection.marks()."""
     from . import dress as DR
     from . import display_state as DS
     spec = store.get(context)[0]
     if not spec:
         return []
     sel = _selected(context)
-    ob = bpy.data.objects.get(DR.garment_name(spec))
+    ob = DR.garment(spec)
     display = DS.snapshot(spec, ob)
     return sorted(n for n in sel if display.get(n, {}).get('source') == 'result')
 

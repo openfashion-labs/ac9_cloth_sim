@@ -17,7 +17,7 @@ from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
-from .i18n import rpt, tx
+from .i18n import CTX, rpt, tx
 from . import units as U
 
 from . import overlay
@@ -100,7 +100,7 @@ def to_world(M, P2):
     return [M @ Vector((float(x) * PV.MM, float(y) * PV.MM, 0.0)) for x, y in np.atleast_2d(P2)]
 
 
-def select_seam(context, sid, extend=False):
+def select_seam(context, sid, extend=False, origin='click'):
     """Make seam sid the active one. extend (Shift+click): the active one so far stays picked; sid already picked is
     taken out (the active one then passes to another picked seam)."""
     props = context.scene.ac9_cloth_sim
@@ -131,7 +131,7 @@ def select_seam(context, sid, extend=False):
     finally:
         store._seam_keep[0] = False
     from . import tool_tab
-    tool_tab.publish(context, 'SEAM')
+    tool_tab.publish(context, 'SEAM', origin=origin)
     overlay.invalidate()
     return True
 
@@ -250,12 +250,18 @@ class AC9_OT_SimSeamClick(bpy.types.Operator):
                 return {'FINISHED'}
             if event.shift:                     # Shift just off a 3D seam: the seams picked so far stay
                 return {'CANCELLED'}
+            if kind == 'NONE':
+                from . import garment_mark as GM
+                GM.clear(context)
             unselect_seam(context)
             return {'CANCELLED'} if kind != 'NONE' else {'PASS_THROUGH'}
         if kind == 'PLANE' and self._pick3d(context, spec):     # a 3D seam line drawn in front of the empty layout plane
             return {'FINISHED'}
         q = mouse_mm(context, self.M, event)
         if q is None:
+            if kind == 'PLANE' and not event.shift:
+                from . import garment_mark as GM
+                GM.clear(context)
             unselect_seam(context)
             return {'PASS_THROUGH'}
         mmpx = px_mm(context, self.M, event)
@@ -276,6 +282,9 @@ class AC9_OT_SimSeamClick(bpy.types.Operator):
         if pick is None:
             if not event.shift:
                 unselect_seam(context)
+                if kind == 'PLANE':
+                    from . import garment_mark as GM
+                    GM.clear(context)
             elif act is not None:               # Shift just off a seam while picking seams: no piece picked instead
                 return {'CANCELLED'}
             return {'PASS_THROUGH'}             # nothing here: the click selects objects as usual
@@ -345,8 +354,8 @@ class AC9_OT_SimSeamClick(bpy.types.Operator):
                 la, lb = S.side_length(sp, sm['a']), S.side_length(sp, sm['b'])
                 txt += f"   {i}: {U.num(context, la)} / {U.num(context, lb)} ({U.num(context, la - lb, signed=True)})"
         else:
-            txt += "   NOT ALLOWED: " + dr['bad']
-        txt += "   Ctrl: no snapping   Esc / right click: cancel"
+            txt += tx("   NOT ALLOWED: {0}", dr['bad'])
+        txt += tx("   Ctrl: no snapping   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
     def _end(self, context):
@@ -411,7 +420,7 @@ class AC9_OT_SimSeamMoveSide(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
 
     side: bpy.props.EnumProperty(items=[('AUTO', "Under the Cursor", ""), ('a', "A", ""), ('b', "B", "")],
-                                 default='AUTO')
+                                 default='AUTO', options={'HIDDEN'})
 
     @classmethod
     def poll(cls, context):
@@ -490,8 +499,8 @@ class AC9_OT_SimSeamMoveSide(bpy.types.Operator):
             la, lb = S.side_length(sp, sm['a']), S.side_length(sp, sm['b'])
             txt += f"   {U.num(context, la)} / {U.num(context, lb)} ({U.num(context, la - lb, signed=True)})"
         else:
-            txt += "   NOT ALLOWED: " + dr['bad']
-        txt += tx("   F: other way ({0})   click: here   Ctrl: no snapping   Esc / right click: cancel", 'ccw' if self.dir > 0 else 'cw')
+            txt += tx("   NOT ALLOWED: {0}", dr['bad'])
+        txt += tx("   F: other way ({0})   click: here   Ctrl: no snapping   Esc / right click: cancel", tx('ccw' if self.dir > 0 else 'cw'))
         context.area.header_text_set(txt)
 
     def _end(self, context):
@@ -699,7 +708,7 @@ class AC9_WT_EditSeams(bpy.types.WorkSpaceTool):
 
     def draw_settings(context, layout, tool):
         TB.works_on(layout, 'EDIT_SEAMS')
-        layout.label(text="click a seam (again: the next one there; Shift adds)  drag its end  Ctrl no snapping  "
+        layout.label(text_ctxt=CTX, text="click a seam (again: the next one there; Shift adds)  drag its end  Ctrl no snapping  "
                               "M move a side  N notch pair (Ctrl+N one side)  F2 name  double-click piece  X/Del delete  "
                               "right-click: menu")
 
@@ -848,7 +857,7 @@ class AC9_OT_SimSeamListPick(bpy.types.Operator):
             # seam's lengths stayed drawn in every tool (user 2026-11-13)
             unselect_seam(context)
             return {'FINISHED'}
-        return {'FINISHED'} if select_seam(context, self.seam, extend=self.extend) else {'CANCELLED'}
+        return {'FINISHED'} if select_seam(context, self.seam, extend=self.extend, origin='list') else {'CANCELLED'}
 
 
 CLASSES = (AC9_OT_SimSeamHover, AC9_OT_SimSeamClick, AC9_OT_SimSeamMoveSide, AC9_OT_SimPieceLabel, AC9_OT_SimSeamNotch,

@@ -33,7 +33,7 @@ TOL_MM = 0.1
 def plan(screen, names, sources=None, going_on=False):
     """{piece: {'source', 'why'}} for the run's pieces (names), in that order. screen None: not read, every piece
     left to prepare ('prepare'). going_on: the run goes on from a result (not a Phase Sim from the start): a piece
-    put back by Reset and not moved starts from its shape written into the garment, the placed shape shown
+    put back by Reset and not moved starts from its shape written into the garment, the adjusted shape shown
     ('reset_shown'; sources[n]['reset'])."""
     sources = sources or {}
     out = {}

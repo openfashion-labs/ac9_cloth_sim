@@ -15,6 +15,11 @@ STUCK_FRAMES = 3.0
 # a later stage's first frame comes only after the stage is set up: up to 17.6 s from one stage's end to the next
 # one's loop in 378 later-stage run logs (2026-10-18..11-01), so a stop between stages waits twice that
 STAGE_START_S = 40.0
+# A kept Live solver preparing a job is stopped at its own checkpoints, not killed (a kill loses the warmed process),
+# and Stop waited up to the 60 s deadline. One stuck in native code never reaches a checkpoint: it is killed once
+# nothing it writes (its output, its setup file, the kernel cache) has changed for this long. A first run on an empty
+# kernel cache went at most 10.1 s without a change, a later run 1.6 s (a coat's Live start, 2026-11-22)
+PREP_QUIET_S = 30.0
 
 
 def _stamp(paths):
@@ -66,10 +71,11 @@ class PendingStop:
             except (OSError,ValueError,TypeError):pass
         return False
 
-    def __init__(self, proc, stage_dirs, timeout=60, frame_s=None, min_s=STUCK_MIN_S):
+    def __init__(self, proc, stage_dirs, timeout=60, frame_s=None, min_s=STUCK_MIN_S, activity=None):
         """frame_s: how long a frame has taken in this run (None: not known yet); a frame may take that long
         before the solver reaches the stop file, so it is waited for three times over, at least min_s
-        (STAGE_START_S between stages; STUCK_MIN_S before the run's first frame, when a kill loses no frame)"""
+        (STAGE_START_S between stages; STUCK_MIN_S before the run's first frame, when a kill loses no frame).
+        activity: a callable whose value changes while a preparing session still works (PREP_QUIET_S)"""
         self.proc = proc
         self.t0 = time.monotonic()
         self.deadline = self.t0 + timeout
@@ -89,6 +95,8 @@ class PendingStop:
         self._stamp0 = _stamp(self._watch)
         self._out = [(os.path.join(sd, 'stdout.txt'), _size(os.path.join(sd, 'stdout.txt'))) for sd in stage_dirs]
         self.moved = not self._watch           # nothing to watch: only the deadline
+        self.activity = activity
+        self._act, self._act_t = self._read_activity(None), self.t0
         self.killed = False
         self.finished = False
         self.error = None
@@ -100,6 +108,14 @@ class PendingStop:
                 mark('stop_file_created', child_pid=proc.pid, stage=sd)
             except OSError:
                 pass
+
+    def _read_activity(self, fallback):
+        if self.activity is None:
+            return None
+        try:
+            return self.activity()
+        except Exception:
+            return fallback
 
     def poll(self):
         try:
@@ -124,7 +140,13 @@ class PendingStop:
             # given the full timeout
             self.moved = True
             mark('stop_progress_seen', child_pid=self.proc.pid, after_s=round(now - self.t0, 3))
-        stuck = not self.session_setup and not self.moved and now - self.frame_wait_start >= self.grace
+        quiet = False
+        if self.session_setup and not self.moved and self.activity is not None:
+            act = self._read_activity(self._act)
+            if act != self._act:
+                self._act, self._act_t = act, now
+            quiet = now - self._act_t >= PREP_QUIET_S
+        stuck = quiet or (not self.session_setup and not self.moved and now - self.frame_wait_start >= self.grace)
         if not self.killed and (stuck or now >= self.deadline):
             if stuck:
                 mark('stop_stuck', child_pid=self.proc.pid, grace_s=round(self.grace, 2))

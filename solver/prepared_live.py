@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 import shutil
 import sys
+import time
 import uuid
 import numpy as np
 
@@ -22,7 +23,20 @@ def write(path, data):
     try:
         with temporary.open('x', encoding='utf8') as stream:
             json.dump(data, stream)
-        os.replace(temporary, path)
+        # Windows can deny replacement while a status reader briefly has the
+        # old file open. Retry this SAME unpublished temporary, never reissue a
+        # command or switch workers. Persistent denial remains a hard failure.
+        deadline=time.monotonic()+.1
+        delay=.001
+        while True:
+            try:
+                os.replace(temporary,path)
+                break
+            except PermissionError as exc:
+                if (getattr(exc,'winerror',None) not in (5,32,33)
+                        or not temporary.is_file() or time.monotonic()>=deadline):raise
+                time.sleep(min(delay,max(0.,deadline-time.monotonic())))
+                delay=min(.01,delay*2)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -34,13 +48,30 @@ def environment_id(environment):
     return hashlib.sha256(json.dumps(values, sort_keys=True).encode('utf8')).hexdigest()
 
 
+def same_interpreter(path, canonical):
+    """Compare an already-owned process; aliases still resolve normally.
+
+    A new Session always canonicalizes its executable at construction. Repeating
+    the same canonical path need not open that remote executable again. Source,
+    dependency and environment authorization are independent and unchanged.
+    """
+    if os.path.normcase(os.path.abspath(path))==os.path.normcase(canonical):return True
+    return str(Path(path).resolve())==canonical
+
+
 def dependency_manifest():
     result = {}
     for package in ('numpy', 'warp-lang', 'newton'):
         distribution = importlib.metadata.distribution(package)
-        metadata = next(path for path in distribution.files or ()
-                        if path.name == 'METADATA' and path.parent.suffix == '.dist-info')
-        path = Path(distribution.locate_file(metadata)).resolve()
+        # PathDistribution already located its metadata directory. Reading
+        # .files parses the entire RECORD (thousands of wheel entries) just
+        # to find this one file. Keep a portable fallback for other providers.
+        directory = getattr(distribution, '_path', None)
+        path = Path(directory).resolve() / 'METADATA' if isinstance(directory, (str, os.PathLike)) else None
+        if path is None or path.parent.suffix != '.dist-info' or not path.is_file():
+            metadata = next(path for path in distribution.files or ()
+                            if path.name == 'METADATA' and path.parent.suffix == '.dist-info')
+            path = Path(distribution.locate_file(metadata)).resolve()
         result[package] = dict(version=distribution.version, path=str(path),
                                sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     return result
@@ -55,13 +86,16 @@ def code_id():
     return digest.hexdigest()
 
 
-def source_id(manifest=None):
+def source_id(manifest=None, *, expected_code=None):
     """Always fresh. Blender can verify the actual worker's dependency metadata."""
     manifest = dependency_manifest() if manifest is None else manifest
     for row in manifest.values():
         if hashlib.sha256(Path(row['path']).read_bytes()).hexdigest() != row['sha256']:
             raise ValueError('Prepared worker dependency metadata changed')
-    return hashlib.sha256(json.dumps(dict(code=code_id(), dependencies=manifest),
+    code=code_id()
+    if expected_code is not None and code!=expected_code:
+        raise ValueError('Native source changed since launch')
+    return hashlib.sha256(json.dumps(dict(code=code, dependencies=manifest),
                                      sort_keys=True).encode('utf8')).hexdigest()
 
 
@@ -99,6 +133,18 @@ PREPARED_UNAUDITED = ('untangle', 'iron', 'experimental_fold_terminal', 'init_fr
 SESSION_UNAUDITED = tuple(k for k in PREPARED_UNAUDITED if k != 'experimental_fold_terminal')
 
 
+def literal_config_field(field):
+    """Audited enums and piece/seam identifiers, never filesystem inputs.
+
+    Unknown fields retain the complete file-discovery and content-hash path.
+    A piece called Rectangle must not cause a lookup in the process cwd.
+    """
+    if field in (('membrane',),('stitch_ramp_shape',),('seam_bend','pairs')):return True
+    if len(field)==2 and field[0]=='active_pieces' and type(field[1])is int:return True
+    return (3<=len(field)<=4 and field[:2]==('seam_bend','pairs')
+            and all(type(index)is int for index in field[2:]))
+
+
 def fingerprint(idx, avatar, config, env_id, *, implementation=None, unaudited=PREPARED_UNAUDITED):
     """Separate physical inputs from the new job's output/control ownership."""
     config = dict(config)
@@ -108,14 +154,14 @@ def fingerprint(idx, avatar, config, env_id, *, implementation=None, unaudited=P
         if config.get(key):
             raise ValueError('This option is not audited for prepared Live: ' + key)
     files = {'idx': file_id(idx), 'avatar': file_id(avatar)}
-    def normalize(value, name):
+    def normalize(value, name, field):
         if isinstance(value, dict):
-            return {key: normalize(child, name + '.' + key) for key, child in value.items()}
+            return {key: normalize(child, name + '.' + key,field+(key,)) for key, child in value.items()}
         if isinstance(value, list):
-            return [normalize(child, name + '[' + str(i) + ']') for i, child in enumerate(value)]
-        if isinstance(value, str) and Path(value).is_file():
-            files['config:' + name] = file_id(value)
-            return {'input_file': name}
+            return [normalize(child, name + '[' + str(i) + ']',field+(i,)) for i, child in enumerate(value)]
+        if isinstance(value, str) and not literal_config_field(field) and Path(value).is_file():
+            files['config:' + json.dumps(field,separators=(',',':'))] = file_id(value)
+            return {'input_file': list(field)}
         return value
     for key, value in list(config.items()):
         if key in IO_KEYS:
@@ -123,7 +169,7 @@ def fingerprint(idx, avatar, config, env_id, *, implementation=None, unaudited=P
                 files['pattern'] = file_id(value)
             config.pop(key)
         else:
-            config[key] = normalize(value, key)
+            config[key] = normalize(value, key,(key,))
     raw = json.dumps(dict(version=VERSION, source=source_id() if implementation is None else implementation, environment=env_id,
                           files=files, config=config), sort_keys=True, allow_nan=False).encode('utf8')
     return hashlib.sha256(raw).hexdigest()

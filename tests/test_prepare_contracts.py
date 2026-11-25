@@ -73,7 +73,11 @@ class PhysicalSources(unittest.TestCase):
         world=np.array([[0.,0.,0.],[100.,0.,0.],[0.,100.,0.]])
         me=PLV._mesh('OwnedShapeSnapshot',flat,np.array([[0,1,2]]),world,np.zeros(3));self.meshes.append(me)
         ob=bpy.data.objects.new('OwnedShapeSnapshot',me);self.objects.append(ob)
-        PLV._collection(bpy.context).objects.link(ob);sp=S.new_spec('Snapshot');PLV._tag(ob,sp,'A',flat)
+        PLV._collection(bpy.context).objects.link(ob);sp=S.new_spec('Snapshot')
+        # a placed object belongs to the stored document (ownership by document, 2026-11-24): store one first
+        text=ST.new_text(bpy.context,sp['name']);ST.write(bpy.context,sp,keep=True)
+        self.addCleanup(lambda:(bpy.data.texts.remove(text) if bpy.data.texts.get(text.name)==text else None,ST._discard_cache()))
+        PLV._tag(ob,sp,'A',flat)
         return ob,flat,world,sp
     def test_snapshot_has_identity_world_units_and_no_display_thickness(self):
         ob,flat,world,sp=self.source();ob.modifiers.new('User thickness','SOLIDIFY');ob[PLV.FOLD_PROP]=True
@@ -201,7 +205,9 @@ class ResumeResources(unittest.TestCase):
         self.assertEqual(len(list(self.root.glob('job_*'))),1)
         self.assertEqual((Path(self.source['dir'])/'keep.txt').read_text(),'previous result')
     def test_accurate_accepted_resume_removes_the_redundant_built_job(self):
-        bpy.context.scene.ac9_cloth_sim.fast_live=True
+        # the accurate path is opted into by accurate_research since 2026-11-14 (a saved fast_live is ignored)
+        props=bpy.context.scene.ac9_cloth_sim;self.addCleanup(setattr,props,'accurate_research',props.accurate_research)
+        props.accurate_research=True
         with patch.object(LR,'prepare',self.callback('accept')):
             info,arrays=DR.prepare(bpy.context,20.,live=True,continue_job=self.source['dir'],continue_shown=self.arrays[3])
         self.assertEqual(info['dir'],self.stack[0][0]);self.assertFalse((self.root/'job_2').exists())
@@ -378,6 +384,7 @@ class OperationScopes(unittest.TestCase):
         props=bpy.context.scene.ac9_cloth_sim;previous=props.mesh_size;props.mesh_size=20.
         self.addCleanup(setattr,props,'mesh_size',previous)
         g=self.obstacle();g.name=DR.garment_name(self.sp);g['ac9_piece_names']='["A"]'
+        g['ac9_garment_spec']=self.text   # the garment belongs to the document (ownership by document, 2026-11-24)
         local=SimpleNamespace(info=self.source,local=['A'],ob_name=g.name)
         return g,local
     def test_local_sim_consumer_failure_keeps_current_result_until_scope_finishes(self):
@@ -415,7 +422,11 @@ class OperationScopes(unittest.TestCase):
         self.assertFalse(FA.needs_migrate(ST.get(bpy.context)[0]))
         self.assertEqual(sum(m.type=='MESH_CACHE' for m in self.other.modifiers),0)
     def test_real_partial_reset_late_build_failure_restores_frame_provenance(self):
-        g,local=self.local_consumer();old={k:g[k] for k in g.keys()}
+        from ac9_cloth_sim import control_basis as CB
+        g,local=self.local_consumer()
+        g['ac9_garment_spec']=self.text
+        CB.adopt(bpy.context,g)  # exercise rollback of a result which had actually been accepted
+        old={k:g[k] for k in g.keys()}
         build=PLV.build;calls=[]
         def fail_second(*args,**kw):
             calls.append(True)

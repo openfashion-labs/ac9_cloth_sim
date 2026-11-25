@@ -131,7 +131,7 @@ def build_guide(context, garment):
     E = RR.stitches(idx)
     if E is None:
         raise ValueError("The garment's seams are not known in its result folder (it was made from the .blend or "
-                         "the mesh alone): Live Sim it once, then try again")
+                         "the mesh alone): Simulate it once, then try again")
     Y, gap_before = weld_stitches(X, E)
     if 'E_seam' in idx.files:
         Y = weld_between(Y, E, idx['E_seam'], idx['F'].astype(np.int64))
@@ -188,7 +188,7 @@ def build_guide(context, garment):
 def _garment(context):
     from . import store
     spec, _ = store.get(context)
-    return bpy.data.objects.get(D.garment_name(spec)) if spec else None
+    return D.garment(spec) if spec else None
 
 
 class AC9_OT_SimExportRetopo(bpy.types.Operator):

@@ -82,7 +82,63 @@ class WindowsJob:
             checked(self.dll.CloseHandle(self.handle));self.handle=None
 
 
+class PowerThrottling(C.Structure):
+    _fields_=[('version',W.ULONG),('control',W.ULONG),('state',W.ULONG)]
+
+
+def prefer_fast_cores():
+    """Keep the windowless solver off efficiency cores on hybrid CPUs.
+
+    Windows 11 may treat a process without a window as background work, throttle it
+    (EcoQoS) and run it on efficiency cores. Measured on a 16P+12E CPU with a test
+    T-shirt: a Live restart took 5.0-5.4 s there and 2.9-3.1 s on performance cores.
+    The process opts out of execution-speed throttling and, when the CPU has more than
+    one efficiency class, defaults its threads to the fastest class (a CPU set, not a
+    hard affinity mask). Results do not depend on which core runs. Returns what was
+    applied; any failure leaves the process as it was.
+    """
+    applied={'throttling':False,'cpu_sets':0,'skipped':None}
+    if os.name!='nt':return applied
+    try:
+        dll=C.WinDLL('kernel32',use_last_error=True)
+        dll.GetCurrentProcess.restype=W.HANDLE
+        dll.SetProcessInformation.argtypes=[W.HANDLE,C.c_int,C.c_void_p,W.DWORD]
+        state=PowerThrottling(1,0x1,0)
+        applied['throttling']=bool(dll.SetProcessInformation(dll.GetCurrentProcess(),4,C.byref(state),C.sizeof(state)))
+        dll.GetSystemCpuSetInformation.argtypes=[C.c_void_p,W.ULONG,C.POINTER(W.ULONG),W.HANDLE,W.ULONG]
+        size=W.ULONG(0)
+        dll.GetSystemCpuSetInformation(None,0,C.byref(size),None,0)
+        if not size.value:return applied
+        buffer=(C.c_ubyte*size.value)()
+        if not dll.GetSystemCpuSetInformation(buffer,size,C.byref(size),None,0):return applied
+        sets=[];offset=0
+        while offset<size.value:
+            entry_size=int.from_bytes(bytes(buffer[offset:offset+4]),'little')
+            if entry_size<20:break
+            # SYSTEM_CPU_SET_INFORMATION: Size, Type, then CpuSet {Id @8, Group @12,
+            # LogicalProcessorIndex @14, CoreIndex @15, LastLevelCacheIndex @16,
+            # NumaNodeIndex @17, EfficiencyClass @18}.
+            if int.from_bytes(bytes(buffer[offset+4:offset+8]),'little')==0:
+                sets.append((int.from_bytes(bytes(buffer[offset+8:offset+12]),'little'),buffer[offset+18]))
+            offset+=entry_size
+        classes={c for _,c in sets}
+        if len(classes)<2:
+            applied['skipped']='one efficiency class';return applied
+        fastest=[i for i,c in sets if c==max(classes)]
+        # With few fast cores (a 2P+8E laptop) every solver thread would crowd onto
+        # them; only narrow when the fast class is half the CPU or at least 8.
+        if len(fastest)*2<len(sets) and len(fastest)<8:
+            applied['skipped']='%d of %d logical processors are fast'%(len(fastest),len(sets));return applied
+        dll.SetProcessDefaultCpuSets.argtypes=[W.HANDLE,C.POINTER(W.ULONG),W.ULONG]
+        ids=(W.ULONG*len(fastest))(*fastest)
+        if dll.SetProcessDefaultCpuSets(dll.GetCurrentProcess(),ids,len(fastest)):applied['cpu_sets']=len(fastest)
+    except Exception:
+        pass
+    return applied
+
+
 def join_owned_job():
+    prefer_fast_cores()
     name=os.environ.get(ENV_KEY)
     if os.name!='nt' or not name:return
     if not name.startswith('Local\\AC9_Solver_'):raise ValueError('Invalid solver job ownership')

@@ -24,7 +24,7 @@ Each piece has four states (in the **Pieces** tab of **Lists**, or in **State** 
 
 ## Layering
 
-- Switch garments with **Garment** and run **Live Sim**, and other garments that have results automatically become "immovable obstacles". The order is: dress the inner one, then switch **Garment** to the outer one and run **Live Sim**.
+- Switch garments with **Garment** and run **Simulate**, and other garments that have results automatically become "immovable obstacles". The order is: dress the inner one, then switch **Garment** to the outer one and run **Simulate**.
 - What becomes an obstacle is the other garment's last shape. Pieces you set to **Inactive** / **Off** in the other garment are removed from the obstacles.
 - When you simulate another garment, the earlier garments' history (the timeline frames) is dropped and only the last shape stays (the Result field becomes `Frames: dropped (shape kept)`).
 - In the **Collision** tab, you can make things that have no pattern (props, or garments that are ordinary meshes) into obstacles. Click the object in a 3D view with the eyedropper at the right of the **Add** field, or pick it by name in the field, and it is added (the eyedropper works whatever tool is on). To add several at once, select them and press **Add Selected**. Press **Remove** to stop.

@@ -63,6 +63,13 @@ class SessionTests(unittest.TestCase):
   self.assertNotIn('args',header);self.assertLess(len(self.session.process.stdin.getvalue()),512)
   request=C.read(self.session.root/(job.command['job_token']+'.request.json'))
   self.assertEqual(request,job.command)
+ def test_build_job_is_its_own_op_and_unknown_ops_are_refused(self):
+  stage=self.root/'build';stage.mkdir()
+  job=self.session.submit(self.idx,self.avatar,self.cfg,stage,op='build')
+  self.assertEqual(json.loads(self.session.process.stdin.getvalue())['op'],'build')
+  self.assertEqual(C.read(self.session.root/(job.command['job_token']+'.request.json'))['op'],'build')
+  self.complete(job);job.release()
+  with self.assertRaises(ValueError):self.session.submit(self.idx,self.avatar,self.cfg,stage,op='quit')
  def test_uncertain_send_keeps_lease_and_forbids_reuse(self):
   class Broken:
    def write(self,value):raise OSError('uncertain write')
@@ -149,6 +156,9 @@ class RequestFileTests(unittest.TestCase):
  def read(self,header=None,generation=0):
   return self.reader(json.dumps(self.header if header is None else header),{'session_token':'a'*32},self.root,generation)
  def test_small_header_reads_matching_request(self):self.assertEqual(self.read(),self.command)
+ def test_build_request_is_read(self):
+  header=dict(self.header,op='build');C.protocol.write(self.path,dict(self.command,op='build'))
+  self.assertEqual(self.read(header)['op'],'build')
  def test_replay_and_header_mismatch_are_refused(self):
   with self.assertRaises(ValueError):self.read(generation=1)
   for changes in (dict(session_token='wrong'),dict(job_token='../escape'),dict(generation=True),dict(extra='x')):

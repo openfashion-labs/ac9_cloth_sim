@@ -25,7 +25,7 @@ class AC9_OT_SimBlend(bpy.types.Operator):
     bl_label = "Blend"
     bl_options = {'REGISTER', 'UNDO'}
 
-    end: bpy.props.EnumProperty(translation_context=CTX, items=[('from', "From", "The seam's start"), ('to', "To", "The seam's end")])
+    end: bpy.props.EnumProperty(translation_context=CTX, items=[('from', "From", "The seam's start"), ('to', "To", "The seam's end")], options={'HIDDEN'})
 
     @classmethod
     def poll(cls, context):
@@ -68,7 +68,7 @@ class AC9_PT_SimBlend(bpy.types.Panel):
         spec, _ = store.get(context)
         sm = store.active_seam(context, spec)
         if sm is None:
-            layout.label(text="Pick a seam in the list")
+            layout.label(text_ctxt=CTX, text="Pick a seam in the list")
             return
         col = layout.column(align=True)
         for end in ('from', 'to'):

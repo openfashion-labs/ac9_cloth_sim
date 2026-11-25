@@ -64,6 +64,15 @@ class ArmClosure(unittest.TestCase):
         sp['placement']['band'].pop('ring')
         self.assertEqual(D.initial_shape(sp, self.pat, None, None)[1], [])
 
+    def test_flat_with_no_guides_key(self):
+        # a body picked but Detect Guides never run: the spec has no 'guides' at all, the piece is laid flat on a
+        # face; placing it raised KeyError 'guides'
+        sp = copy.deepcopy(self.spec); sp['seams'] = []; sp.pop('guides')
+        sp['placement']['band'] = dict(guide='flat', flat=dict(o=[0., 0., 2.], R=np.eye(3).tolist()), anchor=[120., 25.])
+        X, rings, *_ = D.initial_shape(sp, self.pat, None, None)
+        self.assertEqual(rings, [])
+        self.assertTrue(np.isfinite(X[0]).all())
+
 if __name__ == '__main__':
     ac9_cloth_sim.register()
     log = io.StringIO()

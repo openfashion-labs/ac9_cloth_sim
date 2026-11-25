@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Placed shapes are made again when they go missing (placement.remake_missing, called when the guides are found
+"""Adjusted Shapes are made again when they go missing (placement.remake_missing, called when the guides are found
 again): a placed piece without its object could not be clicked in 3D, and no button makes them any more. The hand
 move kept in the spec comes back with the object.
 

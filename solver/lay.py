@@ -127,7 +127,7 @@ def _crossings(X, F, fp, k, sewn):
 def apply(cfg, X_full, flat, v_piece, E, F, fp, pat_names, body_co_mm, body_tri, active_v, bridge=False):
     """X_full (mm) with the cfg's pieces laid where that passes the check; returns (X_full, log rows).
     F, fp: the active cloth's triangles (full vertex indices) and their piece; active_v: the active vertices.
-    bridge: lay_piece's (Lay on Edge on the placed shapes, solver/lay_once.py)."""
+    bridge: lay_piece's (Lay on Edge on the adjusted shapes, solver/lay_once.py)."""
     body = _body(body_co_mm, body_tri)
     keep = active_v[F].all(1)            # inactive cloth (not in this stage) is not judged against
     F, fp = F[keep], fp[keep]

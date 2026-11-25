@@ -191,38 +191,10 @@ def twin_vec(pa, pb, d):
     return tuple(v)
 
 
-TWIN_LINE_MM = 3.0     # a twin's internal line: the mirrored line within this (median), as pattern_build.mirror_into
-
-
 def twin_line(spec, name, lid):
-    """(twin, its line id) of internal line lid of `name`: the twin's line nearest the mirror image of it (a BOM's twins
-    number their lines apart; a Mirror Copy keeps the ids), only when that line's nearest back is lid (two parallel
-    lines within TWIN_LINE_MM, a tuck's sides, could pick each other's otherwise); or None."""
-    tw = twin_of(spec, name)
-    if tw is None:
-        return None
-    t = _nearest_mirrored(spec, name, lid, tw)
-    if t is None or _nearest_mirrored(spec, tw, t, name) != lid:
-        return None
-    return tw, t
-
-
-def _nearest_mirrored(spec, name, lid, tw):
-    """The id of tw's internal line nearest the mirror image of name's line lid (median within TWIN_LINE_MM), or None."""
-    pa, pb = piece(spec, name), piece(spec, tw)
-    it = next((x for x in pa.get('internals', []) if x['id'] == lid), None)
-    if it is None or len(it['pts']) < 2:
-        return None
-    Pm = mirror_fn(pa, pb)(it['pts'])
-    best = None
-    for x in pb.get('internals', []):
-        Q = np.asarray(x['pts'], float)
-        if x.get('kind') == 'baseline' or len(Q) < 2:
-            continue
-        d = float(np.median(_dist_to_polyline(Pm, Q)))
-        if d < TWIN_LINE_MM and (best is None or d < best[0]):
-            best = (d, x['id'])
-    return best[1] if best else None
+    """The saved authored correspondence, or a unique exact legacy mirror match (read only)."""
+    from . import internal_sync as IS
+    return IS.match(spec, name, lid)
 
 
 def _dist_to_polyline(Q, P):
@@ -767,6 +739,9 @@ def mirrored_edges(edges, M):
 def edit_copy(spec, names, memo=None):
     """Copy edited geometry and its mutable references; share unrelated geometry and immutable metadata."""
     memo = {} if memo is None else memo
+    from . import internal_sync as IS
+    names = set(names)
+    names.update(n for name in tuple(names) if (n := IS.partner(spec, name)) is not None)
     out = dict(spec)
     out['pieces'] = [copy.deepcopy(pc, memo) if pc['name'] in names else pc for pc in spec['pieces']]
     out['seams'] = copy.deepcopy(spec.get('seams', []), memo)
@@ -1075,6 +1050,23 @@ def add_ellipse(spec, center, rx, ry, name="Ellipse", fabric=""):
 
 
 def clone_shape(spec, name, lid, gap=20.0, sew=False):
+    """Clone every authored mirror of the shape, returning the primary piece's name."""
+    return clone_shapes(spec, name, lid, gap=gap, sew=sew)[(name, lid)]
+
+
+def clone_shapes(spec, name, lid, gap=20.0, sew=False):
+    """One independent piece per source shape; publish the complete batch or nothing."""
+    targets = list(dict.fromkeys([(name, lid)] + [(p, l) for p, l, _ in mirror_lines(spec, name, lid)]))
+    planned = copy.deepcopy(spec)
+    made = {(p, l): _clone_shape_one(planned, p, l, gap=gap, sew=sew) for p, l in targets}
+    bad = problems(planned, list(made.values()))
+    if bad:
+        raise ValueError(bad[0])
+    spec.update(planned)
+    return made
+
+
+def _clone_shape_one(spec, name, lid, gap=20.0, sew=False):
     """A new piece from the closed internal shape `lid` of piece `name` (a pocket drawn on the front: Clone as Pattern,
     Fable r2 b-5, user OK 2026-10-28): its points are the corners, its curved spans the curved edges. The shape stays;
     the piece has the source's fabric, no seams, is not placed, and lies `gap` mm right of its piece at the shape's
@@ -1212,6 +1204,13 @@ def mirror_copy(spec, name, gap=50.0, x_axis=None, plane='x'):
         ax = pc['mirror_axis']
         cp['mirror_axis'] = _r(M([ax[:2]]))[0] + [-float(ax[2])]
     spec['pieces'].append(cp)
+    from . import internal_sync as IS
+    for it in cp.get('internals', []):it.pop(IS.KEY, None)
+    if IS.partner(spec, name) == cp['name']:
+        for it in pc.get('internals', []):
+            if it.get('kind') != 'baseline':
+                it.pop(IS.KEY, None)
+                IS.bind(spec, name, it['id'], cp['name'], it['id'])
     return cp['name']
 
 
@@ -1436,26 +1435,31 @@ def transform_group(spec, pieces=(), lines=(), deg=0.0, k=(1.0, 1.0), shift=(0.0
         if follow and abs(deg) > 1e-9:
             rigid[tw] = transform_piece(spec, tw, deg=-deg, spin=True)
             changed.append(tw)
-    # the mirrors of every line found before any moves (they are found by where they lie)
-    picked = set(lines)
-    jobs = []
+    from . import internal_sync as IS, fold_hand as FH
+    jobs, seen = [], set()
     for n, l in lines:
+        if (n, l) in seen:continue
         pc = piece(spec, n)
-        jobs.append((n, l, f))
+        targets = [(p, q, M) for p, q, M in mirror_lines(spec, n, l) if p not in pieces]
+        IS.bind_targets(spec, n, l, targets)
+        source = internal(pc, l)
+        copies = [(p, q, M, not source.get('closed') and
+                   not FH.same_direction(M(source['pts']), internal(piece(spec, p), q)['pts']))
+                  for p, q, M in targets]
+        g = f
         ms, _ = self_mirror_line(pc, l)
-        if ms is not None:
+        if ms == l:
             rf = self_reflect(pc)
-            if ms == l:                                 # its own mirror image: the map made symmetric
-                jobs[-1] = (n, l, lambda P, rf=rf: 0.5 * (f(P) + rf(f(rf(P)))))
-            elif (n, ms) not in picked:
-                jobs.append((n, ms, lambda P, rf=rf: rf(f(rf(P)))))
-        tw, tl, M = _twin_internal(spec, n, l)
-        if tw is not None and tw not in pieces and (tw, tl) not in picked:
-            Mi = mirror_fn(piece(spec, tw), pc)
-            jobs.append((tw, tl, lambda P, M=M, Mi=Mi: M(f(Mi(P)))))
-    for n, l, g in jobs:
-        xform_internal(internal(piece(spec, n), l), g)
+            g = lambda P, rf=rf: 0.5 * (f(P) + rf(f(rf(P))))
+        jobs.append((n, l, g, copies))
+        seen |= {(n, l)} | {(p, q) for p, q, _ in targets}
+    for n, l, g, copies in jobs:
+        source = internal(piece(spec, n), l)
+        xform_internal(source, g)
         changed.append(n)
+        for p, q, M, rev in copies:
+            IS.copy_geometry(source, internal(piece(spec, p), q), M, rev)
+            changed.append(p)
     return list(dict.fromkeys(changed)), (rigid if not scaled and not jobs else None)
 
 
@@ -1490,6 +1494,8 @@ def duplicate_group(spec, names, gap=50.0):
             if e.get('ctrl'):
                 e['ctrl'] = f(e['ctrl'])
         for it in cp.get('internals', []):
+            from . import internal_sync as IS
+            it.pop(IS.KEY, None)
             xform_internal(it, f)
         if cp.get('mirror_axis'):
             cp['mirror_axis'] = f([cp['mirror_axis'][:2]])[0] + [cp['mirror_axis'][2]]
@@ -1704,6 +1710,19 @@ def match_side_length(spec, seam_id, key, ease=0.0, end='to', iters=8):
         raise ValueError(rpt("the target length is too short"))
     if 'line' in sd:                                 # an internal line: slide the end's fraction
         it = internal(piece(spec, sd['piece']), sd['line'])
+        if it.get('closed'):
+            from .line_track import LineTrack, side_span, make_side
+            tr = LineTrack(it['pts'], True)
+            a, b, delta = side_span(sd, tr.L)
+            if target > tr.L:
+                raise ValueError(rpt("the side is longer than the piece's whole outline"))
+            direction = 1 if delta >= 0 else -1
+            if end == 'to':
+                b = a + direction * target
+            else:
+                a = b - direction * target
+            sm[key] = make_side(tr, sd['piece'], sd['line'], a, b, direction)
+            return [sd['piece']], L0, S.side_length(spec, sm[key]), target
         Lline = S.polyline_len(it['pts'])
         span = (sd['to'] - sd['from']) * Lline
         sgn = 1.0 if span >= 0 else -1.0
@@ -1758,17 +1777,10 @@ def internal(pc, lid):
 def _twin_internal(spec, name, lid):
     """(twin name, its line id, M) of the internal line mirroring line `lid` of piece `name`, else (None, None, None).
     Same id first (a mirrored copy keeps ids), else the line whose points lie on the mirror image."""
-    tw = twin_of(spec, name)
-    if tw is None:
-        return None, None, None
-    pa, pb = piece(spec, name), piece(spec, tw)
-    M = mirror_fn(pa, pb)
-    P = M(internal(pa, lid)['pts'])
-    for it in sorted(pb.get('internals', []), key=lambda x: x['id'] != lid):
-        Q = np.asarray(it['pts'], float)
-        if len(Q) == len(P) and (np.abs(Q - P).max() < TWIN_TOL or np.abs(Q[::-1] - P).max() < TWIN_TOL):
-            return tw, it['id'], M
-    return None, None, None
+    target = twin_line(spec, name, lid)
+    if target is None:return None, None, None
+    tw, tl = target
+    return tw, tl, mirror_fn(piece(spec, name), piece(spec, tw))
 
 
 def nearest_on_outline(pc, q):
@@ -1790,11 +1802,12 @@ def _line_mirrors_onto(P, Q, closed=False):
     if closed:
         return 1 if (len(P) > 1 and len(Q) > 1 and _dist_to_polyline(P, Q).max() < SELF_TOL
                      and _dist_to_polyline(Q, P).max() < SELF_TOL) else 0
-    if len(P) != len(Q):
+    from . import internal_sync as IS
+    if len(P) < 2 or len(Q) < 2:
         return 0
-    if np.abs(Q - P).max() < SELF_TOL:
+    if IS._ordered_close(P, Q, SELF_TOL):
         return 1
-    if np.abs(Q[::-1] - P).max() < SELF_TOL:
+    if IS._ordered_close(P, Q[::-1], SELF_TOL):
         return -1
     return 0
 
@@ -1846,6 +1859,11 @@ def carry_fold(spec, name, lid, tls=None):
     tls = mirror_lines(spec, name, lid) if tls is None else tls
     if not tls:
         return spec
+    from . import internal_sync as IS
+    if any(p != name and (IS.KEY not in internal(piece(spec, name), lid)
+                         or IS.KEY not in internal(piece(spec, p), q)) for p, q, _ in tls):
+        spec = edit_copy(spec, {name} | {p for p, _, _ in tls})
+        IS.bind_targets(spec, name, lid, tls)
     src = internal(piece(spec, name), lid)
     f = next((x for x in spec.get('folds', []) if x.get('piece') == name and x.get('line') == lid), None)
     pieces = spec['pieces']
@@ -1883,11 +1901,13 @@ def _move_internal_one(it, which, d):
 def move_internal(spec, name, lid, which, d, twins=True):
     """Move an internal line: which = 'start' / 'end' (that end moves, the line follows as a similarity, the other end
     stays) or 'all' (shifted). Seams on the line keep their fractions, folds their line id. Returns pieces changed."""
-    tw, tlid, M = _twin_internal(spec, name, lid) if twins else (None, None, None)
-    if tw is not None:
-        P = np.asarray(internal(piece(spec, name), lid)['pts'], float)
-        Q = np.asarray(internal(piece(spec, tw), tlid)['pts'], float)
-        rev = np.abs(Q - M(P)).max() >= TWIN_TOL
+    from . import internal_sync as IS
+    targets = mirror_lines(spec, name, lid) if twins else []
+    if twins:IS.bind_targets(spec, name, lid, targets)
+    from . import fold_hand as FH
+    jobs = [(n, l, M, not internal(piece(spec, n), l).get('closed')
+             and not FH.same_direction(M(internal(piece(spec, name), lid)['pts']), internal(piece(spec, n), l)['pts']))
+            for n, l, M in targets if n != name]
     pc = piece(spec, name)
     ms, w = self_mirror_line(pc, lid)               # edited symmetrically: its mirror line too (user 2026-10-27)
     d = np.asarray(d, float)
@@ -1905,15 +1925,13 @@ def move_internal(spec, name, lid, which, d, twins=True):
             _move_internal_one(internal(pc, ms), which if (w == 1 or which == 'all')
                                else ('end' if which == 'start' else 'start'), dm)
     out = [name]
-    if tw is not None:
-        w = which if not rev or which == 'all' else ('end' if which == 'start' else 'start')
-        ptw = piece(spec, tw)
-        _move_internal_one(internal(ptw, tlid), w, twin_vec(pc, ptw, d))
-        out.append(tw)
-    return out
+    for n, l, M, rev in jobs:
+        IS.copy_geometry(internal(pc, lid), internal(piece(spec, n), l), M, rev)
+        out.append(n)
+    return list(dict.fromkeys(out))
 
 
-def add_internal(spec, name, P, kind='line', closed=False, mirror=True):
+def add_internal(spec, name, P, kind='line', closed=False, mirror=True, authored=False):
     """A new internal line on piece `name` through the points P (layout mm). Returns its id. closed: a closed
     shape (a pocket's place, a button's mark): its last point is its first (added if missing), and an edit drags it
     whole, never by its 'ends' (Fable r1, must-fix 2). A piece edited symmetrically gets the mirror image too (user
@@ -1921,11 +1939,15 @@ def add_internal(spec, name, P, kind='line', closed=False, mirror=True):
     pc = piece(spec, name)
     if mirror and symmetric_edit(pc) is not None:
         Q = self_reflect(pc)(P)
-        lid = add_internal(spec, name, P, kind, closed, mirror=False)
+        lid = add_internal(spec, name, P, kind, closed, mirror=False, authored=authored)
         if not _line_mirrors_onto(np.asarray(internal(pc, lid)['pts'], float), Q, closed):
             from . import fold_hand as FH
-            mid = add_internal(spec, name, Q, kind, closed, mirror=False)
+            mid = add_internal(spec, name, Q, kind, closed, mirror=False, authored=authored)
             FH.carry(internal(pc, lid), internal(pc, mid), self_reflect(pc))   # its A the mirror image of lid's A
+        from . import internal_sync as IS
+        IS.new_peer(spec, name, lid)
+        ms = self_mirror_line(pc, lid)[0]
+        if ms and ms != lid:IS.new_peer(spec, name, ms)
         return lid
     used = {it['id'] for it in pc.get('internals', [])}
     k = len(used) + 1
@@ -1933,11 +1955,16 @@ def add_internal(spec, name, P, kind='line', closed=False, mirror=True):
         k += 1
     P = np.asarray(P, float)
     it = {'id': f"I{k}", 'pts': _r(P), 'kind': kind}
+    if authored:
+        it['seam_authored_vertices'] = True
     if closed:
         if np.linalg.norm(P[0] - P[-1]) > 1e-6:
             P = np.vstack([P, P[:1]])
         it.update(pts=_r(P), closed=True)
     pc.setdefault('internals', []).append(it)
+    if mirror:
+        from . import internal_sync as IS
+        IS.new_peer(spec, name, it['id'])
     return f"I{k}"
 
 
@@ -2088,11 +2115,18 @@ def _remove_seam_dependents(spec, gone):
 
 
 def delete_internal(spec, name, lid, mirror=True):
+    """Resolve the entire mirrored batch before deleting lines and their dependent features."""
+    targets = [(name, lid)] + ([(p, l) for p, l, _ in mirror_lines(spec, name, lid)] if mirror else [])
+    gone = []
+    for n, l in dict.fromkeys(targets):gone += _delete_internal_one(spec, n, l)
+    return list(dict.fromkeys(gone))
+
+
+def _delete_internal_one(spec, name, lid):
     """Remove an internal line with the seams sewn along it and its fold (and its mirror line on a piece edited
     symmetrically, user 2026-10-27). Returns the seam ids removed."""
     pc = piece(spec, name)
-    ms = self_mirror_line(pc, lid)[0] if mirror else None
-    lids = {lid} | ({ms} if ms else set())
+    lids = {lid}
     pc['internals'] = [it for it in pc.get('internals', []) if it['id'] not in lids]
     gone = [sm['id'] for sm in spec.get('seams', []) if any(sm[k]['piece'] == name and sm[k].get('line') in lids
                                                             for k in ('a', 'b'))]

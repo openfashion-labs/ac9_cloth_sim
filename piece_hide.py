@@ -7,7 +7,8 @@ it, faint and marked, so it can still be picked and edited. The four states (Act
 simulation does with a piece; the eye says only whether it is seen. An Off piece is out of the simulation and
 has no eye (turning a piece Off opens it).
 
-Kept on the scene (an ID property: saved with the file, undone with Ctrl+Z), one list per garment by its spec name.
+Kept on the scene, one list per owning Text (saved with the file, undone with Ctrl+Z).
+Name-only files are qualified once at an operation boundary when ownership is unique.
 Nothing here is read by the solver, the recipe or the spec.
 """
 import json
@@ -15,8 +16,10 @@ import json
 import bpy
 
 from .i18n import rpt, tx
+from . import garment_owner as GO
 
 KEY = 'ac9_hidden_pieces'
+OWNERS = 'ac9_hidden_piece_owners'
 _cache = {'raw': None, 'map': {}}
 
 
@@ -33,27 +36,50 @@ def _map(scene):
     return _cache['map']
 
 
-def names(scene, spec):
+def names(scene, spec, *, owner=GO.CURRENT):
     """The hidden pieces of this garment (frozenset); read on every draw, parsed only when the property changed."""
     if not spec:
         return frozenset()
-    return _map(scene).get(str(spec.get('name', '')), frozenset())
+    owner = GO.text(owner)
+    if owner is None:
+        return frozenset()
+    for entry in scene.get(OWNERS, {}).values():
+        if entry.get('text') == owner:
+            return frozenset(json.loads(entry.get('pieces', '[]')))
+    # Retain name-only files when that name identifies exactly one document.
+    legacy = _map(scene).get(str(spec.get('name', '')), frozenset())
+    return (legacy
+            if legacy and GO.legacy_owner(spec, owner) else frozenset())
 
 
-def _write(scene, spec, hidden):
-    m = dict(_map(scene))
-    key = str(spec.get('name', ''))
+def _write(scene, spec, hidden, *, owner=GO.CURRENT):
+    owner = GO.text(owner)
+    if owner is None:
+        return
     known = {pc['name'] for pc in spec['pieces']}
     hidden = frozenset(n for n in hidden if n in known)
-    if hidden:
-        m[key] = hidden
-    else:
-        m.pop(key, None)
-    raw = json.dumps({k: sorted(v) for k, v in sorted(m.items())}) if m else ''
-    if raw:
-        scene[KEY] = raw
-    elif KEY in scene:
-        del scene[KEY]
+    entries = {key: {'text': entry.get('text'), 'pieces': entry.get('pieces', '[]')}
+               for key, entry in scene.get(OWNERS, {}).items()
+               if entry.get('text') is not None and entry.get('text') != owner}
+    # Empty records also suppress any legacy value after an explicit show-all.
+    key = str(next(i for i in range(len(entries) + 1) if str(i) not in entries))
+    entries[key] = {'text': owner, 'pieces': json.dumps(sorted(hidden))}
+    scene[OWNERS] = entries
+
+
+def bind_legacy(scene, spec, *, owner=GO.CURRENT):
+    """Qualify old name-only eye state outside drawing, only when unambiguous."""
+    owner = GO.text(owner)
+    if any(entry.get('text') == owner for entry in scene.get(OWNERS, {}).values()):
+        return
+    if spec['name'] in _map(scene) and GO.legacy_owner(spec, owner):
+        _write(scene, spec, names(scene, spec, owner=owner), owner=owner)
+        legacy = dict(_map(scene))
+        legacy.pop(spec['name'], None)
+        if legacy:
+            scene[KEY] = json.dumps({k: sorted(v) for k, v in legacy.items()})
+        else:
+            scene.pop(KEY, None)
 
 
 def hideable(spec):

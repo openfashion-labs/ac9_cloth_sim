@@ -4,9 +4,11 @@
 A piece is sewn once it belongs to a group of pieces joined by closed stitches whose stitches among themselves are
 all closed; a piece with no stitch at all is sewn from the start. Sewn pieces feel the gravity and the bending
 hysteresis; the others float (the gravity cancelled on them) until they join. So a collar placed by a garment that
-is already sewn floats to its neckline while the garment keeps its weight and stays free to move (holding the
-garment still was ruled out: a neckline that had gone wrong could no longer follow the collar), and pieces placed
-apart all float until their seams close, as one sewing without gravity.
+is already sewn floats to its neckline, and pieces placed apart all float until their seams close, as one sewing
+without gravity. While a piece floats by sewn pieces, GarmentHold (below) holds the sewn ones still, so the stitches
+bring the piece to them instead of lifting them; it lets go when the piece is sewn, or when its stitches stop closing
+(a neckline it cannot reach then comes to meet it). Any group sewn while another still floats is held, not only a
+garment Reset around one piece: pieces placed apart of which one pair already closed, a piece with no seam.
 
 Closed: a stitch shorter than gap_mm. All the stitches count as closed once the widest is under gap_mm, once p99 is
 under it and the widest no longer shrinks (by 0.5 mm over 30 frames: eased or body-pressed seams that stay a few mm
@@ -94,3 +96,42 @@ class PieceSewing:
 
     def floating(self):
         return self.sewn_frame < 0
+
+
+class GarmentHold:
+    """While a piece still floats (one placed again on a garment already sewn), the pieces already sewn are held still
+    (their particles' mass 0, as the user's Freeze), so the stitches bring the piece to the garment instead of lifting
+    it; let go once nothing floats, or for good when the widest stitch gap has not closed by stall_mm over
+    stall_frames frames (a partner the piece cannot reach: the garment then comes to meet it). The pieces the user
+    froze are never taken over: not held, and not let go when the hold ends."""
+
+    def __init__(self, n_particles, stall_frames=0, stall_mm=0.5):
+        self.mask = np.zeros(int(n_particles), bool)     # the particles held now
+        self.last = None                                  # the pieces held at the last change
+        self.off = False
+        self.stalled_at = None
+        self.stall_frames, self.stall_mm = int(stall_frames), float(stall_mm)
+        self.hist = {}                                    # the widest stitch gap (mm) per frame while holding
+
+    def update(self, f, floating, user_frozen, vp, pim, widest):
+        """floating, user_frozen: per piece; vp: the piece of each particle (-1: none); pim: the inverse masses now;
+        widest: the widest stitch gap at this frame (mm, PieceSewing.hist[f]; None: not measured). Returns (pieces
+        held, particles to hold, particles to let go) when the held set changes, else None."""
+        floating = np.asarray(floating, bool)
+        user_frozen = np.asarray(user_frozen, bool)
+        held = (~floating) & floating.any()
+        sf = self.stall_frames
+        if sf and held.any() and not self.off and widest is not None:
+            self.hist[f] = float(widest)
+            self.hist.pop(f - sf - 1, None)
+            if f - sf in self.hist and self.hist[f - sf] - self.hist[f] < self.stall_mm:
+                self.off, self.stalled_at = True, int(f)
+        if self.off:
+            held = np.zeros_like(held)
+        held &= ~user_frozen
+        if self.last is not None and np.array_equal(held, self.last):
+            return None
+        on = np.isin(vp, np.nonzero(held)[0]) & ((np.asarray(pim) > 0) | self.mask)
+        back = self.mask & ~on & ~np.isin(vp, np.nonzero(user_frozen)[0])
+        self.mask, self.last = on, held.copy()
+        return held, on, back

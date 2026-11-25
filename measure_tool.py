@@ -13,6 +13,7 @@ Where things are kept:
 """
 import hashlib
 import json
+from pathlib import Path
 from .i18n import CTX, rpt, tx
 
 import blf
@@ -353,7 +354,7 @@ def _plane_normal(cache, p, mode):
 
 def garment_object(context):
     spec, _ = store.get(context)
-    ob = bpy.data.objects.get(dress.garment_name(spec)) if spec else None
+    ob = dress.garment(spec) if spec else None
     if ob is None:
         a = context.active_object
         if a is not None and a.type == 'MESH' and a.name.startswith(dress.GARMENT_PREFIX):
@@ -677,7 +678,7 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
     mode: EnumProperty(translation_context=CTX, items=[('AROUND', "Around", "Round the body through one point"),
                               ('ALONG', "Along", "Along the body's surface through clicked points"),
                               ('STRAIGHT', "Straight", "Pulled taut between two points: over the bulges, across the hollows")],
-                       default='AROUND')
+                       default='AROUND', options={'HIDDEN'})
 
     @classmethod
     def description(cls, context, props):
@@ -898,16 +899,31 @@ def measure_garment(context, bo, go, frame=None):
 # a finished Simulate (Dress / Continue / Live) gives the garment a new job: measure its result then. A handler
 # here, so dress.py is not touched; a garment seen for the first time (a file opened) is only remembered
 _jobs = {}
+_pending_results = {}
+
+
+def _measurement_job(go):
+    job = go.get('ac9_job', '')
+    generation = go.get('ac9_job_generation')
+    recovery = go.get('ac9_job_recovery')
+    if (job and isinstance(generation,str) and generation and isinstance(recovery,str)
+            and Path(job).name == Path(recovery).name):
+        return (Path(job).name,generation)
+    return job
 
 
 @bpy.app.handlers.persistent
 def _auto_garment(scene, depsgraph=None):
+    # Measure a completed result, not a run being assigned or displayed. Do
+    # not consume its identity here: completion will trigger the measurement.
+    if dress.AC9_OT_SimDress._active_instance is not None:
+        return
     try:
         objs = [o for o in scene.objects if o.type == 'MESH' and o.name.startswith(dress.GARMENT_PREFIX)]
     except Exception:
         return
     for go in objs:
-        job = go.get('ac9_job', '')
+        job = _measurement_job(go)
         key = go.as_pointer()
         if key not in _jobs:
             _jobs[key] = job
@@ -918,10 +934,31 @@ def _auto_garment(scene, depsgraph=None):
         bo = scene.ac9_cloth_sim.body
         if not job or bo is None or not read(bo).get('items'):
             continue
+        _pending_results[key] = dict(name=go.name, uid=go.session_uid, scene=scene.name, job=job)
+    if _pending_results and not bpy.app.timers.is_registered(_measure_completed):
+        bpy.app.timers.register(_measure_completed, first_interval=0.1)
+
+
+def _measure_completed():
+    """Heavy measurement never runs inside evaluated_depsgraph_get / Start."""
+    if dress.AC9_OT_SimDress._active_instance is not None:
+        return 0.1
+    for key, request in list(_pending_results.items()):
+        _pending_results.pop(key, None)
+        go = bpy.data.objects.get(request['name'])
+        scene = bpy.data.scenes.get(request['scene'])
+        if (go is None or scene is None or go.session_uid != request['uid']
+                or _measurement_job(go) != request['job']):
+            continue
+        bo = scene.ac9_cloth_sim.body
+        if bo is None:
+            continue
         try:
-            measure_garment(bpy.context, bo, go)
-        except Exception as e:                          # never in the way of the result
+            with bpy.context.temp_override(scene=scene):
+                measure_garment(bpy.context, bo, go)
+        except Exception as e:
             print("AC9 Cloth Sim: measuring the garment failed:", e)
+    return None
 
 
 class AC9_OT_MeasureSetTarget(bpy.types.Operator):
@@ -972,7 +1009,9 @@ class AC9_OT_MeasureHighlight(bpy.types.Operator):
 
     def execute(self, context):
         from . import measure_edit as MEE
-        MEE.select(context, '' if MEE.sel(context) == 'item:' + self.key else 'item:' + self.key)
+        from . import tool_tab as TT
+        same = MEE.sel(context) == 'item:' + self.key and TT.resolve(context, store.get(context)[0]) == 'MEASURE'
+        MEE.select(context, '' if same else 'item:' + self.key, origin='list')
         return {'FINISHED'}
 
 
@@ -1143,7 +1182,7 @@ class AC9_PT_SimMeasure(bpy.types.Panel):
         items = data.get('items')
         if not items:
             if ob is None:                  # with a body picked the button right above says it
-                layout.label(text="Pick the body, then Measure Body", icon='INFO')
+                layout.label(text_ctxt=CTX, text="Pick the body, then Measure Body", icon='INFO')
             return
         # the measuring tools (the toolbar's Edit Measure group, user 2026-10-21)
         box = layout.box()
@@ -1167,7 +1206,7 @@ class AC9_PT_SimMeasure(bpy.types.Panel):
             a, r = _cols(col)
             a.operator("ac9_cloth_sim.measure_highlight", text=tx(LABEL.get(k, k)), emboss=False,
                        depress=mp.sel == 'item:' + k).key = k
-            r.label(text=_cm(it['value']))
+            r.label(text_ctxt=CTX, text=_cm(it['value']))
             g = gi.get(k)
             if it['kind'] != 'girth':
                 r.label(text="")
@@ -1176,8 +1215,8 @@ class AC9_PT_SimMeasure(bpy.types.Panel):
                 r.label(text="—")
                 r.label(text="")
             else:
-                r.label(text=_cm(g['value']) if g['covered'] else "open")
-                r.label(text=_signed_cm(g['ease']))
+                r.label(text_ctxt=CTX, text=_cm(g['value']) if g['covered'] else "open")
+                r.label(text_ctxt=CTX, text=_signed_cm(g['ease']))
         row = box.row()
         row.label(text=tx("{0}. Girths: a tape pulled round the body", units.unit(context)[1]))
         row.operator("ac9_cloth_sim.measure_reset_levels", text="", icon='LOOP_BACK')
@@ -1215,9 +1254,9 @@ class AC9_PT_SimMeasureGarment(bpy.types.Panel):
             a, r = _cols(col)
             a.operator("ac9_cloth_sim.measure_set_target", text=tx(LABEL.get(k, k)), emboss=False).key = k
             tg = _target(spec, k)
-            r.label(text=_cm(g['value']))
+            r.label(text_ctxt=CTX, text=_cm(g['value']))
             r.label(text=_cm(tg))
-            r.label(text=_signed_cm(None if tg is None else g['value'] - tg))
+            r.label(text_ctxt=CTX, text=_signed_cm(None if tg is None else g['value'] - tg))
         rows = _pattern_rows(spec, outlines)
         for row_, st, al, _, _ in rows:
             a, r = _cols(col)
@@ -1228,18 +1267,18 @@ class AC9_PT_SimMeasureGarment(bpy.types.Panel):
             r.label(text=_cm(tg))
             r.label(text=_signed_cm(None if tg is None else v - tg))
         if not gi and not rows:
-            layout.label(text="Measure Garment, or Measure Pattern", icon='INFO')
+            layout.label(text_ctxt=CTX, text="Measure Garment, or Measure Pattern", icon='INFO')
         row = layout.row(align=True)
         row.operator("ac9_cloth_sim.measure_pattern", icon='DRIVER_DISTANCE')
         if rows:
             sub = layout.column(align=True)
             for row_, st, al, _, _ in rows:
                 r = sub.row(align=True)
-                r.label(text=row_['name'])
-                r.label(text=tx("{0} straight", _cm(st)) if al is None else tx("{0} / {1}", _cm(st), _cm(al)))
+                r.label(text_ctxt=CTX, text=row_['name'])
+                r.label(text_ctxt=CTX, text=tx("{0} straight", _cm(st)) if al is None else tx("{0} / {1}", _cm(st), _cm(al)))
                 r.operator("ac9_cloth_sim.measure_pattern_remove", text="", icon='X', emboss=False).name = row_['name']
-            layout.label(text="Length: straight / along the outline")
-        layout.label(text="Click a name to set its target", icon='INFO')
+            layout.label(text_ctxt=CTX, text="Length: straight / along the outline")
+        layout.label(text_ctxt=CTX, text="Click a name to set its target", icon='INFO')
 
 
 # ---------------------------------------------------------------- overlay
@@ -1427,6 +1466,9 @@ def register():
 
 
 def unregister():
+    if bpy.app.timers.is_registered(_measure_completed):
+        bpy.app.timers.unregister(_measure_completed)
+    _pending_results.clear()
     for h in _handles:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(h, 'WINDOW')

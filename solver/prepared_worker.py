@@ -10,6 +10,8 @@ import time
 import traceback
 from process_tree import join_owned_job
 join_owned_job()
+from runtime_guard import verify_actual_environment
+verify_actual_environment()
 from prepared_live import Gate, write
 
 

@@ -123,9 +123,13 @@ def apply_terminal_field(field, flat, hinges, rest, groups, degrees):
         ids=np.asarray(groups.get(key,([],0))[0],int)
         if not len(ids):raise ValueError('Terminal field has no tagged hinges: '+key)
         if (hinges[ids]<0).any():raise ValueError('Invalid terminal hinge')
-        points=np.asarray(flat)[hinges[ids,2:]].mean(1)
-        poly=np.asarray(line['polyline_mm']);edge=np.diff(poly,axis=0);t=np.clip(((points[:,None,:]-poly[:-1])*edge).sum(2)/np.maximum((edge*edge).sum(1),1e-20),0,1)
-        if np.max(np.linalg.norm(points[:,None,:]-(poly[:-1]+t[:,:,None]*edge),axis=2).min(1))>.01:raise ValueError('Terminal hinges do not match the authored polyline: '+key)
+        ends=np.asarray(flat)[hinges[ids,2:]];points=ends.mean(1)
+        # the hinges' own vertices lie on the line; their midpoints need not: on a curved line (a densely drawn
+        # curve, 1.2 mm points, 5.9 mm hinges) a hinge is a chord and its midpoint sits up to 0.019 mm off the curve,
+        # which refused a curved collar line's taper and stopped the run (2026-11-25)
+        poly=np.asarray(line['polyline_mm']);edge=np.diff(poly,axis=0);q=ends.reshape(-1,ends.shape[-1])
+        t=np.clip(((q[:,None,:]-poly[:-1])*edge).sum(2)/np.maximum((edge*edge).sum(1),1e-20),0,1)
+        if np.max(np.linalg.norm(q[:,None,:]-(poly[:-1]+t[:,:,None]*edge),axis=2).min(1))>.01:raise ValueError('Terminal hinges do not match the authored polyline: '+key)
         target=terminal_angles(points,line['polyline_mm'],line['deg'],line['taper_mm'],line['terminal_ends'])
         out[ids]=np.radians(target)
         audit[key]={'hinges':ids.tolist(),'midpoint_material_mm':points.tolist(),'target_deg':target.tolist()}

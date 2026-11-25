@@ -15,9 +15,9 @@ Taper takes effect during simulation. It does not fold a partial line in the
 placed preview or replace the cloth's natural geometry with its current shape.
 Moving the placed piece by hand keeps the visible geometry and the line setting.
 
-Live can update the angle or taper distance, including disabling taper, with
+Simulate can update the angle while it runs or taper distance, including disabling taper, with
 the existing 30-frame transition. A no-edit stop can keep its full checkpoint.
-After a Live taper/angle edit, a full checkpoint is unavailable for that run;
+After a taper/angle edit while Simulate runs, a full checkpoint is unavailable for that run;
 the next start rebuilds from the displayed shape with the saved fold settings.
 The displayed fold is kept, but the solver's complete internal history is not.
 

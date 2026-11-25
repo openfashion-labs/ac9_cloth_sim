@@ -44,6 +44,17 @@ class CandidateTests(unittest.TestCase):
   self.assertTrue(self.match())
   np.savez(self.idx,Xinit=np.ones((4,3)));self.assertFalse(self.match())
   self.assertTrue(np.array_equal(np.load(self.c.root/'scene.idx.npz')['Xinit'],np.zeros((4,3))))
+ def test_nested_and_underscore_file_names_keep_separate_private_copies(self):
+  a=self.root/'a.dat';b=self.root/'b.dat';a.write_bytes(b'first');b.write_bytes(b'second')
+  cfg=json.loads(self.cfg.read_text());cfg.update(extension_file=str(a),extension=dict(file=str(b)))
+  self.cfg.write_text(json.dumps(cfg),encoding='utf8')
+  with patch.object(C,'OwnedProcess',return_value=NS(poll=lambda:0)):
+   candidate=C.Candidate(sys.executable,{},self.idx,self.avatar,self.cfg,4)
+  try:
+   copied=json.loads((candidate.root/'private/config.json').read_text())
+   first=Path(copied['extension_file']);second=Path(copied['extension']['file'])
+   self.assertNotEqual(first,second);self.assertEqual(first.read_bytes(),b'first');self.assertEqual(second.read_bytes(),b'second')
+  finally:self.assertTrue(candidate.cleanup())
  def test_interpreter_environment_generation_and_source_invalidate(self):
   for kwargs in [dict(python=str(self.root/'different.exe')),dict(environment={'AC9_DRESS':'1'}),dict(generation=4)]:
    self.assertFalse(self.match(**kwargs))

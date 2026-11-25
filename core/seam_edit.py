@@ -2,7 +2,7 @@
 """Seams on the flat pattern as things to point at and move (no bpy): which seam is under a point, a seam's stable
 color, sliding one end of a side along its track, and moving a side to another stretch (another piece).
 
-A side runs along a TRACK: a piece's closed outline (key = piece name) or one of its internal lines (open; key =
+A side runs along a TRACK: a piece's closed outline (key = piece name) or one of its internal lines (open or closed; key =
 piece SEP line id). Positions on a track are arc lengths s in mm.
 
 M:N seams (one edge sewn to several edges, a BOM SeamLinePairGroup) stay 1:1 seams in the spec; the ones from one
@@ -17,25 +17,12 @@ from ._i18n import rpt, length as len_text
 import numpy as np
 
 from . import spec as S
+from .line_track import LineTrack, side_span, make_side as internal_side, signed_interval
 
 SEP = "\x1f"            # same as seam_tool.SEP
 SHARED_MM = 0.05        # two group members' ends this close are one split point: they move together
 MIN_SIDE_MM = 2.0       # a side no shorter than this after an end is dragged
 LINE_END_MM = 1.0       # an internal line's end this close to the outline is a snap target there
-
-
-class LineTrack:
-    """An internal line as a track (open: no wrap-round)."""
-    closed = False
-
-    def __init__(self, pts):
-        self.B = np.asarray(pts, float)
-        self.cum = np.r_[0, np.cumsum(np.linalg.norm(np.diff(self.B, axis=0), axis=1))]
-        self.L = float(self.cum[-1])
-
-    def at(self, s):
-        s = np.clip(np.asarray(s, float), 0.0, self.L)
-        return np.stack([np.interp(s, self.cum, self.B[:, 0]), np.interp(s, self.cum, self.B[:, 1])], -1)
 
 
 def is_closed(tr):
@@ -52,7 +39,7 @@ def tracks(spec, outlines=None, only_enabled=True):
         for it in pc.get('internals', []):
             if it.get('kind') == 'baseline' or len(it['pts']) < 2:
                 continue
-            out[pc['name'] + SEP + it['id']] = LineTrack(it['pts'])
+            out[pc['name'] + SEP + it['id']] = LineTrack(it['pts'], it.get('closed', False), it)
     return out
 
 
@@ -63,8 +50,7 @@ def track_key(side):
 def span(side, tr):
     """(s0, s1, signed length) of a side on its track: s1 = s0 + signed length (unwrapped)."""
     if 'line' in side:
-        s0, s1 = side['from'] * tr.L, side['to'] * tr.L
-        return s0, s1, s1 - s0
+        return side_span(side, tr.L)
     s0 = tr.s_of(*side['from'])
     d = tr.span(side)
     return s0, s0 + d, d
@@ -72,10 +58,9 @@ def span(side, tr):
 
 def make_side(tr, piece_key, s0, s1, direction):
     """A spec side from s0 to s1 (s1 unwrapped or not) running `direction` (+1 ccw / -1 cw) on the track."""
-    if not is_closed(tr):
+    if SEP in piece_key:
         pc, line = piece_key.split(SEP)
-        return {'piece': pc, 'line': line, 'from': round(float(np.clip(s0, 0, tr.L)) / tr.L, 6),
-                'to': round(float(np.clip(s1, 0, tr.L)) / tr.L, 6)}
+        return internal_side(tr, pc, line, s0, s1, direction)
     ef, tf = tr.edge_t(s0)
     et, tt = tr.edge_t(s1)
     return {'piece': piece_key, 'from': [ef, round(tf, 6)], 'to': [et, round(tt, 6)], 'dir': int(direction)}
@@ -178,7 +163,10 @@ def _side_key(sd):
         if isinstance(e, (list, tuple)) and len(e) == 2:
             return (str(e[0]), round(float(e[1]), 3))
         return (str(sd.get('line', sd.get('edge'))), round(float(e), 3)) if isinstance(e, (int, float)) else repr(e)
-    return (sd.get('piece'), sd.get('line'), frozenset(end(e) for e in (sd.get('from'), sd.get('to'))))
+    if 'line' in sd:
+        from .line_track import covered_intervals
+        return (sd['piece'], sd['line'], tuple(sorted((round(a, 6), round(b, 6)) for a, b in covered_intervals(sd))))
+    return (sd.get('piece'), None, frozenset(end(e) for e in (sd.get('from'), sd.get('to'))))
 
 
 def duplicates(spec, sm):
@@ -249,7 +237,7 @@ def _move_one(sm, k, which, ds, tr):
     if not is_closed(tr):
         sm[k] = make_side(tr, track_key(sm[k]), s0, s1, direction)
     else:
-        sm[k] = make_side(tr, sm[k]['piece'], s0 % tr.L, s1 % tr.L, direction)
+        sm[k] = make_side(tr, track_key(sm[k]), s0, s1, direction)
     return nd
 
 
@@ -292,21 +280,21 @@ def snap_targets(spec, key, trk, skip=()):
     on it (skip: (seam id, side, end) left out)."""
     tr = trk[key]
     out = []
-    if is_closed(tr):
+    if not getattr(tr, 'internal', False):
         out += [tr.edges[e][0] for e in tr.order]
         pc = S.piece_index(spec)[key]
         for n in pc.get('notches', []):
             if n['edge'] in tr.edges:
                 out.append(tr.s_of(n['edge'], float(n['t'])))
         for k2, t2 in trk.items():
-            if is_closed(t2) or k2.split(SEP)[0] != key:
+            if not getattr(t2, 'internal', False) or k2.split(SEP)[0] != key:
                 continue
             for q in (t2.B[0], t2.B[-1]):
                 s, d = project(tr, q)
                 if d <= LINE_END_MM:
                     out.append(s % tr.L)
     else:
-        out += [0.0, tr.L]
+        out += list(tr.vertices)
     for sm in spec['seams']:
         for k in ('a', 'b'):
             if track_key(sm[k]) != key:
@@ -353,9 +341,7 @@ def move_side(spec, sid, k, key, s_from, direction, trk, length=None, snap_mm=3.
 
 def signed_len(tr, s0, s1, direction):
     """Signed length of the stretch from s0 to s1 running `direction` on the track (as seam_tool draws it)."""
-    if not is_closed(tr):
-        return s1 - s0
-    return ((s1 - s0) % tr.L) if direction > 0 else -((s0 - s1) % tr.L)
+    return signed_interval(tr, s0, s1, direction)
 
 
 def mn_breaks(la, lb, merge_mm=1.0):

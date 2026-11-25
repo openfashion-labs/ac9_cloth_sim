@@ -2,7 +2,7 @@
 """Start check (no bpy): does each piece start the run (the solver's Xinit) where it was on screen when the run was
 pressed? The rule (DECISIONS cloth-sim-place-shows-start-shape-2026-10-25): the shape seen is the start. Nothing
 compared them, so a run could start a piece from somewhere else in silence: a collar switched On after a result
-started from the placement rule (a ring x2.71, its hand move and fold lost) while its placed shape was on screen
+started from the placement rule (a ring x2.71, its hand move and fold lost) while its adjusted shape was on screen
 (2026-11-04, review docs/reviews/REVIEW_fable_run_start_shape_2026-11-04.md step 1).
 
 A mismatch is said and shown red, the run goes on (user 2026-11-04, DECISIONS cloth-sim-run-start-shape-2026-11-04
@@ -20,6 +20,14 @@ import numpy as np
 from .shape_source import CARRY_ATOL, carry, same_layout
 
 TOL_MM = 0.1           # a start this far from the shape on screen is said (mm)
+# a piece shown on screen from one of these: a start that could not be compared with it is said and shown red, never
+# passed in silence (2026-11-23: a garment whose mesh did not fit its job started a collar 114 mm from where it was
+# shown, and the check said nothing because it could not read the garment)
+ON_SCREEN = ('placed', 'mirrored', 'result')
+
+
+def _unread(rec, a, b, why):
+    rec.update(checked=True, unread=why, over=list(range(a, b)), over_mm=[SHADE_FULL_MM] * (b - a))
 
 
 def compare(screen, names, flat, offs, Xinit, mapper):
@@ -31,18 +39,20 @@ def compare(screen, names, flat, offs, Xinit, mapper):
     for i, n in enumerate(names):
         a, b = int(ends[i]), int(ends[i + 1])
         src, shape, note, *lost = screen.get(n, ('unknown', None, "not read before the run"))
-        rec = {'source': src, 'checked': False, 'dmax_mm': None, 'over': [], 'note': note, 'lost': ''}
+        rec = {'source': src, 'checked': False, 'dmax_mm': None, 'over': [], 'note': note, 'lost': '', 'unread': ''}
         out[n] = rec
         if shape is None:
             if lost and lost[0]:
                 rec.update(checked=True, lost=lost[0], over=list(range(a, b)))
+            elif src in ON_SCREEN:
+                _unread(rec, a, b, note or "its shape could not be read")
             continue
         V, X = np.asarray(flat[a:b], float), np.asarray(Xinit[a:b], float)
         Fs, Ts, Ws = (np.asarray(s) for s in shape)
         # compared through the layout points as the start is made (shape_source.carry), never by a mark: a check
         # taking the same shortcut as the start it checks says 0.0 mm when the start is torn
         if not (len(Ws) == len(V) and same_layout(Fs, V, atol=CARRY_ATOL)) and not len(Ts):
-            rec['note'] = note or "no triangles to map through"
+            _unread(rec, a, b, note or "no triangles to map through")
             continue
         Y, _same = carry(V, Fs, Ts, Ws, mapper)
         d = np.linalg.norm(X - Y, axis=1)
@@ -71,6 +81,8 @@ def lines(res):
     head = (f"start check: {n_ok} piece(s) start as shown" + (f", {len(off)} do NOT" if off else "")
             + (f", {n_rule} from the placement rule or not compared" if n_rule else ""))
     return head, [f"  {n}: starts from the placement rule, without its {r['lost']}" if r['lost'] else
+                  f"  {n}: its {r['source']} shape on screen was not compared ({r['unread']}): the start may differ"
+                  if r.get('unread') else
                   f"  {n}: starts up to {r['dmax_mm']:.1f} mm from its {r['source']} shape on screen "
                   f"({len(r['over'])} vertices over {TOL_MM} mm)" for n, r in sorted(off.items())]
 

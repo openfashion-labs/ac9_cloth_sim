@@ -49,6 +49,39 @@ class StopControlTests(unittest.TestCase):
             self.assertFalse(stop.poll())
         self.assertEqual(p.kills,1)
 
+    def test_preparing_session_that_writes_nothing_is_killed_after_the_quiet_time(self):
+        p=Process();self.session_phase(p,'preparing');act=[0]
+        with patch('solver.stop_control.time.monotonic',return_value=10):
+            stop=PendingStop(p,[self.temp.name],activity=lambda:act[0])
+        with patch('solver.stop_control.time.monotonic',return_value=35):
+            self.assertFalse(stop.poll())
+        self.assertEqual(p.kills,0)
+        with patch('solver.stop_control.time.monotonic',return_value=40):
+            self.assertFalse(stop.poll())
+        self.assertEqual(p.kills,1)
+
+    def test_preparing_session_that_still_writes_waits_for_the_deadline(self):
+        p=Process();self.session_phase(p,'preparing');act=[0]
+        with patch('solver.stop_control.time.monotonic',return_value=10):
+            stop=PendingStop(p,[self.temp.name],activity=lambda:act[0])
+        for t in (25,38,51,64):                       # a long first kernel build: something changes every 13 s
+            act[0]+=1
+            with patch('solver.stop_control.time.monotonic',return_value=t):
+                self.assertFalse(stop.poll())
+        self.assertEqual(p.kills,0)
+        with patch('solver.stop_control.time.monotonic',return_value=70):
+            stop.poll()
+        self.assertEqual(p.kills,1)
+
+    def test_activity_that_raises_counts_as_unchanged(self):
+        p=Process();self.session_phase(p,'preparing')
+        def broken():raise OSError('gone')
+        with patch('solver.stop_control.time.monotonic',return_value=10):
+            stop=PendingStop(p,[self.temp.name],activity=broken)
+        with patch('solver.stop_control.time.monotonic',return_value=41):
+            stop.poll()
+        self.assertEqual(p.kills,1)
+
     def test_session_first_frame_without_timing_keeps_frame_watchdog(self):
         p=Process();self.session_phase(p,'loop')
         with patch('solver.stop_control.time.monotonic',return_value=10):stop=PendingStop(p,[self.temp.name])
