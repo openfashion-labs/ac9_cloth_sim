@@ -19,7 +19,7 @@ import zipfile
 IDS = {'ac9_cloth_sim', 'ac9_cloth_sim_runtime'}
 
 
-def build_candidate(source, output, base_url, main_version):
+def build_candidate(source, output, base_url, main_version, *, copy_archives=True):
     source, output = Path(source).resolve(), Path(output).resolve()
     parsed = urlsplit(base_url)
     if (parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.query
@@ -103,7 +103,8 @@ code{{overflow-wrap:anywhere}}small{{color:#48535e}}</style>
 公開前の配布条件・正式導入リンクの確認は残っています。</small></p></html>'''
     output.mkdir(parents=True)
     for record in packages.values():
-        shutil.copyfile(source / record['filename'], output / record['filename'])
+        if copy_archives:
+            shutil.copyfile(source / record['filename'], output / record['filename'])
     (output / 'index.json').write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding='utf8')
     (output / 'index.html').write_text(page, encoding='utf8')
     result = {'scope': 'unpublished candidate only', 'base_url': base_url, 'main_version': main_version,

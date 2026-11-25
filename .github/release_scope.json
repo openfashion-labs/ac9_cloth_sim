@@ -9,9 +9,9 @@
     "runtime"
   ],
   "publication": {
+    "asset_publication_approved": false,
     "ready": false,
     "remaining": [
-      "public_repository_connection",
       "runtime_distribution_terms_review",
       "production_install_update_check"
     ]

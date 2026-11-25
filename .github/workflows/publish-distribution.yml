@@ -1,0 +1,42 @@
+name: publish-distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      tested_run_id:
+        description: Successful release PR CI run whose exact ZIPs were accepted
+        required: true
+        type: string
+      source_sha:
+        description: Exact reviewed PR head SHA (40 lowercase hex characters)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Share the entire publication window with docs build/deploy, not only the tag.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Promote the reviewed artifacts without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TESTED_RUN_ID: ${{ inputs.tested_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          python3 tools/publish_distribution.py --run-id "$TESTED_RUN_ID" --source-sha "$SOURCE_SHA" \
+            --work "$RUNNER_TEMP/distribution-publication" --execute

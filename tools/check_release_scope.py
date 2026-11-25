@@ -20,7 +20,16 @@ def validate_plan(root):
     publication=scope.get('publication')
     if not isinstance(publication,dict) or type(publication.get('ready')) is not bool or not isinstance(publication.get('remaining'),list):raise ValueError('Explicit publication state required')
     if publication['ready'] and publication['remaining']:raise ValueError('Ready publication still has unresolved requirements')
+    if type(publication.get('asset_publication_approved')) is not bool:raise ValueError('Explicit asset publication approval state required')
     validate_workflow((root/'.github/workflows/release.yml').read_text(encoding='utf-8'))
+    publisher=(root/'.github/workflows/publish-distribution.yml').read_text(encoding='utf-8')
+    docs=(root/'.github/workflows/docs.yml').read_text(encoding='utf-8')
+    if 'tools/publish_distribution.py' not in publisher or 'group: pages' not in publisher:
+        raise ValueError('Explicit reviewed-artifact publication workflow is missing')
+    if 'catalog_site.py overlay' not in docs or 'catalog_site.py guard' not in docs or 'group: pages' not in docs:
+        raise ValueError('Persistent catalog and stale-generation guard must be connected')
+    if '--clobber' in (root/'.github/workflows/release.yml').read_text(encoding='utf-8'):
+        raise ValueError('Legacy release workflow must not overwrite public assets')
     return scope
 
 def validate_packages(build,version):

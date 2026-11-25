@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.4.1"
-build_id = "f3b92da6971234e08f3c4f08e5d82c8e1b2e09ece0db5096940993d2c7c3d83b"
+build_id = "9ccd0bb1482c818b4ea0552c46646266fff6608d234ee8f1773a7ec7212f6bb7"
 
 [[documents]]
 id = "guide_blender"
@@ -1300,6 +1300,10 @@ path = "tests/test_display_plan.py"
 sha256 = "22ff1aade1388db0c4f2764a6bf45a7e3d8bb3344df5dfe9ade545ca589e0575"
 
 [[sources]]
+path = "tests/test_distribution_publication.py"
+sha256 = "fec0f1553a449d79e0cfb74de9e8e60aa87342cd6c6a63cb53a4f2ad2ab21865"
+
+[[sources]]
 path = "tests/test_distribution_repository_index.py"
 sha256 = "8ef2b502e599f340785e9e493b1959d7d4989f34eb35afacedc7681a00365699"
 
@@ -1688,6 +1692,10 @@ path = "tests/test_pseam_folded_interpolation.py"
 sha256 = "abdc0710748a449c8e8ccb74d6ead19e6ff3182f5f8cc59d4c15b6957ec78c47"
 
 [[sources]]
+path = "tests/test_public_repository.py"
+sha256 = "bfc0a3c96d2e13219f5e1e5f6360d516a25af60175d5d5ba0bcdd017468a9e33"
+
+[[sources]]
 path = "tests/test_reference_contracts.py"
 sha256 = "4e088cc503aadf5c6674d61efe8e8b699e6b96936379290ca75c58049023e69d"
 
@@ -1901,15 +1909,23 @@ sha256 = "9b4894324aa199a1643cea1aba1233d4495d5aed8d9df78a26297512e17ed536"
 
 [[sources]]
 path = "tools/build_candidate_repository.py"
-sha256 = "5f928c8e50b05ee3df64cf0b6c11474994dcf6bc24893f07c4041820edb78bdc"
+sha256 = "96827d4e7f8e874b56872b66de714a1813ac0df6441a96bdcb913d2ddf7a7560"
 
 [[sources]]
 path = "tools/build_distribution.py"
 sha256 = "53def416b1056e899ecbf232f1f764a90ec8471faeb2298aa9ea84be9cf89fd6"
 
 [[sources]]
+path = "tools/build_public_repository.py"
+sha256 = "5e23239be39bb9317d518d4380ad3f93669c127a9da475cb10ad389321973b16"
+
+[[sources]]
+path = "tools/catalog_site.py"
+sha256 = "f90e03a88055ab2e99f9a982ad30823ff40d3f8f5c4dc36387a19714bb2b9fdf"
+
+[[sources]]
 path = "tools/check_release_scope.py"
-sha256 = "2c475c1fa81f8c0b49fd8695e8b82e9782140788ae3cc9ab5d56dad30ef9bfe4"
+sha256 = "ae4ce4a7f3a2973ad9722ed17c6f0cad21f5eed315f6c1033841381d3559ac98"
 
 [[sources]]
 path = "tools/distribution_spec.py"
@@ -1918,6 +1934,10 @@ sha256 = "5b306988968dca2763b59fc13624c113277181ead726f87b197cbaacf72edfc0"
 [[sources]]
 path = "tools/download_distribution_wheels.py"
 sha256 = "618a50330856783b1961e0752e260491f3a0fecc3ca6f667ea49ee0860df2eac"
+
+[[sources]]
+path = "tools/publish_distribution.py"
+sha256 = "8004fbf2731c98426ff35b07debfada9d70583c444deaa38c637a8fc51b8c0a7"
 
 [[sources]]
 path = "tools/split_distribution.py"
