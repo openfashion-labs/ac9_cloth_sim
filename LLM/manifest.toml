@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.4.0"
-build_id = "36f42774c32ffbb547a39db59780c02c1104c82eb1b1dc076af8f25ff571c48c"
+build_id = "2acf62e78bc57a78529231bdb48d0688596d3505e15a5c5f3df802907be5ac9c"
 
 [[documents]]
 id = "guide_blender"
@@ -1605,7 +1605,7 @@ sha256 = "1de986f449d642784186d62e8c16c7e6930880ca9c1cac185d0583213828b819"
 
 [[sources]]
 path = "tests/test_place_candidate.py"
-sha256 = "4e740c6e625589cc0bf27d956a5753548d5962269fcfff0ec6627eb6fff83303"
+sha256 = "5ad165c0f4ea86183c8c470da12098d9ef524e09650f11aea76d886a195bccea"
 
 [[sources]]
 path = "tests/test_place_check.py"
