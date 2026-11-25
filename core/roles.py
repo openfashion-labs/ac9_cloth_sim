@@ -71,7 +71,7 @@ ARM_PANEL_ROLES = ('sleeve', 'sleeve_part')                         # round an a
 # how a piece starts against the pieces it is sewn to (user 2026-11-02, DECISIONS cloth-sim-lay-by-role-2026-11-02;
 # Fable docs/reviews/REVIEW_fable_start_pose_roles_2026-11-02.md): written on the piece, never decided while running.
 # 'placed' as placed (a piece with no role always); 'edge' laid on the sewn edge by Phase Sim after the body is sewn
-# (Band on Edge's laying; the placed shape stays a ring).
+# (Band on Edge's laying; the adjusted shape stays a ring).
 # 'seam' (carried onto its seams whenever placed) is gone (user 2026-11-03, DECISIONS cloth-sim-no-start-at-seam-2026-11-03):
 # it moved pieces after every Place without a sign of it, only the dragged side of a pair, and nothing measured it
 # better than placing them. Part to Seam is a button that acts once. A 'seam' an older file holds reads as 'placed'.

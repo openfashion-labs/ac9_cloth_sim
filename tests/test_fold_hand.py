@@ -127,8 +127,9 @@ class FoldHand(unittest.TestCase):
             p, q = rect(sp, 'P', 0), rect(sp, 'Q', 300)
             for n, m in ((p, False), (q, True)):
                 DR.piece(sp, n).update(family='F', mirrored=m)
-            lid = DR.add_internal(sp, p, [[NARROW_X, 0], [NARROW_X, 300]])
-            qid = DR.add_internal(sp, q, [[440, 300], [440, 0]] if rev else [[440, 0], [440, 300]])
+            # Construct a legacy imported pair, not two new synchronized drawing actions.
+            lid = DR.add_internal(sp, p, [[NARROW_X, 0], [NARROW_X, 300]], mirror=False)
+            qid = DR.add_internal(sp, q, [[440, 300], [440, 0]] if rev else [[440, 0], [440, 300]], mirror=False)
             load(sp)
             sp = set_fold(p, lid)
             self.check_pair(f'drawn_twin_{"reversed" if rev else "same"}', sp, [(p, lid), (q, qid)])
@@ -227,6 +228,63 @@ class FoldHand(unittest.TestCase):
         self.assertNotIn(('op', 'ac9_cloth_sim.fold_match_mirror'), after)
         for out in (before, after):
             self.assertIn(('prop', 'ac9_iline_elastic'), out)     # drawn to the end
+
+    def test_line_flat_when_live_began_is_grayed(self):
+        """While Live runs, a line that was flat when the run began has no fold hinges: its angle, direction and taper
+        are grayed with a line saying it folds from the next run (user 2026-11-25, as a seam's are). A line folded
+        when the run began stays live."""
+        from ac9_cloth_sim import draft_tool as DT, ui as U, dress as D
+
+        class Lay:
+            def __init__(self, out, parent=None):
+                self.out, self.parent = out, parent
+                self.enabled, self.use_property_split, self.use_property_decorate = True, False, False
+
+            def on(self):
+                return self.enabled and (self.parent is None or self.parent.on())
+
+            def __getattr__(self, name):           # column / row / box / split / grid_flow ...
+                return lambda *a, **k: Lay(self.out, self)
+
+            def label(self, text='', **_k):
+                self.out.append(('label', text, self.on()))
+
+            def prop(self, _d, name, **_k):
+                self.out.append(('prop', name, self.on()))
+
+            def operator(self, idname, **_k):
+                self.out.append(('op', idname, self.on()))
+                import types
+                return types.SimpleNamespace()
+
+        sp, p, lid = self.base()
+        sp['folds'] = [{'piece': p, 'line': lid, 'deg': 30.0}]
+        load(sp)
+        DT.select_internal(bpy.context, p, lid)
+        old = U.live_running, D.AC9_OT_SimDress.__dict__['live_line_folds']
+
+        def draw(running, folded):
+            U.live_running = lambda: running
+            D.AC9_OT_SimDress.live_line_folds = classmethod(lambda cls: frozenset(folded))
+            out = []
+            DT.draw_internal_tab(Lay(out), bpy.context)
+            return {n: e for k, n, e in out if k == 'prop'}, [t for k, t, _e in out if k == 'label']
+        try:
+            idle, idle_text = draw(False, ())
+            waits, waits_text = draw(True, ())
+            live, live_text = draw(True, (f"{p}|{lid}",))
+        finally:
+            U.live_running = old[0]
+            D.AC9_OT_SimDress.live_line_folds = old[1]
+        RESULTS['flat_line_gray'] = {'idle': idle, 'waits': waits, 'live': live}
+        for name in ('ac9_iline_fold_angle', 'ac9_iline_fold_dir'):
+            self.assertTrue(idle[name], name)
+            self.assertFalse(waits[name], name)
+            self.assertTrue(live[name], name)
+        hint = DT.tx("This run began with the line flat: it folds from the next run")
+        self.assertEqual(' '.join(t for t in waits_text if t in hint), hint)     # wrapped, all of it
+        self.assertFalse(any(t and t in hint for t in idle_text + live_text))
+        self.assertIn('ac9_iline_elastic', waits)                                # the rest of the tab still draws
 
     def test_raw_side_to_the_other_half(self):
         """A placed object's saved fold keeps a mesh side index: the other half's index is the mirror image's, by

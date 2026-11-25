@@ -7,6 +7,7 @@ collection visibility is the saved view state; this module stores no Area ID.
 import json
 import bpy
 from . import pattern_view as PV
+from . import garment_owner as GO
 
 RESULTS = 'AC9_ClothSim_Results'
 OWNED = 'ac9_cloth_sim_results'
@@ -18,10 +19,10 @@ SCENE_OBJECTS = 'Scene Objects'
 SCENE_OWNED = 'ac9_cloth_sim_scene_objects'
 
 
-def _result_owned(context, obj, spec):
+def _result_owned(context, obj, spec, *, owner=GO.CURRENT):
     if not spec or obj is None or obj.type != 'MESH' or obj.library is not None:
         return False
-    if context.scene.objects.get(obj.name) != obj or obj.name != 'AC9_Garment_' + str(spec.get('name', '')):
+    if context.scene.objects.get(obj.name) != obj or not GO.owns(obj, GO.GARMENT, spec, context=context, owner=owner, legacy_name=spec['name'] if obj.name == 'AC9_Garment_' + spec['name'] else None):
         return False
     attr = obj.data.attributes.get('ac9_piece')
     if attr is None or attr.domain != 'FACE' or attr.data_type != 'INT' or len(attr.data) != len(obj.data.polygons):
@@ -45,9 +46,9 @@ def _collection(context):
     return coll
 
 
-def ensure_result(context, obj, spec):
+def ensure_result(context, obj, spec, *, owner=GO.CURRENT):
     """Move only a verified root-linked result; preserve every user membership."""
-    if not _result_owned(context, obj, spec) or context.scene.collection.objects.get(obj.name) != obj:
+    if not _result_owned(context, obj, spec, owner=owner) or context.scene.collection.objects.get(obj.name) != obj:
         return False
     coll = _collection(context)
     if coll.objects.get(obj.name) != obj:
@@ -56,9 +57,9 @@ def ensure_result(context, obj, spec):
     return True
 
 
-def ensure_accessory(context, obj, result, spec):
+def ensure_accessory(context, obj, result, spec, *, owner=GO.CURRENT):
     """A generated button/zipper output shares its verified result's domain."""
-    if not _result_owned(context, result, spec) or obj is None or obj.library is not None:
+    if not _result_owned(context, result, spec, owner=owner) or obj is None or obj.library is not None:
         return False
     if not any(obj.get(k) == result.name for k in ('ac9_buttons_of', 'ac9_zippers_of')):
         return False
@@ -75,13 +76,13 @@ def organize_existing(context):
     """Explicit Work Screen action, never Load/F3: migrate known root results."""
     from . import dress
     moved = []
-    for name, spec in dress.garment_specs().items():
-        result = context.scene.objects.get(name)
-        if ensure_result(context, result, spec):
-            moved.append(name)
-        if _result_owned(context, result, spec):
+    for owner, spec in dress.garment_records():
+        result = dress.garment(spec, context, owner=owner)
+        if ensure_result(context, result, spec, owner=owner):
+            moved.append(result.name)
+        if _result_owned(context, result, spec, owner=owner):
             for obj in list(context.scene.collection.objects):
-                if ensure_accessory(context, obj, result, spec):
+                if ensure_accessory(context, obj, result, spec, owner=owner):
                     moved.append(obj.name)
     return moved
 

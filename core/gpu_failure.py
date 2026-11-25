@@ -58,5 +58,17 @@ def diagnose(paths):
             'no_gpu': NO_GPU in text}
 
 
+# what Warp and CUDA write when the GPU has no memory left for the model (Fast Simulation Start keeps about 0.5 GB
+# more per garment: the kept Live model and the Live built ahead). Warp's "Failed to allocate memory during graph capture because memory pools ..." is
+# not this: it names no size
+OUT_OF_MEMORY = re.compile(r"Failed to allocate \d+ bytes on device 'cuda|out of memory|cudaErrorMemoryAllocation|"
+                           r"CUDA_ERROR_OUT_OF_MEMORY")
+
+
+def out_of_memory(paths):
+    """True when the output shows the GPU ran out of memory."""
+    return any(OUT_OF_MEMORY.search(_read_tail(p)) for p in paths if p)
+
+
 def version_text(v):
     return f"{v[0]}.{v[1]}" if v else "?"

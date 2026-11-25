@@ -4,6 +4,7 @@ import ast
 import importlib
 import os
 import sys
+from . import distribution as _distribution
 
 # Reloaded by __init__ itself, before this file.
 _SELF_RELOADED = (__name__, __package__ + '.companion_state')
@@ -98,6 +99,7 @@ if "_spec" in locals():
 from .core import shape_source as _shape_source
 from .core import prepare_plan as _prepare_plan
 from . import prepare_build as _prepare_build
+from . import undo_guard as _undo_guard
 from .core import spec as _spec                     # noqa: E402
 from .core import piece_table as _piece_table       # noqa: E402
 from .core import phase_from as _phase_from         # noqa: E402
@@ -136,11 +138,14 @@ from . import placed_view as _placed_view           # noqa: E402
 from . import selection as _selection               # noqa: E402
 from . import result_reference as _result_reference # noqa: E402
 from . import display_state as _display_state       # noqa: E402
+from . import garment_view as _garment_view         # noqa: E402
 from . import piece_hide as _piece_hide             # noqa: E402
+from . import live_key as _live_key                 # noqa: E402
 from . import view_visibility as _view_visibility   # noqa: E402
 from . import view_setup as _view_setup             # noqa: E402
 from . import text_band as _text_band               # noqa: E402
 from . import overlay as _overlay                   # noqa: E402
+from . import silhouette as _silhouette             # noqa: E402
 from . import piece_look as _piece_look             # noqa: E402
 from . import diagnose as _diagnose                 # noqa: E402
 from . import click_log as _click_log               # noqa: E402
@@ -188,6 +193,7 @@ from . import place_targets as _place_targets
 from . import place_seam as _place_seam             # noqa: E402
 from . import place_lay as _place_lay               # noqa: E402
 from . import place_settle as _place_settle         # noqa: E402
+from . import place_check as _place_check           # noqa: E402
 from . import export_retopo as _export_retopo       # noqa: E402
 from .core import mesh_to_spec as _mesh_to_spec     # noqa: E402
 from . import mesh_import as _mesh_import           # noqa: E402
@@ -224,9 +230,15 @@ def _reload_changed_submodules():
 
 def register():
     _reload_changed_submodules()
+    # our own translation context on every class before it is registered (a plain word can be another add-on's)
+    _i18n.own_context([sys.modules[name] for name in _loaded_submodules()])
+    # memory equals the last undo step whenever an operator ends (undo_guard): wrapped before registration
+    _undo_guard.install([sys.modules[name] for name in _loaded_submodules()])
+    _undo_guard.register()
     _i18n.register()
     _look_reference.register()
     _properties.register()
+    _distribution.register()
     _operators.register()
     _seam_tool.register()
     _draft_tool.register()
@@ -237,10 +249,12 @@ def register():
     _piece_move.register()
     _work_screen.register()
     _dress.register()
+    _garment_view.register()
     _place_fold.register()
     _place_seam.register()
     _place_lay.register()
     _place_settle.register()
+    _place_check.register()
     _export_retopo.register()
     _mesh_import.register()
     _ui.register()
@@ -253,12 +267,14 @@ def register():
     _measure_tool.register()
     _measure_edit.register()
     _toolbar.register()               # after the operators its tools' keymaps call (a keymap's properties need them)
+    _silhouette.register()            # background references, below the piece marks and seams
     _piece_look.register()            # before the seams' overlay: the seams are drawn on top
     _diagnose.register()              # over the piece colors, under the seams
     _overlay.register()
     _pre_click.register()
     _display_state.register()
     _piece_hide.register()
+    _live_key.register()              # after dress: its keymap item reads the add-on preference
     _selection.register()
     _garment_mark.register()          # last: its dot is drawn over the pieces' tints and the seams
 
@@ -266,10 +282,13 @@ def register():
 def unregister():
     _place_targets.unregister()
     _selection.unregister()
+    _live_key.unregister()
     _piece_hide.unregister()
     _display_state.unregister()
+    _garment_view.unregister()
     _garment_mark.unregister()
     _pre_click.unregister()
+    _silhouette.unregister()
     _overlay.unregister()
     _diagnose.unregister()
     _piece_look.unregister()
@@ -285,6 +304,7 @@ def unregister():
     _ui.unregister()
     _mesh_import.unregister()
     _export_retopo.unregister()
+    _place_check.unregister()
     _place_settle.unregister()
     _place_lay.unregister()
     _place_seam.unregister()
@@ -300,6 +320,8 @@ def unregister():
     _seam_tool.unregister()
     _operators.unregister()
     _properties.unregister()
+    _distribution.unregister()
     _operators.release_enum_strings()
     _i18n.unregister()
     _look_reference.unregister()
+    _undo_guard.unregister()

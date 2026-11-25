@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Reviewed AST digest for the internal-point key contract, not a credential"
+condition = "AND"
+paths = ['''^tests/context_contracts\.json$''']
+regexTarget = "line"
+regexes = ['''^\s*"REVIEWED_AST:ipoint_key:[0-9a-f]{64}",?\s*$''']

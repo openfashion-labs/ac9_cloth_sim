@@ -56,12 +56,12 @@ def selected(context):
     return None if r is None else ('pattern', name, r)
 
 
-def select(context, key):
+def select(context, key, origin='click'):
     """Pick a measurement ('' unpicks); the Tool tab shows it."""
     context.scene.ac9_cloth_sim_measure.sel = key or ''
     from . import tool_tab as TT
     if key:
-        TT.publish(context, 'MEASURE')
+        TT.publish(context, 'MEASURE', origin=origin)
     else:
         TT.release(context, 'MEASURE')
     MT._redraw(context)
@@ -190,7 +190,7 @@ class AC9_OT_TapeTilt(bpy.types.Operator):
     bl_label = "Tilt Ring"
     bl_options = {'INTERNAL'}
 
-    delta: FloatProperty()
+    delta: FloatProperty(options={'HIDDEN'})
 
     def invoke(self, context, event):
         wm = context.window_manager
@@ -206,7 +206,7 @@ class AC9_OT_MeasureTiltRing(bpy.types.Operator):
     bl_label = "Tilt Ring"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    delta: FloatProperty()
+    delta: FloatProperty(options={'HIDDEN'})
 
     def invoke(self, context, event):
         hot = MT._ui['hot'] or ''
@@ -254,7 +254,9 @@ class AC9_OT_MeasureSelect(bpy.types.Operator):
     key: StringProperty()
 
     def execute(self, context):
-        select(context, '' if self.key == sel(context) else self.key)
+        from . import tool_tab as TT
+        same = self.key == sel(context) and TT.resolve(context, store.get(context)[0]) == 'MEASURE'
+        select(context, '' if same else self.key, origin='list')
         return {'FINISHED'}
 
 
@@ -416,6 +418,8 @@ def _set_name(self, value):
     ok = (_rename_tape if s[0] == 'tape' else _rename_pattern)(context, s[1], value)
     if ok:
         context.scene.ac9_cloth_sim_measure.sel = f"{s[0]}:{value}"
+        from . import tool_tab as TT
+        TT.publish(context, 'MEASURE')
         MT._redraw(context)
 
 
@@ -496,7 +500,7 @@ def draw_tool_tab(layout, context):
     if kind == 'item':
         col.label(text=tx(MT.LABEL.get(name, name)), icon='DRIVER_DISTANCE')
         col.label(text=tx("{0} (Measure Body)", tx(KINDS.get(rec['kind'], rec['kind']))))
-        col.label(text=MT._len(rec['value']))
+        col.label(text_ctxt=CTX, text=MT._len(rec['value']))
         if ME.HELP.get(name):
             col.label(text=tx(ME.HELP[name])[:60])
         off = MT.read(MT._body(context)).get('offsets', {}).get(name)
@@ -512,7 +516,7 @@ def draw_tool_tab(layout, context):
         elif rec['kind'] == 'straight':
             col.label(text=tx("Taut {0}  /  through {1}", MT._len(rec.get('value')), MT._len(rec.get('extra'))))
         else:
-            col.label(text=MT._len(rec.get('value')))
+            col.label(text_ctxt=CTX, text=MT._len(rec.get('value')))
         if rec['kind'] == 'around':
             col.prop(mp, "ac9_msel_tilt_fb")
             col.prop(mp, "ac9_msel_tilt_side")
@@ -521,7 +525,7 @@ def draw_tool_tab(layout, context):
             col.label(text=tx("{0} line(s) held to it", len(held)), icon='CONSTRAINT')
     else:
         col.prop(mp, "ac9_msel_name")
-        col.label(text="On the pattern", icon='DRIVER_DISTANCE')
+        col.label(text_ctxt=CTX, text="On the pattern", icon='DRIVER_DISTANCE')
     tg = MT._target(spec, name) if kind != 'tape' else None
     if kind != 'tape' and spec is not None:
         col.operator("ac9_cloth_sim.measure_set_target", text=tx("Target: {0}", MT._len(tg))).key = name
@@ -556,7 +560,7 @@ def draw_list(layout, context):
         ui.draw_pick_row(col, "ac9_cloth_sim.measure_select", label[:18], depress=key == cur, icon=icon,
                          right=MT._len(v), right_units=3.0).key = key
     if not rows:
-        layout.label(text="Measure Body (Measure panel), or lay a tape", icon='INFO')
+        layout.label(text_ctxt=CTX, text="Measure Body (Measure panel), or lay a tape", icon='INFO')
 
 
 CLASSES = (AC9_OT_TapeTilt, AC9_OT_MeasureTiltRing, AC9_OT_TapePlane, AC9_OT_MeasureSelect, AC9_OT_MeasureDelete, AC9_OT_MeasureMirror)

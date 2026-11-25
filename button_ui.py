@@ -23,10 +23,11 @@ from . import button_view as BV
 from . import units as U
 from . import pattern_view as PV
 from . import store
+from . import undo_guard as UG
 from .core import button_shape as BS
 from .core import buttons as BT
 from .core import spec as S
-from .i18n import rpt, tx
+from .i18n import CTX, rpt, tx
 
 _enum_keep = []
 
@@ -44,7 +45,7 @@ def _style_items(self, context):
 
 def _garment(spec):
     from . import dress as D
-    return bpy.data.objects.get(D.garment_name(spec)) if spec else None
+    return D.garment(spec) if spec else None
 
 
 def refresh(context, spec):
@@ -184,7 +185,7 @@ class _Click:
             if done is None:
                 return {'RUNNING_MODAL'}
             self.count += 1
-            bpy.ops.ed.undo_push(message=self.bl_label)
+            UG.push(self.bl_label)
             if done:
                 self._end(context)
                 return {'FINISHED'}
@@ -361,8 +362,8 @@ class AC9_OT_SimButtonFromStitches(bpy.types.Operator):
     def poll(cls, context):
         spec = store.get(context)[0]
         if spec is None or _stitched(context, spec) is None:
-            cls.poll_message_set("No buttons in the BOM (short seams between internal lines of two pieces): use Line "
-                                 "Up or Add Button")
+            cls.poll_message_set(tx("No buttons in the BOM (short seams between internal lines of two pieces): use Line "
+                                 "Up or Add Button"))
             return False
         return True
 
@@ -399,7 +400,7 @@ class AC9_OT_SimButtonFromStitches(bpy.types.Operator):
 
 
 class AC9_OT_SimButtonFasten(bpy.types.Operator):
-    """Fasten or unfasten the button (or the picked ones): Live Sim then closes or opens the garment there"""
+    """Fasten or unfasten the button (or the picked ones): Simulate then closes or opens the garment there"""
     bl_idname = "ac9_cloth_sim.button_fasten"
     bl_label = "Fasten"
     bl_options = {'REGISTER', 'UNDO'}
@@ -422,8 +423,8 @@ class AC9_OT_SimButtonFasten(bpy.types.Operator):
                 n += b.get('fastened', True) != self.state
                 b['fastened'] = self.state
         commit(context, sp)
-        self.report({'INFO'}, rpt("{0} button(s) fastened: Live Sim to close the garment there" if self.state else
-                              "{0} button(s) unfastened: Live Sim to open the garment there", n))
+        self.report({'INFO'}, rpt("{0} button(s) fastened: Simulate to close the garment there" if self.state else
+                              "{0} button(s) unfastened: Simulate to open the garment there", n))
         return {'FINISHED'}
 
 
@@ -646,6 +647,15 @@ def style_from_object(context, ob):
     return sid
 
 
+def _style_name(context, sid):
+    """A style's shown name: a library style's in the interface language, a user's own as it is."""
+    from .core import button_shape as BS
+    if sid in BS.STYLES:
+        return tx(BS.STYLES[sid].get('name', sid))
+    spec = store.get(context)[0]
+    return next((s.get('name') or sid for s in (spec or {}).get('button_styles', []) if s.get('id') == sid), sid)
+
+
 def _wrap(layout, text, n=34):
     for ln in textwrap.wrap(text, n):
         layout.label(text=ln)
@@ -664,7 +674,7 @@ def draw_tools(layout, context, spec):
     buttons, and what acts on all of them. A button's own settings are in Properties > Tool (AC9 Button)."""
     sc = context.scene
     col = layout.column(align=True)
-    col.label(text="Fasteners")
+    col.label(text_ctxt=CTX, text="Fasteners")
     col.prop(sc, "ac9_button_style", text="")
     row = col.row(align=True)
     row.operator("ac9_cloth_sim.button_add", text="Add Button", icon='ADD')
@@ -674,7 +684,7 @@ def draw_tools(layout, context, spec):
     row.operator("ac9_cloth_sim.button_from_stitches", text="From BOM", icon='LINKED')
     # an object field with Blender's eyedropper: the mesh clicked becomes the style, whatever tool is on (the Work
     # Screen's 3D view has no select tool for other objects, user 2026-11-17); the operator stays for F3 and the AI
-    col.label(text="Your own button:")                  # "Use Object" as the field's text was cut off
+    col.label(text_ctxt=CTX, text="Your own button:")                  # "Use Object" as the field's text was cut off
     col.prop(context.scene.ac9_cloth_sim, "button_style_pick", text="")
     # no Fasten All / Remove All (user 2026-10-23): pick them in Lists > Fasteners (a closure's name picks its
     # buttons, Shift adds) and act on them in Properties > Tool
@@ -732,12 +742,12 @@ def draw_list(layout, context, spec):
     if bts:
         n_open = sum(1 for b in bts if b.get('hole') and not b.get('fastened', True))
         if n_open:
-            layout.label(text=tx("{0} unfastened: Live Sim opens the garment there", n_open), icon='UNLOCKED')
+            layout.label(text=tx("{0} unfastened: Simulate opens the garment there", n_open), icon='UNLOCKED')
     for z in zps:
         layout.label(text=tx("{0}: {1} / {2}, closed {3:.0f}%", z.get('id', ''), z['a']['piece'], z['b']['piece'],
                              100.0 * float(z.get('closed', 1.0))), icon='TRIA_UP_BAR')
     if bid:
-        layout.label(text="Shift+click: add / take out", icon='INFO')
+        layout.label(text_ctxt=CTX, text="Shift+click: add / take out", icon='INFO')
 
 
 def draw_button_tab(layout, context):
@@ -770,7 +780,7 @@ def draw_button_tab(layout, context):
     h = b.get('hole')
     co = BT.closes_onto(spec, b['piece'])
     if not h and b.get('hole_by') != 'hand':
-        col.label(text=tx("{0} closes onto {1}: no hole found there", b['piece'], co) if co else
+        col.label(text_ctxt=CTX, text=tx("{0} closes onto {1}: no hole found there", b['piece'], co) if co else
                   tx("{0} closes onto nothing (AC9 Piece)", b['piece']), icon='INFO')
     row = layout.row(align=True)
     op = row.operator("ac9_cloth_sim.button_move", text="Move Button", icon='VIEW_PAN')
@@ -790,7 +800,7 @@ def draw_button_tab(layout, context):
     op = row.operator("ac9_cloth_sim.button_remove", text="Remove", icon='X')
     op.button = b['id']
     layout.separator()
-    layout.label(text=tx("Style: {0}", b.get('style', '')))
+    layout.label(text=tx("Style: {0}", _style_name(context, b.get('style', ''))))
     layout.prop(context.scene, "ac9_button_style", text="")
     layout.operator("ac9_cloth_sim.button_set_style", text="Set Style", icon='BRUSH_DATA')
 
@@ -803,7 +813,7 @@ def draw_closes_onto(col, context, spec, name):
     sp = col.row().split(factor=0.4)
     r = sp.row()
     r.alignment = 'RIGHT'
-    r.label(text="Closes Onto")
+    r.label(text_ctxt=CTX, text="Closes Onto")
     r = sp.row(align=True)
     op = r.operator("ac9_cloth_sim.closes_onto_pick", text=co or tx("None"), icon='EYEDROPPER')
     op.piece = name
@@ -813,7 +823,7 @@ def draw_closes_onto(col, context, spec, name):
         front = any(set(c) == {name, co} for c in RO.closes_onto_pairs(spec))
         sub = col.row()
         sub.active = False
-        sub.label(text="Front closure: closed last" if front else "Its buttons' holes only",
+        sub.label(text_ctxt=CTX, text="Front closure: closed last" if front else "Its buttons' holes only",
                   icon='BLANK1')
 
 

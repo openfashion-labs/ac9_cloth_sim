@@ -6,6 +6,7 @@ mesh metadata owns result membership. Visibility and Mask are outputs, never
 evidence that a piece changed its shape source. No new saved state enum.
 """
 from . import prepare_build as PB
+from . import garment_owner as GO
 import json
 import os
 from .core import spec as S
@@ -68,20 +69,28 @@ def plan(spec, result=(), placed=(), reset=(), hidden=()):
     return out
 
 
-def snapshot(spec, g=None):
+def snapshot(spec, g=None, *, owner=GO.CURRENT):
     import bpy
     from . import placed_view as PV
+    owner = GO.text(owner)
     if g is None:
-        g = bpy.context.scene.objects.get('AC9_Garment_' + spec['name'])
-    elif bpy.context.scene.objects.get(g.name) != g:
+        g = GO.garment(spec, owner=owner)
+    elif (bpy.context.scene.objects.get(g.name) != g
+          or not GO.owns(g, GO.GARMENT, spec, owner=owner, legacy_name=spec['name'])):
         g = None
     try:
         reset = json.loads(g.get('ac9_reset_pieces', '[]')) if g else []
     except (ValueError, TypeError):
         reset = []
-    placed = {n: ob for n, ob in PV.objects(spec).items() if bpy.context.scene.objects.get(ob.name) == ob}
+    placed = {n: ob for n, ob in PV.objects(spec, owner=owner).items() if bpy.context.scene.objects.get(ob.name) == ob}
     from . import piece_hide as PH
-    return plan(spec, result_names(g), placed, reset, PH.names(bpy.context.scene, spec))
+    from . import control_basis as CB
+    bs = CB.basis(g)
+    reset = set(reset) | {n for n in placed if bs.get(n) != CB.RESULT}
+    values = plan(spec, result_names(g), placed, reset, PH.names(bpy.context.scene, spec, owner=owner))
+    for n, v in values.items():
+        v['basis'] = CB.placed_basis(placed[n]) if v['source'] == 'placed' else bs.get(n, CB.PLACED)
+    return values
 
 
 def job(g):
@@ -97,21 +106,21 @@ def job(g):
     return _jobs[key]
 
 
-def placed_names(spec, g):
+def placed_names(spec, g, *, owner=GO.CURRENT):
     if not result_names(g):
         return None
-    return frozenset(n for n, v in snapshot(spec, g).items() if v['source'] == 'placed')
+    return frozenset(n for n, v in snapshot(spec, g, owner=owner).items() if v['source'] == 'placed')
 
 
-def hidden_result(spec, g):
-    return frozenset(n for n, v in snapshot(spec, g).items()
+def hidden_result(spec, g, *, owner=GO.CURRENT):
+    return frozenset(n for n, v in snapshot(spec, g, owner=owner).items()
                      if n in result_names(g) and (v['source'] in ('placed', 'none') or not v['solid'] or v['hidden']))
 
 
-def apply(context, spec, create_missing=False, allow_split=False, only=None):
+def apply(context, spec, create_missing=False, allow_split=False, only=None, *, owner=GO.CURRENT):
     """Reconcile derived scene display inside an operation, never a draw/poll.
 
-    Existing geometry is not regenerated. Missing placed shapes use the normal
+    Existing geometry is not regenerated. Missing adjusted shapes use the normal
     shape builder, without starting a simulation or creating a job folder.
     only: with create_missing, make only these pieces' missing shapes.
     """
@@ -123,8 +132,15 @@ def apply(context, spec, create_missing=False, allow_split=False, only=None):
     _applying = True
     notes = []
     try:
-        g = context.scene.objects.get(D.garment_name(spec))
-        p = snapshot(spec, g)
+        from . import legacy_garment
+        legacy_garment.reconcile(context)
+        owner = GO.text(owner, context)
+        if owner is None:
+            return []
+        from . import piece_hide
+        piece_hide.bind_legacy(context.scene, spec, owner=owner)
+        g = D.garment(spec, context, owner=owner)
+        p = snapshot(spec, g, owner=owner)
         missing = {n for n, v in p.items() if v['missing'] and (only is None or n in only)}
         if create_missing:
             unplaced = {n for n in missing if not p[n]['can_materialize']}
@@ -151,13 +167,13 @@ def apply(context, spec, create_missing=False, allow_split=False, only=None):
                 # PV.build restores saved hand geometry and its pose once.
                 # That visible shape, not a cylinder proxy, is the next start.
             except (ValueError, RuntimeError) as exc:
-                notes.append('AC9 placed shape unavailable: ' + str(exc))
+                notes.append('AC9 adjusted shape unavailable: ' + str(exc))
             spec = store.get(context)[0] if store.text(context) is not None else spec
-            p = snapshot(spec, g)
+            p = snapshot(spec, g, owner=owner)
             unavailable = {n for n in missing if p.get(n, {}).get('missing')}
             if unavailable:
                 notes.append('AC9 no 3D shape created for: ' + ', '.join(sorted(unavailable)))
-        obs = {n: ob for n, ob in PV.objects(spec).items() if context.scene.objects.get(ob.name) == ob}
+        obs = {n: ob for n, ob in PV.objects(spec, owner=owner).items() if context.scene.objects.get(ob.name) == ob}
         # A legacy mirrored object may hold two pieces. Split only a mixed-state
         # pair, preserving its current geometry with the existing split tool.
         split = False
@@ -171,7 +187,7 @@ def apply(context, spec, create_missing=False, allow_split=False, only=None):
         if split:
             # A newly linked twin is not in ViewLayer.objects until evaluated.
             context.view_layer.update()
-        obs = {n: ob for n, ob in PV.objects(spec).items() if context.scene.objects.get(ob.name) == ob}
+        obs = {n: ob for n, ob in PV.objects(spec, owner=owner).items() if context.scene.objects.get(ob.name) == ob}
         for ob in set(obs.values()):
             if ob.name not in context.view_layer.objects:
                 continue
@@ -191,9 +207,15 @@ def apply(context, spec, create_missing=False, allow_split=False, only=None):
                 ob.hide_set(bool(ob.get(WAS_HIDDEN, False)))
                 ob.pop(HIDDEN, None)
                 ob.pop(WAS_HIDDEN, None)
-        PV.refresh_thickness(context, spec, obs)       # the placed shapes drawn with their fabric's thickness
+        # Qualify legacy data only at an operation boundary, after unique ownership was checked.
+        if g is not None and GO.GARMENT not in g:
+            g[GO.GARMENT] = owner
+        for ob in set(obs.values()):
+            if GO.PLACED not in ob:
+                ob[GO.PLACED] = owner
+        PV.refresh_thickness(context, spec, obs)       # the adjusted shapes drawn with their fabric's thickness
         if result_names(g):
-            hidden = hidden_result(spec, g)
+            hidden = hidden_result(spec, g, owner=owner)
             key = (g.as_pointer(), g.data.as_pointer(), len(g.data.vertices), len(g.data.polygons),
                    str(g.get('ac9_piece_names', '')), hidden)
             m = g.modifiers.get(D.HIDE_MOD)
@@ -211,14 +233,16 @@ def invalidate():
     _jobs.clear()
     _masks.clear()
     _members.clear()
+    from . import garment_view
+    garment_view.invalidate()
 
 
 def _sync_all():
     import bpy
     from . import dress as D, store
     invalidate()
-    for spec in D.garment_specs().values():
-        apply(bpy.context, spec)
+    for owner, spec in D.garment_records():
+        apply(bpy.context, spec, owner=owner)
     from . import overlay, piece_look
     overlay.invalidate()
     piece_look.invalidate()

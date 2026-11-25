@@ -6,6 +6,7 @@ still belong to display_state. Nothing here creates geometry, changes selection,
 rewrites visibility, parses a spec Text, or stores an Area/Space pointer.
 """
 from . import pattern_view as PV
+from . import garment_owner
 
 
 def _space(context):
@@ -99,7 +100,7 @@ def world_names(context, spec, display=None):
     from . import display_state as DS
     from . import placed_view as PLV
     scene = context.scene
-    result = scene.objects.get('AC9_Garment_' + str(spec.get('name', '')))
+    result = garment_owner.garment(spec, context)
     display = DS.snapshot(spec, result) if display is None else display
     placed = PLV.objects(spec)
     result_visible = object_decoration_allowed(context, result)
@@ -145,7 +146,7 @@ def allows_world(context, spec=None):
     if _in_scene(context, body):
         owners.append(body)
     if spec is not None:
-        result = scene.objects.get('AC9_Garment_' + str(spec.get('name', '')))
+        result = garment_owner.garment(spec, context)
         if _in_scene(context, result):
             owners.append(result)
     from . import placed_view as PLV

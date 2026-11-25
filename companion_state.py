@@ -115,7 +115,7 @@ def _extended(context, spec, internal, names):
                 'elastic_present': any(e.get('piece') == n and e.get('line') == lid for e in spec.get('elastic', [])),
                 'seam_ids': [_text(s['id']) for s in spec.get('seams', [])
                              if any(s[k].get('piece') == n and s[k].get('line') == lid for k in ('a','b'))][:12]}
-    g = context.scene.objects.get(dress.garment_name(spec)) if spec else None
+    g = dress.garment(spec) if spec else None
     cls = dress.AC9_OT_SimDress
     running = cls.running()
     # The modal's class globals carry no scene/spec token. A matching object

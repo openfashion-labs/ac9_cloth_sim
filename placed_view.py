@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The placed shapes as Blender objects: one mesh per piece (a mirrored pair is one object with a Mirror modifier),
+"""The adjusted shapes as Blender objects: one mesh per piece (a mirrored pair is one object with a Mirror modifier),
 what Dress would start from. Move, rotate, tilt or edit them like any mesh (G, R, the N panel, Edit Mode); Dress then
 starts a moved piece from its object instead of from the guide.
 
@@ -11,7 +11,7 @@ attribute GEN_ATTR and its layout point in FLAT_ATTR, so a changed pattern still
 How far the object was moved and turned as a whole (its matrix: the pose) is also written to the spec, as
 placement[piece]['pose'] (user 2026-10-14, DECISIONS cloth-sim-3d-piece-move-2026-10-14): numbers a person, the
 panel's fields or an AI read and write, and what the object is made again with (Place, Adjust, Mirror Placement keep
-it; only Back to Guide drops it). Written by sync_pose at the start of the AC9 operators, never by a handler (the
+it; only Back to Placed Shape drops it). Written by sync_pose at the start of the AC9 operators, never by a handler (the
 spec's Text is then written inside an operator, so Ctrl+Z takes it back with the move). Edits in Edit Mode stay in
 the object only.
 
@@ -23,6 +23,7 @@ import json
 import hashlib
 
 import bpy
+from . import garment_owner as GO
 import numpy as np
 from mathutils import Matrix, Vector
 from .i18n import tx
@@ -42,7 +43,7 @@ FLAT_ATTR = "ac9_flat"          # per vertex: the layout point (mm)
 GEN_ATTR = "ac9_gen"            # per vertex: the world position it was made at (m)
 HAND_PROP = "ac9_hand"          # on an object, in files before the computed-shape mark: read as SIM_PROP
 SIM_PROP = "ac9_from_sim"       # ... its shape was computed (a Local Sim's last shape, a piece's shape kept while it was
-                                #     Off): kept until Back to Placed / Back to Guide, which make it from the numbers again
+                                #     Off): kept until Back to Adjusted Shape / Back to Placed Shape, which make it from the numbers again
 FOLD_PROP = "ac9_fold"          # ... folded over its lines by Fold (place_fold): the user's shape too
 SEAM_PROP = "ac9_to_seam"       # ... moved onto its seams by Part to Seam (place_seam): the user's shape too
 LAID_PROP = "ac9_laid"          # ... laid on its sewn edge by Band on Edge (place_lay): the user's shape, laid again
@@ -60,6 +61,7 @@ BODY_PROP = "ac9_placed_body"   # ... and the body it was made on (placement.bod
                                 # -> a piece not moved by hand is made again (user 2026-11-13, the shape seen is the start)
 ORG_PROP = "ac9_placed_org"     # ... and the world point (mm) it was made round: its location then, the pose's pivot
 ORIGIN_SHIFT_PROP = "ac9_origin_shift"  # local meters: display origin shift from the original pose frame
+GEN_FRAME_PROP = 'ac9_generation_frame'  # local -> generated world meters, independent of free transforms
 MOVED_TOL = 1e-5                # m: a vertex this far from where it was made has been moved
 POSE_MM, POSE_DEG = 1e-3, 1e-4  # a pose smaller than this is no pose (not written)
 MM = 0.001
@@ -222,29 +224,19 @@ def layout_matches(ob, V):
     return same_layout(F.reshape(-1, 2), V, atol=CARRY_ATOL)
 
 
-def objects(spec=None):
+def objects(spec=None, *, owner=GO.CURRENT):
     """{piece: object} for every piece an object holds (a pair's mirrored piece maps to the same object), of the
     garment of spec (all garments if None)."""
     coll = bpy.data.collections.get(COLL_NAME)
     out = {}
     if coll is None:
         return out
-    gname = garment(spec) if spec is not None else None
     for ob in coll.objects:
-        if PROP in ob and (gname is None or ob.get(GARMENT_PROP, '') == gname):
+        if PROP in ob and (spec is None or GO.owns(ob, GO.PLACED, spec, owner=owner, legacy_name=ob.get(GARMENT_PROP))):
             out[ob[PROP]] = ob
             if ob.get(TWIN_PROP):
                 out[ob[TWIN_PROP]] = ob
     return out
-
-
-def _center_object():
-    ob = bpy.data.objects.get(CENTER_NAME)
-    old = bpy.data.objects.get(OLD_CENTER_NAME)
-    if ob is None and old is not None:
-        old.name = CENTER_NAME
-        ob = old
-    return ob
 
 
 def _pair_key(spec, name):
@@ -256,15 +248,17 @@ def _pair_key(spec, name):
 
 def aux_empties():
     """The empties placed_view makes: the center, a pair's own center, the mirrors, the garments' centers (names)."""
-    return [o.name for o in bpy.data.objects if o.type == 'EMPTY'
-            and (o.name in (CENTER_NAME, OLD_CENTER_NAME) or o.name.startswith(CENTER_NAME + ":")
+    from . import private_ids
+    return [o.name for o in bpy.data.objects if o.type == 'EMPTY' and not private_ids.contains(o)
+              and (o.name in (CENTER_NAME, OLD_CENTER_NAME) or o.name.startswith(CENTER_NAME + ".")
+                   or o.name.startswith(OLD_CENTER_NAME + ".") or o.name.startswith(CENTER_NAME + ":")
                  or o.name.startswith(MIRROR_NAME) or o.get(GCENTER_PROP) is not None)]
 
 
 def find_garment_center(spec):
     """The garment's center empty as it is (not moved to the spec's), or None."""
-    g = garment(spec)
-    return next((o for o in bpy.data.objects if o.type == 'EMPTY' and o.get(GCENTER_PROP) == g), None)
+    return next((o for o in bpy.data.objects if o.type == 'EMPTY' and GCENTER_PROP in o
+                 and GO.owns(o, GO.PLACED, spec, legacy_name=o.get(GCENTER_PROP))), None)
 
 
 def garment_center_empty(context, spec):
@@ -278,7 +272,9 @@ def garment_center_empty(context, spec):
     ob = find_garment_center(spec)
     if ob is None:
         ob = bpy.data.objects.new(GCENTER_PREFIX + garment(spec), None)
+        _record_aux(context, ob)
         ob[GCENTER_PROP] = garment(spec)
+        ob[GO.PLACED] = GO.text(context=context)
         ob.empty_display_type = 'PLAIN_AXES'
         ob.empty_display_size = 0.12
         ob.show_name = True
@@ -305,13 +301,14 @@ def center_empty(context, spec, name=None):
     at = S.stored_mirror_at(spec, name) if name else None
     key = _pair_key(spec, name) if at is not None else None
     if key is None:
-        ob = _center_object()
         nm = CENTER_NAME
     else:
         nm = CENTER_NAME + ":" + key
-        ob = bpy.data.objects.get(nm)
+    ob = GO.auxiliary(nm, spec, context)
     if ob is None:
         ob = bpy.data.objects.new(nm, None)
+        _record_aux(context, ob)
+        ob[GO.PLACED] = GO.text(context=context)
         ob.empty_display_type = 'SINGLE_ARROW'
         ob.empty_display_size = 0.2
         ob.hide_select = True
@@ -344,7 +341,9 @@ def leave_edit(context):
 
 KEEP_PREFIX = "AC9_PlacedKeep_"
 KEEP_PROP = "ac9_keep"          # on a kept mesh: JSON {"piece", "garment", "matrix", "props"} (see keep)
-KEEP_OB_PROPS = (SIM_PROP, HAND_PROP, FOLD_PROP, SEAM_PROP, LAID_PROP, KK_PROP, KEY_PROP, NV_PROP, ORG_PROP, ORIGIN_SHIFT_PROP)
+LOCAL_INPUT = 'ac9_local_input_mesh'     # the actual placement before the first local result; owned by its result mesh
+LOCAL_RECORD = 'ac9_local_input_record'
+KEEP_OB_PROPS = (SIM_PROP, HAND_PROP, FOLD_PROP, SEAM_PROP, LAID_PROP, KK_PROP, KEY_PROP, NV_PROP, ORG_PROP, ORIGIN_SHIFT_PROP, GEN_FRAME_PROP)
 BEFORE_SEAM_PROP = "ac9_before_seam"  # fake-user mesh: the prepared shape, never the fitted result
 
 
@@ -370,19 +369,19 @@ def put_shape(ob, me, record):
     invalidate_shown()
 
 
-def before_seam(spec):
+def before_seam(spec, *, owner=GO.CURRENT):
     """Prepared meshes owned by this garment; read only at explicit operations, never draw/poll."""
     out = {}
     for me in bpy.data.meshes:
         if me.get(BEFORE_SEAM_PROP):
             d = json.loads(me[BEFORE_SEAM_PROP])
-            if d['garment'] == garment(spec):
+            if GO.owns(me, GO.PLACED, spec, owner=owner, legacy_name=d.get('garment')):
                 out[d['piece']] = me
     return out
 
 
-def forget_before_seam(spec, names):
-    for n, me in before_seam(spec).items():
+def forget_before_seam(spec, names, *, owner=GO.CURRENT):
+    for n, me in before_seam(spec, owner=owner).items():
         if n in names:
             bpy.data.meshes.remove(me)
 
@@ -396,6 +395,7 @@ def save_before_seam(ob, spec):
     me.name = "AC9_BeforeSeam_" + garment(spec) + '_' + n
     d = dict(shape_record(ob), garment=garment(spec), twin=ob.get(TWIN_PROP, ''),
              pattern=before_seam_pattern(spec, n))
+    me[GO.PLACED] = GO.text()
     me[BEFORE_SEAM_PROP] = json.dumps(d)
     me.use_fake_user = True
 
@@ -436,7 +436,7 @@ def check_before_seam(spec, names):
                                     "but cannot be restored. Undo the pattern change or place the piece again", n))
         elif props.get(SEAM_PROP):
             raise ValueError(tx("{0}: this file has no shape saved before Part to Seam. Undo that move or use "
-                                "Back to Guide to place it again (hand moves are lost)", n))
+                                "Back to Placed Shape to place it again (hand moves are lost)", n))
 
 
 def restore_before_seam(spec, names, consume=True):
@@ -467,12 +467,72 @@ def restore_before_seam(spec, names, consume=True):
     return done
 
 
+_backup_scopes = []
+
+
+def _record_aux(context, ob):
+    """Record an allocation at its creation site, never infer it from a later name scan."""
+    if _backup_scopes:
+        scope = _backup_scopes[-1]
+        if scope.text == GO.text(context=context) and scope.scene == context.scene:
+            scope.created_aux[int(ob.session_uid)] = ob
+
+
+_ATTR_KEY = {'FLOAT': 'value', 'INT': 'value', 'BOOLEAN': 'value', 'INT8': 'value', 'INT32_2D': 'value',
+             'FLOAT2': 'vector', 'FLOAT_VECTOR': 'vector', 'FLOAT_COLOR': 'color', 'BYTE_COLOR': 'color'}
+_ATTR_WIDTH = {'INT32_2D': 2, 'FLOAT2': 2, 'FLOAT_VECTOR': 3, 'FLOAT_COLOR': 4, 'BYTE_COLOR': 4}
+
+
+def _attr_values(a):
+    # np.intc: the C int foreach_get copies directly (np.int32 took the slow per-item path, about 30 ns an item)
+    dtype = bool if a.data_type == 'BOOLEAN' else np.intc if a.data_type in ('INT', 'INT8', 'INT32_2D') else np.float32
+    out = np.empty(len(a.data) * _ATTR_WIDTH.get(a.data_type, 1), dtype)
+    a.data.foreach_get(_ATTR_KEY[a.data_type], out)
+    return out
+
+
+def _mesh_unchanged(cur, kept, weights=True):
+    """'SAME' when `cur` holds what its copy `kept` held (counts, every attribute, materials, vertex weights),
+    'POSITION' when only the positions differ, '' otherwise (or for anything this cannot compare: shape keys,
+    other attribute types). A copy made with Mesh.copy() compares SAME with its source."""
+    if cur is None or kept is None:
+        return ''
+    if any(len(getattr(cur, k)) != len(getattr(kept, k)) for k in ('vertices', 'edges', 'loops', 'polygons')):
+        return ''
+    if cur.shape_keys is not None or kept.shape_keys is not None:
+        return ''
+    if [m.name if m else None for m in cur.materials] != [m.name if m else None for m in kept.materials]:
+        return ''
+    def listed(me):        # selection is not the garment's shape
+        return sorted((a.name, a.domain, a.data_type) for a in me.attributes if '_select_' not in a.name.replace('.', '_'))
+    names = listed(cur)
+    if names != listed(kept):
+        return ''
+    moved = False
+    for name, _, data_type in names:
+        if data_type not in _ATTR_KEY:
+            return ''
+        if not np.array_equal(_attr_values(cur.attributes[name]), _attr_values(kept.attributes[name])):
+            if name != 'position':
+                return ''
+            moved = True
+    # vertex group weights live in the mesh but are not attributes, and have no bulk read: a per-vertex loop
+    # (about 40 ms on 27k vertices), skipped when the object had and has no vertex group (weights = False)
+    for a, b in zip(cur.vertices, kept.vertices) if weights else ():
+        if len(a.groups) != len(b.groups) or any(x.group != y.group or x.weight != y.weight
+                                                 for x, y in zip(a.groups, b.groups)):
+            return ''
+    return 'POSITION' if moved else 'SAME'
+
+
 class PreparedResetBackup:
-    """Operation-local rollback. Copies have no ownership tags, so builders cannot consume them."""
+    """Operation-local rollback. Private copies are excluded from generated-object readers."""
 
     def __init__(self, context, spec):
         from . import store, dress as D
+        self._private_owner, self._owned_objects = object(), {}
         self.context, self.spec = context, spec
+        self.scene = context.scene
         self.text = store.text(context)
         if self.text is None:
             raise ValueError('No active pattern to back up')
@@ -483,24 +543,30 @@ class PreparedResetBackup:
         self.auxiliary = []
         for name in aux_empties():
             ob = bpy.data.objects.get(name)
-            if ob is not None and ob.type == 'EMPTY':
-                self.auxiliary.append((name, ob.copy(), tuple(c.name for c in ob.users_collection), ob.hide_get()))
+            if ob is not None and ob.type == 'EMPTY' and GO.owns(ob, GO.PLACED, spec, context=context,
+                                                               legacy_name=ob.get(GCENTER_PROP)):
+                self.auxiliary.append((name, int(ob.session_uid), self._copy_object(ob),
+                                       tuple(int(c.session_uid) for c in ob.users_collection), ob.hide_get()))
         self.live, self.meshes = [], []
         self.original_objects = {}
-        self.parents, self.targets = {}, {}
+        self._shared_meshes, self._shared_originals = {}, []
+        self.parents, self.targets, self.mirror_targets = {}, {}, {}
         self.selected = {}
         active = context.view_layer.objects.active
         self.active = active.name if active is not None else None
+        self.active_uid = int(active.session_uid) if active is not None else None
         for ob in set(objects(spec).values()):
             sync_edit(ob)
-            backup = ob.copy()
+            backup = self._copy_object(ob)
             backup.data = ob.data.copy()
             self.live.append((ob.name, backup, ob.hide_get()))
             self.original_objects[ob.name] = int(ob.session_uid)
             self.selected[ob.name] = ob.select_get(view_layer=context.view_layer)
-            self.parents[ob.name] = (ob.parent.name if ob.parent else None, ob.matrix_world.copy(), ob.matrix_parent_inverse.copy())
-            self.targets[ob.name] = [(c.name, c.target.name) for c in ob.constraints
+            self.parents[ob.name] = (int(ob.parent.session_uid) if ob.parent else None, ob.matrix_world.copy(), ob.matrix_parent_inverse.copy())
+            self.targets[ob.name] = [(c.name, c.type, int(c.target.session_uid)) for c in ob.constraints
                                      if hasattr(c, 'target') and c.target is not None]
+            self.mirror_targets[ob.name] = [(m.name, int(m.mirror_object.session_uid)) for m in ob.modifiers
+                                            if m.type == 'MIRROR' and m.mirror_object is not None]
         for prop, meshes in ((KEEP_PROP, _kept(spec)), (BEFORE_SEAM_PROP, before_seam(spec))):
             for me in meshes.values():
                 backup = me.copy()
@@ -508,10 +574,53 @@ class PreparedResetBackup:
                 del backup[prop]
                 backup.use_fake_user = False
                 self.meshes.append((prop, value, backup))
-        self.g = context.scene.objects.get(D.garment_name(spec))
+        self.g = D.garment(spec)
         self.gmesh = self.g.data.copy() if self.g is not None else None
+        self.gdata = int(self.g.data.session_uid) if self.g is not None else None
+        self.gweights = bool(self.g.vertex_groups) if self.g is not None else False
         self.gprops = {k: self.g.get(k) for k in D.ADDON_PROPS} if self.g else {}
-        self.cache = [(m, m.show_viewport, m.show_render) for m in self.g.modifiers if m.type == 'MESH_CACHE'] if self.g else []
+        self.cache = [(m.name, m.show_viewport, m.show_render) for m in self.g.modifiers if m.type == 'MESH_CACHE'] if self.g else []
+        self.created_aux = {}
+        _backup_scopes.append(self)
+
+    def _copy_object(self, ob):
+        from . import private_ids
+        backup = ob.copy()
+        uid = private_ids.claim(backup, self._private_owner)
+        self._owned_objects[uid] = backup
+        return backup
+
+    def isolate_shared_meshes(self, names=None):
+        """Keep shared input meshes untouched until this operation commits.
+
+        One private mesh per original preserves sharing among participating
+        pieces. Rollback reconnects the original; outside users never see edits.
+        """
+        groups = {}
+        placed = objects(self.spec)
+        affected = {ob for name, ob in placed.items() if names is None or name in names}
+        for ob in set(placed.values()):
+            groups.setdefault(ob.data, []).append(ob)
+        for me, obs in groups.items():
+            if me.users <= 1:
+                continue
+            self._shared_originals.append((me, me.use_fake_user))
+            me.use_fake_user = True
+            for ob in obs:
+                self._shared_meshes[ob.name] = me
+            targets = [ob for ob in obs if ob in affected]
+            if targets:
+                private = me.copy()
+                private.use_fake_user = False
+                for ob in targets:
+                    ob.data = private
+
+    def _handoff(self, ob):
+        from . import private_ids
+        uid = int(ob.session_uid)
+        if not private_ids.release(uid, self._private_owner):
+            raise ValueError('A restored snapshot belongs to another operation')
+        self._owned_objects.pop(uid, None)
 
     def can_restore(self):
         return self.preparation_owner is None or self.preparation_owner.can_restore(self)
@@ -524,19 +633,24 @@ class PreparedResetBackup:
             # A foreign Text/Scene/history owns the new state; an old operation must not write its snapshot over it.
             self._restored = True
             return
-        for index, (name, backup, collections, hidden) in enumerate(self.auxiliary):
-            ob = bpy.data.objects.get(name)
+        restored_objects = {}
+        for index, (name, uid, backup, collections, hidden) in enumerate(self.auxiliary):
+            ob = next((o for o in bpy.data.objects if int(o.session_uid) == uid
+                       and GO.owns(o, GO.PLACED, self.spec, owner=self.text, context=self.context,
+                                   legacy_name=o.get(GCENTER_PROP))), None)
             if ob is None:
                 ob = backup
+                self._handoff(ob)
                 ob.name = name
-                for coll_name in collections:
-                    coll = bpy.data.collections.get(coll_name)
+                for coll_uid in collections:
+                    coll = next((c for c in bpy.data.collections if int(c.session_uid) == coll_uid), None)
                     if coll is not None:coll.objects.link(ob)
                 if not ob.users_collection:_collection(self.context).objects.link(ob)
-                self.auxiliary[index] = (name, None, collections, hidden)
+                self.auxiliary[index] = (name, uid, None, collections, hidden)
             else:
                 ob.matrix_world = backup.matrix_world
             ob.hide_set(hidden)
+            restored_objects[uid] = ob
         originals = set(self.original_objects.values())
         for ob in set(objects(self.spec).values()):
             if int(ob.session_uid) not in originals:
@@ -550,11 +664,14 @@ class PreparedResetBackup:
             if ob is not None:ob.name = name
             if ob is None:
                 ob = backup
+                self._handoff(ob)
                 ob.name = name
                 _collection(self.context).objects.link(ob)
                 self.live[i] = (name, None, hidden)
+                if name in self._shared_meshes:
+                    put_shape(ob, self._shared_meshes[name], shape_record(ob))
             else:
-                put_shape(ob, backup.data, shape_record(backup))
+                put_shape(ob, self._shared_meshes.get(name, backup.data), shape_record(backup))
                 for key in ('color', 'hide_viewport', 'hide_render', 'show_in_front', 'display_type', 'active_material_index'):
                     setattr(ob, key, getattr(backup, key))
                 for k in list(ob.keys()):
@@ -564,22 +681,31 @@ class PreparedResetBackup:
                 if backup.get(TWIN_PROP) and not any(m.type == 'MIRROR' for m in ob.modifiers):
                     _add_mirror(ob, center_empty(self.context, self.spec, backup[TWIN_PROP]), backup[TWIN_PROP], backup.get(PLANE_PROP, 'x'))
             ob.hide_set(hidden)
-        # Removing a leader clears RNA references even on object copies. Restore links by name only after all
-        # original objects exist again, then restore their original world transforms.
+            restored_objects[uid] = ob
+        # Deletion clears RNA targets even on object copies. Reconnect only
+        # after all originals/replacements exist, by original identity rather
+        # than a name which another object may have acquired in the meantime.
+        def target_object(uid):
+            return restored_objects.get(uid) or next((o for o in bpy.data.objects if int(o.session_uid) == uid), None)
         for name, (parent, world, inverse) in self.parents.items():
-            ob = bpy.data.objects.get(name)
+            ob = restored_objects.get(self.original_objects[name])
             if ob is not None:
-                ob.parent = bpy.data.objects.get(parent) if parent else None
+                ob.parent = target_object(parent) if parent is not None else None
                 ob.matrix_parent_inverse = inverse
-                for constraint, target in self.targets[name]:
+                for constraint, kind, target in self.targets[name]:
                     c = ob.constraints.get(constraint)
-                    if c is not None:
-                        c.target = bpy.data.objects.get(target)
+                    if c is not None and c.type == kind and hasattr(c, 'target'):
+                        c.target = target_object(target)
+                for modifier, target in self.mirror_targets[name]:
+                    m = ob.modifiers.get(modifier)
+                    if m is not None and m.type == 'MIRROR':
+                        m.mirror_object = target_object(target)
                 ob.matrix_world = world
                 if ob.name in self.context.view_layer.objects:
                     ob.select_set(self.selected[name], view_layer=self.context.view_layer)
-        if self.active and self.active in self.context.view_layer.objects:
-            self.context.view_layer.objects.active = self.context.view_layer.objects[self.active]
+        active = target_object(self.active_uid) if self.active_uid is not None else None
+        if active is None or self.context.view_layer.objects.get(active.name) == active:
+            self.context.view_layer.objects.active = active
         forget(self.spec)
         forget_before_seam(self.spec, set(before_seam(self.spec)))
         for prop, value, me in self.meshes:
@@ -590,23 +716,37 @@ class PreparedResetBackup:
             self.text.from_string(self.text_value)
         store.invalidate()
         if self.g is not None:
-            old = self.g.data
-            self.g.data, self.gmesh = self.gmesh, None
-            if old.users == 0:
-                bpy.data.meshes.remove(old)
+            # The garment keeps its mesh when the operation left it as it was (a fold field changed only the placed
+            # pieces): swapping in the copy anyway made a running Live stop ("the control shape changed"), and
+            # replaced a datablock outside any undo step. Positions alone moved are written back in place.
+            same = (_mesh_unchanged(self.g.data, self.gmesh, self.gweights or bool(self.g.vertex_groups))
+                    if int(self.g.data.session_uid) == self.gdata else '')
+            if same == 'POSITION':
+                P = np.empty(len(self.gmesh.vertices) * 3, np.float32)
+                self.gmesh.vertices.foreach_get('co', P)
+                self.g.data.vertices.foreach_set('co', P)
+                self.g.data.update()
+            if not same:        # otherwise the garment keeps its mesh and close() frees the copy
+                old = self.g.data
+                self.g.data, self.gmesh = self.gmesh, None
+                if old.users == 0:
+                    bpy.data.meshes.remove(old)
             for k, v in self.gprops.items():
                 if v is None:
                     self.g.pop(k, None)
                 else:
                     self.g[k] = v
-            for m, viewport, render in self.cache:
-                m.show_viewport, m.show_render = viewport, render
+            for name, viewport, render in self.cache:
+                m = self.g.modifiers.get(name)
+                if m is not None and m.type == 'MESH_CACHE':
+                    m.show_viewport, m.show_render = viewport, render
             D.sync_hidden(self.g, self.spec)
         invalidate_shown()
-        original_aux = {name for name, _, _, _ in self.auxiliary}
-        for name in aux_empties():
-            ob = bpy.data.objects.get(name)
-            if name in original_aux or ob is None or ob.type != 'EMPTY':continue
+        for uid, ob in self.created_aux.items():
+            try:
+                if int(ob.session_uid) != uid:continue
+            except ReferenceError:
+                continue
             used = any(other.parent == ob or any(m.type == 'MIRROR' and m.mirror_object == ob for m in other.modifiers)
                        or any(getattr(c, 'target', None) == ob for c in other.constraints)
                        for other in bpy.data.objects if other != ob)
@@ -619,22 +759,51 @@ class PreparedResetBackup:
     def close(self):
         if self._closed:
             return
-        for _, ob, _ in self.live:
-            if ob is not None:
+        if self in _backup_scopes:
+            index = _backup_scopes.index(self)
+            if not self._restored and index:
+                parent = _backup_scopes[index - 1]
+                if parent.text == self.text and parent.scene == self.scene:
+                    parent.created_aux.update(self.created_aux)
+            _backup_scopes.remove(self)
+        from . import private_ids
+        # A successful rigid move (or an unrelated operation) must not unlink
+        # mesh users when no mesh content was edited. Never write into the
+        # original: reconnect only a demonstrably unchanged private result.
+        shared = self._shared_meshes.items() if not self._restored and self.can_restore() else ()
+        for name, original in shared:
+            ob = bpy.data.objects.get(name)
+            if (ob is not None and int(ob.session_uid) == self.original_objects.get(name)
+                    and self.scene.objects.get(name) == ob and ob.data != original
+                    and _mesh_unchanged(ob.data, original) == 'SAME'):
+                private = ob.data
+                ob.data = original
+                if private.users == 0:
+                    bpy.data.meshes.remove(private)
+        for uid, ob in list(self._owned_objects.items()):
+            if not private_ids.release(uid, self._private_owner):
+                continue
+            try:
                 me = ob.data
-                bpy.data.objects.remove(ob, do_unlink=True)
-                if me.users == 0:
-                    bpy.data.meshes.remove(me)
+            except ReferenceError:
+                continue
+            bpy.data.objects.remove(ob, do_unlink=True)
+            if me is not None and me.users == 0:
+                bpy.data.meshes.remove(me)
+        self._owned_objects.clear()
         for _, _, me in self.meshes:
             bpy.data.meshes.remove(me)
         if self.gmesh is not None:
             bpy.data.meshes.remove(self.gmesh)
-        for _, ob, _, _ in self.auxiliary:
-            if ob is not None:bpy.data.objects.remove(ob, do_unlink=True)
+        for me, fake_user in self._shared_originals:
+            me.use_fake_user = fake_user
+            if me.users == 0:
+                bpy.data.meshes.remove(me)
+        self._shared_originals.clear()
         self._closed = True
 
 
-def _kept(spec):
+def _kept(spec, *, owner=GO.CURRENT):
     """{piece: mesh} kept at a Dress (keep) for the garment of spec."""
     out = {}
     gname = garment(spec)
@@ -642,26 +811,27 @@ def _kept(spec):
         k = me.get(KEEP_PROP)
         if k:
             d = json.loads(k)
-            if d.get('garment') == gname:
+            if GO.owns(me, GO.PLACED, spec, owner=owner, legacy_name=d.get('garment')):
                 out[d['piece']] = me
     return out
 
 
-def forget(spec, names=None):
-    """The placed shapes kept for these pieces (all the garment's if None) dropped: they are made from the numbers."""
-    for n, me in _kept(spec).items():
+def forget(spec, names=None, *, owner=GO.CURRENT):
+    """The adjusted shapes kept for these pieces (all the garment's if None) dropped: they are made from the numbers."""
+    for n, me in _kept(spec, owner=owner).items():
         if names is None or n in names:
             bpy.data.meshes.remove(me)
 
 
-def keep(ob, spec):
+def keep(ob, spec, *, owner=GO.CURRENT):
     """At a Dress: a moved object's mesh kept as it is (a fake user, out of the scene) with its matrix and the props
     of its shape, so the next build of its piece gives it back -- folded, moved to its seams, laid, edited (user
-    2026-10-22: Back to Placed after a Simulate kept the hand moves but lost a placket's Fold)."""
-    forget(spec, [ob[PROP]])
+    2026-10-22: Back to Adjusted Shape after a Simulate kept the hand moves but lost a placket's Fold)."""
+    forget(spec, [ob[PROP]], owner=owner)
     me = ob.data
     if ob.mode == 'EDIT':
         ob.update_from_editmode()
+    me[GO.PLACED] = GO.text(owner)
     me[KEEP_PROP] = json.dumps({'piece': ob[PROP], 'garment': garment(spec),
                                 'matrix': [float(v) for row in ob.matrix_world for v in row],
                                 'props': {p: (ob[p].to_list() if hasattr(ob[p], 'to_list') else ob[p])
@@ -677,6 +847,7 @@ def keep_shape(spec, piece, flat, tris, X_mm):
     where it was simulated, not where it was placed)."""
     forget(spec, [piece])
     me = _mesh(KEEP_PREFIX + garment(spec) + "_" + piece, flat, tris, X_mm, np.zeros(3))
+    me[GO.PLACED] = GO.text()
     me[KEEP_PROP] = json.dumps({'piece': piece, 'garment': garment(spec), 'world': True,
                                 'props': {SIM_PROP: True, NV_PROP: len(flat), KEY_PROP: layout_key(flat)}})
     me.use_fake_user = True
@@ -689,6 +860,7 @@ def _give_back(ob, me):
     me.use_fake_user = False
     made = ob.data
     ob.data = me
+    ob.pop(GEN_FRAME_PROP, None)
     me.name = made.name
     if made.users == 0:
         bpy.data.meshes.remove(made)
@@ -701,15 +873,15 @@ def _give_back(ob, me):
         ob[p] = v
 
 
-def remove(names, spec=None, forget_kept=True):
+def remove(names, spec=None, forget_kept=True, *, owner=GO.CURRENT):
     """Drop the objects holding these pieces (they are made again from the numbers), and what a Dress kept of
     them (forget_kept)."""
-    obs = objects(spec)
+    obs = objects(spec, owner=owner)
     names = set(names)
     names |= {obs[n][PROP] for n in names if n in obs}
     if forget_kept and spec is not None:
-        forget(spec, set(names))
-        forget_before_seam(spec, set(names))
+        forget(spec, set(names), owner=owner)
+        forget_before_seam(spec, set(names), owner=owner)
     going = {obs[n] for n in names if n in obs}
     for ob in set(obs.values()) - going:
         if ob.get(LEAD_PROP) in names:      # its leader goes: it stays where it is, on its own until linked again
@@ -723,29 +895,36 @@ def remove(names, spec=None, forget_kept=True):
             bpy.data.meshes.remove(me)
 
 
-def drop(spec):
+def drop(spec, *, owner=GO.CURRENT):
     """At a Dress: the garment's placed objects removed, and the collection with its center Empty once no garment's
-    are left (user 2026-10-14: after a Dress the garment is the one mesh to work on; the placed shapes are made again
+    are left (user 2026-10-14: after a Dress the garment is the one mesh to work on; the adjusted shapes are made again
     from the spec's placement and hand moves -- the pose -- when wanted: a Reset, show_placed after a whole Reset).
     The moved objects' shapes are kept (keep: a Fold, Part to Seam, Band on Edge or an Edit Mode edit is not only a
     pose, user 2026-10-22) and given back when their pieces are made again. Returns the pieces removed."""
-    obs = objects(spec)
+    obs = objects(spec, owner=owner)
     gone = sorted(obs)
-    forget(spec, set(gone))
+    forget(spec, set(gone), owner=owner)
     bpy.context.view_layer.update()             # a follower's matrix after its leader was just written
     for ob in {o.name: o for o in obs.values()}.values():
         unlink(ob)                              # kept as a plain object (its pose's matrix), linked again when made
     for ob in {o.name: o for o in obs.values()}.values():
         if is_moved(ob):
-            keep(ob, spec)
+            keep(ob, spec, owner=owner)
             ob.data = bpy.data.meshes.new(ob.name)      # the kept mesh off the object, which goes
-    remove(list(obs), spec, forget_kept=False)
+    remove(list(obs), spec, forget_kept=False, owner=owner)
     coll = bpy.data.collections.get(COLL_NAME)
     if coll is not None and not objects():
         for nm in aux_empties():
-            bpy.data.objects.remove(bpy.data.objects[nm])
+            ob = bpy.data.objects[nm]
+            if GO.owns(ob, GO.PLACED, spec, owner=owner, legacy_name=ob.get(GCENTER_PROP)):
+                bpy.data.objects.remove(ob)
         if not coll.objects and not coll.children:
             bpy.data.collections.remove(coll)
+    # Publishing the merged garment can mask pieces still owned by these placed
+    # objects. Once they are gone, reconcile the Mask before the first frame:
+    # editing provenance is retained, but the garment now owns the visible mesh.
+    from . import display_state
+    display_state.apply(bpy.context, spec, owner=owner)
     return gone
 
 
@@ -761,8 +940,47 @@ def from_sim(ob):
     return bool(ob.get(SIM_PROP) or ob.get(HAND_PROP))
 
 
+def write_local_result(ob, world_m):
+    """Install an independent result. Its pre-simulation placement survives further local runs and a file reload."""
+    sync_edit(ob)
+    if not from_sim(ob):
+        baseline = ob.data
+        me = baseline.copy()
+        me[LOCAL_INPUT] = baseline
+        me[LOCAL_RECORD] = json.dumps(shape_record(ob))
+        ob.data = me
+    me = ob.data
+    _set_world_co(ob, world_m, ob.matrix_world)
+    gen = me.attributes.get(GEN_ATTR)
+    if gen is not None:
+        gen.data.foreach_set('vector', world_m.astype(np.float32).ravel())
+    ob[SIM_PROP] = True
+
+
+def restore_local_inputs(spec, names):
+    """Restore both a live local result and one archived by a later Dress."""
+    obs, archived = objects(spec), _kept(spec)
+    restored = set()
+    for n in names:
+        ob = obs.get(n)
+        me = ob.data if ob is not None else archived.get(n)
+        if me is None or me.get(LOCAL_INPUT) is None:
+            continue
+        baseline = me[LOCAL_INPUT].copy()  # backups and other result owners can still refer to the saved input
+        rec = json.loads(me[LOCAL_RECORD])
+        if ob is not None:
+            put_shape(ob, baseline, rec)
+        else:
+            baseline[GO.PLACED] = GO.text()
+            baseline[KEEP_PROP] = json.dumps(dict(rec, garment=garment(spec)))
+            baseline.use_fake_user = True
+            bpy.data.meshes.remove(me)
+        restored.add(n)
+    return restored
+
+
 def drop_sim_shapes(spec, names):
-    """Back to Placed / Back to Guide on these pieces: the computed shapes they hold (an object or a mesh kept at a
+    """Back to Adjusted Shape / Back to Placed Shape on these pieces: the computed shapes they hold (an object or a mesh kept at a
     Dress, from a Local Sim or a piece switched Off) dropped, so they are made from the numbers (their pose stays in
     the spec). Returns the pieces dropped."""
     names = set(names)
@@ -771,7 +989,7 @@ def drop_sim_shapes(spec, names):
     gone |= {n for n, me in _kept(spec).items()
              if n in names and from_sim(json.loads(me[KEEP_PROP]).get('props', {}))}
     if gone:
-        forget(spec, gone)                      # the shape before Part to Seam stays (Back to Placed restores it)
+        forget(spec, gone)                      # the shape before Part to Seam stays (Back to Adjusted Shape restores it)
         remove(sorted(gone), spec, forget_kept=False)
     return sorted(gone)
 
@@ -861,8 +1079,8 @@ def _add_mirror(ob, cen, twin, plane='x'):
     _thickness_last(ob)
 
 
-# ---------------------------------------------------------------- the placed shapes drawn with their thickness
-# The fabric's thickness drawn on the placed shapes too, not only on the dressed garment (user 2026-11-17: a fold over
+# ---------------------------------------------------------------- the adjusted shapes drawn with their thickness
+# The fabric's thickness drawn on the adjusted shapes too, not only on the dressed garment (user 2026-11-17: a fold over
 # an internal line cannot be read without it). The same one switch and side as the garment's (Overlays > Thickness),
 # a Solidify after the pair's Mirror, display only: every shape read for a run is the object's own mesh (hand_shape),
 # never the evaluated one. One piece per object, so one value per object (a pair's mirrored half takes its source's),
@@ -928,7 +1146,12 @@ def refresh_thickness(context, spec, obs=None):
 
 
 def _tag(ob, spec, piece, V):
+    from . import store
+    text = store.text(bpy.context)
+    if text is not None:
+        ob['ac9_placed_spec'] = text
     ob.pop(ORIGIN_SHIFT_PROP, None)
+    ob.pop(GEN_FRAME_PROP, None)
     ob[ORG_PROP] = [float(c) * 1000.0 for c in ob.location]
     ob[PROP] = piece
     ob[GARMENT_PROP] = garment(spec)
@@ -1162,6 +1385,8 @@ def join_pair(context, spec, a, b, prefer=None):
     gets the Mirror again and the other side's object goes. Neither moved: both are made again from the numbers."""
     obs = objects(spec)
     oa, ob_ = obs.get(a), obs.get(b)
+    if any(ob is not None and from_sim(ob) for ob in (oa, ob_)):
+        return  # the pattern link can change; output meshes keep their independent edits
     cand = [o for o in ((ob_, oa) if prefer == b else (oa, ob_)) if o is not None and is_moved(o)]
     lead = cand[0] if cand else None
     if lead is None:
@@ -1252,6 +1477,9 @@ def center_control_origins(context, spec, obs):
                 org = (np.array(M.translation) * 1000.0).tolist()
         q['props'][ORG_PROP] = (np.asarray(org) + shift * 1000.0).tolist()
         q['props'][ORIGIN_SHIFT_PROP] = (np.asarray(q['props'].get(ORIGIN_SHIFT_PROP, (0, 0, 0))) + shift).tolist()
+        if GEN_FRAME_PROP in q['props']:
+            frame = np.asarray(q['props'][GEN_FRAME_PROP]).reshape(4, 4)
+            q['props'][GEN_FRAME_PROP] = (frame @ np.asarray(Matrix.Translation(shift.tolist()))).ravel().tolist()
         q['matrix'] = [float(v) for row in (M @ Matrix.Translation(shift.tolist())) for v in row]
         clone = me.copy()
         pending.append(clone)
@@ -1263,6 +1491,7 @@ def center_control_origins(context, spec, obs):
                 attr.data.foreach_set('vector', (V.reshape(-1, 3) - shift).astype(np.float32).ravel())
         clone.update()
         return clone, q
+    obs_all = objects(spec)
     try:
         saved, kept = before_seam(spec), _kept(spec)
         for ob in set(obs):
@@ -1277,6 +1506,16 @@ def center_control_origins(context, spec, obs):
                 item = centered(me, json.loads(me[prop]))
                 if item is not None:
                     staged.append((None, prop, me, *item))
+        # a leader's follower copies the leader's matrix (mirrored): the leader's matrix moved by its shift carried
+        # the follower off its shape by that shift mirrored, and it then counted as moved by hand, so placing again
+        # never made it again (a pair of trouser legs 2026-11-22: the follower 62 mm off its pair's mirror image).
+        # Its world shape is kept, as link does.
+        followers = []
+        for ob, *_rest in staged:
+            fol = obs_all.get(ob.get(FOLLOWER_PROP)) if ob is not None and ob.get(FOLLOWER_PROP) else None
+            c = fol.constraints.get('AC9_Pair') if fol is not None and fol is not ob else None
+            if c is not None and c.target is ob:
+                followers.append((fol, _world_co(fol), fol.matrix_world.copy()))
         for ob, prop, old, clone, record in staged:
             if ob is not None:
                 put_shape(ob, clone, record)
@@ -1288,6 +1527,10 @@ def center_control_origins(context, spec, obs):
                 bpy.data.meshes.remove(old)
                 clone.name = name
             pending.remove(clone)
+        if followers:
+            context.view_layer.update()
+            for fol, W, old_matrix in followers:
+                _set_world_co(fol, W, fol.matrix_world, from_matrix=old_matrix)
     finally:
         for me in pending:
             bpy.data.meshes.remove(me)
@@ -1304,7 +1547,7 @@ def same_pose(p, q):
 
 def _bary_extend(Q, Vr, T, Xr):
     """dress._bary_map, but a point outside the reference piece is carried by its nearest triangle's plane (not
-    clamped onto the old outline): a pattern made larger grows on its placed shape too (user 2026-10-26)."""
+    clamped onto the old outline): a pattern made larger grows on its adjusted shape too (user 2026-10-26)."""
     from mathutils.kdtree import KDTree
     Q = np.asarray(Q, np.float64)
     A, B, C = Vr[T[:, 0]], Vr[T[:, 1]], Vr[T[:, 2]]
@@ -1356,7 +1599,10 @@ def remesh(ob, V, T, extend=False):
         for saved in bpy.data.meshes:
             if saved.get(BEFORE_SEAM_PROP):
                 d = json.loads(saved[BEFORE_SEAM_PROP])
-                if d['piece'] == ob.get(PROP) and d['garment'] == ob.get(GARMENT_PROP):
+                from . import store
+                if (d['piece'] == ob.get(PROP) and d['garment'] == ob.get(GARMENT_PROP)
+                        and GO.owns(saved, GO.PLACED, store.get(bpy.context)[0],
+                                    owner=ob.get(GO.PLACED, GO.CURRENT), legacy_name=d['garment'])):
                     d['invalid'] = True
                     saved[BEFORE_SEAM_PROP] = json.dumps(d)
     bm = _bary_extend if extend else D._bary_map
@@ -1399,8 +1645,7 @@ def has_edits(ob):
     G = np.empty(n * 3)
     g.data.foreach_get('vector', G)
     # made with its vertices at (where made - its origin); an Unlink side's: the source's mirrored, as its GEN
-    loc0 = G.reshape(-1, 3) - origin_mm(ob) * MM
-    return bool(np.abs(co.reshape(-1, 3) - loc0).max() > MOVED_TOL)
+    return bool(np.abs(generated_co(ob, co.reshape(-1, 3)) - G.reshape(-1, 3)).max() > MOVED_TOL)
 
 
 def sync_pose(context, spec):
@@ -1411,6 +1656,9 @@ def sync_pose(context, spec):
     if not spec or not spec.get('placement'):
         return None
     leave_edit(context)
+    from . import control_basis as CB
+    projected = CB.project_pose(context, spec, consume=True)
+    spec = projected or spec
     pl = spec['placement']
     new = {}
     # the garment's center moved as an empty (user 2026-11-17): read back, the spec is the truth from here
@@ -1423,7 +1671,7 @@ def sync_pose(context, spec):
             c_new = o
     for ob in {o.name: o for o in objects(spec).values()}.values():
         n = ob.get(PROP)
-        if n not in pl or ob.get(LEAD_PROP):    # a follower's pose is its leader's mirrored (below)
+        if n not in pl or ob.get(LEAD_PROP) or from_sim(ob):
             continue
         p = pose_of(ob)
         if not same_pose(p, pl[n].get('pose')):
@@ -1434,7 +1682,7 @@ def sync_pose(context, spec):
             if not same_pose(pm, pl[tw].get('pose')):
                 new[tw] = pm
     if not new and c_new is None:
-        return None
+        return projected
     sp = S.loads(S.dumps(spec))
     if c_new is not None:
         S.set_garment_center(sp, c_new)
@@ -1462,7 +1710,7 @@ def _mesh(name, flat, tris, X_mm, origin_mm):
     return me
 
 
-def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
+def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None, *, link=True):
     """Make the objects from a start shape (dress.prepare(..., shapes_only=True)): X per piece (world mm), pairs =
     [(src, tgt)] piece indices mirrored (tgt made by the Mirror modifier). Moved objects are kept (keep_moved) and
     their pieces skipped. A piece with a pose in the spec (moved by hand before) is made moved by it. Returns (made, kept, notes): notes = the sides of pairs shown as two
@@ -1472,8 +1720,15 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
     coll = _collection(context)
     cen = center_empty(context, spec)
     names = [str(n) for n in pat['names']]
-    poses = {n: p['pose'] for n, p in S.mirror_twins(spec)[0].items() if p.get('pose')}
+    poses = placement_poses(spec)
     old = objects(spec)
+    back = _kept(spec)
+    independent = {n for n, ob in old.items() if from_sim(ob)}
+    independent.update(n for n, me in back.items() if from_sim(json.loads(me[KEEP_PROP])['props']))
+    if independent:
+        detach_result_pairs(context, spec, independent)
+        old = objects(spec)
+        pairs = [(a, b) for a, b in pairs if names[a] not in independent and names[b] not in independent]
     if only is not None:
         only = set(only)
         only |= {names[t_] for s_, t_ in pairs if names[s_] in only} | {names[s_] for s_, t_ in pairs if names[t_] in only}
@@ -1482,7 +1737,7 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
     for n, ob in old.items():
         if keep_moved and is_moved(ob):
             kept.add(n)
-    back = _kept(spec)                          # shapes a Dress kept (keep), given back to the pieces made
+    back = _kept(spec)                          # remove() above may have retired obsolete archives
     remove([n for n in old if n not in kept], spec)
     tgt_of = {}
     for s_, t_ in pairs:
@@ -1536,7 +1791,8 @@ def build(context, spec, pat, tris, X, pairs, keep_moved=True, only=None):
         made.append(n)
     # a pair shown as two objects: the second follows the first mirrored; notes = followers placed apart by hand
     # before, which go to their pair's mirror image (design review 11/04: told, not moved silently)
-    notes = link_pairs(context, spec)
+    # A batch may finish generated geometry in its canonical object frames before installing pair constraints.
+    notes = link_pairs(context, spec) if link else []
     # the origin on the piece from the start, not only after Move by Hand: a placed piece selected by a click and
     # turned with R turns about its own middle (user 2026-11-17: the origin was 34 mm off the piece's middle; it is
     # made round the middle of its bounding box, which on a piece bent round a cylinder lies off the piece). World
@@ -1564,9 +1820,11 @@ def _mirror_empty(context, spec, plane='x', piece=None):
         return _following_mirror(context, spec, plane, cen)
     key = _pair_key(spec, piece) if S.stored_mirror_at(spec, piece) is not None and piece else None
     name = MIRROR_NAME + ("_Y" if plane == 'y' else "") + (":" + key if key else "")
-    ob = bpy.data.objects.get(name)
+    ob = GO.auxiliary(name, spec, context)
     if ob is None:
         ob = bpy.data.objects.new(name, None)
+        _record_aux(context, ob)
+        ob[GO.PLACED] = GO.text(context=context)
         ob.empty_display_size = 0.05
         ob.hide_select = True
         ob.hide_viewport = True
@@ -1583,9 +1841,11 @@ def _following_mirror(context, spec, plane, cen):
     from .core import spec as S
     k = S.axis_of(plane)
     name = MIRROR_NAME + ("_Y" if plane == 'y' else "") + ":C:" + garment(spec)
-    ob = bpy.data.objects.get(name)
+    ob = GO.auxiliary(name, spec, context)
     if ob is None:
         ob = bpy.data.objects.new(name, None)
+        _record_aux(context, ob)
+        ob[GO.PLACED] = GO.text(context=context)
         ob.empty_display_size = 0.05
         ob.hide_select = True
         ob.hide_viewport = True
@@ -1625,10 +1885,33 @@ def _world_co(ob):
     return (np.c_[co.reshape(-1, 3), np.ones(len(me.vertices))] @ np.array(ob.matrix_world).T)[:, :3]
 
 
-def _set_world_co(ob, W, M):
-    """The object's vertices put at world W (m) under matrix M (its world matrix from now on)."""
+def generation_frame(ob):
+    """Object local to unposed generated world; linking changes this frame, moving a gizmo does not."""
+    value = ob.get(GEN_FRAME_PROP)
+    return np.asarray(value).reshape(4, 4) if value is not None else np.asarray(Matrix.Translation((origin_mm(ob) * MM).tolist()))
+
+
+def generated_co(ob, local, *, inverse=False):
+    """Convert local meters to generated meters, or invert it, including separate reflected follower frames."""
+    frame = generation_frame(ob)
+    if inverse:
+        frame = np.linalg.inv(frame)
+    return (np.c_[local, np.ones(len(local))] @ frame.T)[:, :3]
+
+
+def _set_world_co(ob, W, M, *, from_matrix=None):
+    """Write world vertices under M; a frame change carries local fold history through the same transform."""
     Mi = np.array(M.inverted())
     ob.data.vertices.foreach_set('co', (np.c_[W, np.ones(len(W))] @ Mi.T)[:, :3].astype(np.float32).ravel())
+    if from_matrix is not None:
+        transform = Mi @ np.asarray(from_matrix)
+        ob[GEN_FRAME_PROP] = (generation_frame(ob) @ np.linalg.inv(transform)).ravel().tolist()
+        for attribute in ob.data.attributes:
+            if attribute.name.startswith('ac9_fold_before_') and attribute.data_type == 'FLOAT_VECTOR':
+                values = np.empty((len(attribute.data), 3))
+                attribute.data.foreach_get('vector', values.ravel())
+                local = (np.c_[values, np.ones(len(values))] @ transform.T)[:, :3]
+                attribute.data.foreach_set('vector', local.astype(np.float32).ravel())
     ob.data.update()
 
 
@@ -1661,6 +1944,7 @@ def link(context, spec, lead, ob):
     if ob.mode == 'EDIT':
         ob.update_from_editmode()
     W = _world_co(ob)
+    old_matrix = ob.matrix_world.copy()
     from .core import spec as S
     plane = S.pair_plane(spec, ob.get(PROP, ''))
     E = _mirror_empty(context, spec, plane, ob.get(PROP))
@@ -1675,7 +1959,8 @@ def link(context, spec, lead, ob):
     c.name = 'AC9_Pair'
     c.target = lead
     c.target_space, c.owner_space = 'WORLD', 'LOCAL'
-    _set_world_co(ob, W, E.matrix_world @ lead.matrix_world)
+    matrix = E.matrix_world @ lead.matrix_world
+    _set_world_co(ob, W, matrix, from_matrix=old_matrix)
     ob[LEAD_PROP] = lead[PROP]
     lead[FOLLOWER_PROP] = ob[PROP]
 
@@ -1705,6 +1990,7 @@ def unlink(ob):
     if ob.mode == 'EDIT':
         ob.update_from_editmode()
     W = _world_co(ob)
+    old_matrix = ob.matrix_world.copy()
     lead = c.target if c is not None else None
     if c is not None:
         ob.constraints.remove(c)
@@ -1716,8 +2002,56 @@ def unlink(ob):
     from .core import spec as S
     M = matrix_for_pose(ob, S.mirror_pose(pose_of(lead), ob.get(PLANE_PROP, 'x')) if lead is not None else None)
     ob.matrix_world = M
-    _set_world_co(ob, W, M)
+    _set_world_co(ob, W, M, from_matrix=old_matrix)
     ob.pop(LEAD_PROP, None)
+
+
+def detach_result_pairs(context, spec, independent):
+    """A result can occupy either half of a pair. Keep each side's world shape and leave the pattern link intact."""
+    from .core import spec as S
+    obs = objects(spec)
+    context.view_layer.update()  # load_post may precede evaluation of saved object and constraint matrices
+    for ob in {obs[n] for n in independent if n in obs}:
+        twin = ob.get(TWIN_PROP)
+        if twin:
+            src = ob[PROP]
+            split_pair(context, spec, S.Outlines(S.piece_index(spec)), src, twin, keep_shape=True)
+            other = objects(spec)[twin]
+            if ob.get('ac9_placed_spec') is not None:
+                other['ac9_placed_spec'] = ob['ac9_placed_spec']
+            from . import look_apply
+            look_apply.ensure_uv_placed(other.data)
+            look_apply.apply_piece(other, spec, twin)
+            refresh_thickness(context, spec, {twin: other})
+            if from_sim(ob):
+                other[SIM_PROP] = True  # legacy shared result had that same mirrored surface on screen
+        follower = obs.get(ob.get(FOLLOWER_PROP)) if ob.get(FOLLOWER_PROP) else ob
+        if follower is not None and follower.get(LEAD_PROP):
+            unlink(follower)
+    context.view_layer.update()
+
+
+def detach_legacy_results(context, spec):
+    """Older Local results may still have the modifier or constraint which drives both sides."""
+    coupled = {n for n, ob in objects(spec).items() if from_sim(ob) and ob.is_editable and
+               (ob.get(TWIN_PROP) or ob.get(LEAD_PROP) or ob.get(FOLLOWER_PROP))}
+    if coupled:
+        detach_result_pairs(context, spec, coupled)
+
+
+def placement_poses(spec):
+    """Effective free transforms, using the same leader rule as separate-object pair linking."""
+    from .core import spec as S
+    pl = S.mirror_twins(spec)[0]
+    poses = {n: p['pose'] for n, p in pl.items() if p.get('pose')}
+    for a, b in S.placement_pairs(spec):
+        lead, fol = (b, a) if poses.get(b) and not poses.get(a) else (a, b)
+        mirrored = S.mirror_pose(poses.get(lead), S.pair_plane(spec, lead))
+        if mirrored:
+            poses[fol] = mirrored
+        else:
+            poses.pop(fol, None)
+    return poses
 
 
 def link_pairs(context, spec):
@@ -1730,7 +2064,7 @@ def link_pairs(context, spec):
     pl = spec.get('placement', {})
     for a, b in S.placement_pairs(spec):
         oa, ob_ = obs.get(a), obs.get(b)
-        if oa is None or ob_ is None or oa is ob_:
+        if oa is None or ob_ is None or oa is ob_ or from_sim(oa) or from_sim(ob_):
             continue
         linked |= {oa.name, ob_.name}
         if any(f.get(LEAD_PROP) == l_.get(PROP) and f.constraints.get('AC9_Pair')
@@ -1764,7 +2098,7 @@ def center(ob, spec):
     ob.matrix_world = Matrix.Translation((center_x(spec) * MM - mid, 0.0, 0.0)) @ ob.matrix_world
 
 
-# ---------------------------------------------------------------- the placed shapes as drawn (seams, rims, clicks)
+# ---------------------------------------------------------------- the adjusted shapes as drawn (seams, rims, clicks)
 # User 2026-10-14 (DECISIONS cloth-sim-3d-piece-move-2026-10-14): the seam ladders, the selected rim and the state
 # colors of a piece shown by a placed object are drawn on the object as it is now (moved, rotated, edited, a pair's
 # mirrored half), so the seams follow the piece being moved. Read from the evaluated mesh (the Mirror modifier's
@@ -1901,16 +2235,8 @@ def reveal(context, spec, obs):
     """Show the objects obs: the user's own hiding (H, the Outliner's eye, the screen icon, the exclude box) undone --
     hide_set alone left a hidden AC9_ClothSim_Placed hidden, and the seam lines stayed on the result (user 2026-10-14).
     Whether each object is shown is then the display plan's (display_state.apply, the one writer): an Off piece's
-    placed shape stays hidden under its dashed outline. Returns the collections made visible."""
-    def find(lc, coll):
-        if lc.collection == coll:
-            return [lc]
-        for c in lc.children:
-            p = find(c, coll)
-            if p:
-                return [lc] + p
-        return []
-    root = context.view_layer.layer_collection
+    adjusted shape stays hidden under its dashed outline. Returns the collections made visible."""
+    from .view_state import reveal_collection
     opened = []
     for ob in obs:
         ob.hide_viewport = False
@@ -1919,12 +2245,7 @@ def reveal(context, spec, obs):
         else:
             ob.hide_set(False)
         for coll in ob.users_collection:
-            for lc in find(root, coll)[1:]:          # the path from the scene's collection down to coll
-                if lc.exclude or lc.hide_viewport or lc.collection.hide_viewport:
-                    opened.append(lc.collection.name)
-                lc.exclude = False
-                lc.hide_viewport = False
-                lc.collection.hide_viewport = False
+            opened.extend(reveal_collection(context, int(coll.session_uid)))
     from . import display_state
     display_state.apply(context, spec)
     return sorted(set(opened))
@@ -1974,6 +2295,26 @@ def store_key():
     return store._cache['key']
 
 
+_layout_bvhs = {}   # (vertices, triangles) -> (layout, triangles, BVHTree): one per piece while its layout stays
+
+
+def _layout_bvh(F, T):
+    """A BVH of the piece's layout triangles (z = 0), kept while the layout and triangles are the same."""
+    from mathutils.bvhtree import BVHTree
+    k = (len(F), len(T))
+    c = _layout_bvhs.get(k)
+    if c is not None and (c[0] is F or c[0].shape == F.shape and np.allclose(c[0], F, atol=0.01, rtol=0)) \
+            and (c[1] is T or np.array_equal(c[1], T)):
+        return c[2]
+    verts = np.zeros((len(F), 3))
+    verts[:, :2] = F[:, :2]
+    bvh = BVHTree.FromPolygons(verts.tolist(), np.asarray(T).tolist(), all_triangles=True)
+    if len(_layout_bvhs) > 256:
+        _layout_bvhs.clear()
+    _layout_bvhs[k] = (F, T, bvh)
+    return bvh
+
+
 def to_world(entry, P):
     """World (m) points of layout points P (mm, on the piece) on a shown piece: each in the layout triangle it lies
     in (the nearest, its weights clamped, for a point just off the meshed outline), carried by the same weights."""
@@ -1986,35 +2327,32 @@ def to_world(entry, P):
     # same vertex order), and a pointer key recomputed every seam's weights then (0.25 s, measured 2026-11-19)
     k = (len(F), len(P), hash(P.tobytes()))
     b = _bary.get(k)
-    if b is not None and not (b[0] is F or b[0].shape == F.shape and np.allclose(b[0], F, atol=0.01, rtol=0)):
+    if b is not None and (not (b[0] is F or b[0].shape == F.shape and np.allclose(b[0], F, atol=0.01, rtol=0))
+                          or not np.array_equal(b[3], T)):
         b = None
     if b is None:
-        A, B_, C = F[T[:, 0]], F[T[:, 1]], F[T[:, 2]]
-        cen = (A + B_ + C) / 3.0
-        m = min(8, len(T))
-        ti = np.empty(len(P), np.int64)
-        wt = np.empty((len(P), 3))
-        for s in range(0, len(P), 256):
-            Q = P[s:s + 256]
-            d = ((Q[:, None, :] - cen[None]) ** 2).sum(2)
-            cand = np.argpartition(d, m - 1, axis=1)[:, :m]            # (q, m) nearest triangles
-            a, bb, cc = A[cand], B_[cand], C[cand]
-            v0, v1, v2 = bb - a, cc - a, Q[:, None, :] - a
-            den = v0[..., 0] * v1[..., 1] - v1[..., 0] * v0[..., 1]
-            den = np.where(np.abs(den) < 1e-12, 1e-12, den)
-            w1 = (v2[..., 0] * v1[..., 1] - v1[..., 0] * v2[..., 1]) / den
-            w2 = (v0[..., 0] * v2[..., 1] - v2[..., 0] * v0[..., 1]) / den
-            w0 = 1.0 - w1 - w2
-            Wc = np.stack([w0, w1, w2], -1)
-            best = np.argmax(Wc.min(-1), 1)                          # the triangle the point is most inside
-            r = np.arange(len(Q))
-            w = np.clip(Wc[r, best], 0.0, None)
-            w /= np.maximum(w.sum(1, keepdims=True), 1e-12)
-            ti[s:s + 256], wt[s:s + 256] = cand[r, best], w
+        # the triangle each point is in (or nearest to, off the meshed outline) from a BVH of the layout. Before:
+        # every point against every triangle's center, then the 8 nearest tested -- O(points x triangles), 1.4 s on
+        # the first draw after a long trouser piece was placed (measured 2026-11-22)
+        bvh = _layout_bvh(F, T)
+        F2 = F[:, :2]
+        ti = np.zeros(len(P), np.int64)
+        for j, (x, y) in enumerate(P[:, :2].tolist()):
+            f = bvh.find_nearest((x, y, 0.0))[2]
+            if f is not None:
+                ti[j] = f
+        a, bb, cc = F2[T[ti, 0]], F2[T[ti, 1]], F2[T[ti, 2]]
+        v0, v1, v2 = bb - a, cc - a, P[:, :2] - a
+        den = v0[:, 0] * v1[:, 1] - v1[:, 0] * v0[:, 1]
+        den = np.where(np.abs(den) < 1e-12, 1e-12, den)
+        w1 = (v2[:, 0] * v1[:, 1] - v1[:, 0] * v2[:, 1]) / den
+        w2 = (v0[:, 0] * v2[:, 1] - v2[:, 0] * v0[:, 1]) / den
+        wt = np.clip(np.stack([1.0 - w1 - w2, w1, w2], -1), 0.0, None)
+        wt /= np.maximum(wt.sum(1, keepdims=True), 1e-12)
         if len(_bary) > 4096:
             _bary.clear()
-        b = _bary[k] = (F, T[ti], wt)      # F by reference: a reading makes a new array, nothing writes into it
-    _, tr, wt = b
+        b = _bary[k] = (F, T[ti], wt, np.asarray(T).copy())
+    _, tr, wt, _ = b
     if tr.size and tr.max() >= len(W):
         return None
     return (W[tr] * wt[:, :, None]).sum(1)

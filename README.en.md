@@ -9,7 +9,7 @@ Fixing a pattern and dressing the avatar again to check it all happens inside Bl
 
 - Import patterns: `BOM.xml`, DXF, SVG, and 3D meshes with UV seams. You can also draw a pattern from scratch.
 - Fix and draw patterns: drag corners and edges, darts, slash-and-spread, notches, symmetric editing and more.
-- Sew and dress: place the pattern pieces around the body and start Live Sim. It sews the pieces together and lets the garment settle until you stop it. You can grab and adjust the cloth while it runs.
+- Sew and dress: place the pattern pieces around the body and start Simulate. It sews the pieces together and lets the garment settle until you stop it. You can grab and adjust the cloth while it runs.
 - Fabrics: choose a fabric (stiffness, weight) for each piece. Interlining, elastic and buttons are supported too.
 - On to the next step: the dressed garment can be handed to [AC9 Cloth Retopo](https://github.com/openfashion-labs/ac9_cloth_retopo) as its Guide.
 
@@ -17,7 +17,7 @@ Free to use, commercial use included (GPL-3.0-or-later).
 
 ## Before you start
 
-The current version is **0.3.0**. See the [changelog](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) and [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) for the development stage and changes in each version.
+The current version is **0.4.0**. See the [changelog](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) and [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) for the development stage and changes in each version.
 Please keep in mind that:
 
 - Features are still missing.
@@ -60,21 +60,21 @@ To check that it is installed, press **N** in the 3D viewport and look for the "
 
 The button names are the ones shown in the English interface. The detailed steps are in the [user guide](#user-guide).
 
-1. **Save the .blend first.** Live Sim keeps the shape when you stop it. It does not save intermediate frames for animation playback.
+1. **Save the .blend first.** The stopped garment shape is saved in the .blend. Cache settings control which simulation frames are kept for playback.
 2. Import the avatar (the body). It is expected to stand straight, facing −Y. If you have none, **Add Avatar** under **Setup** adds the bundled avatar (CC0).
 3. In the sidebar's "AC9 Cloth Sim" tab, press **Work Screen** under **Setup** to switch to a screen laid out for the work.
 4. Import the pattern: **Import BOM**, **Import DXF**, **Import SVG**, or **From Mesh** for a 3D mesh. DXF and SVG files carry no seams, so add them with **Add Seam** after importing.
 5. Under **Placement**, pick the body mesh as **Body** and press **Detect Guides**. Guides for placing the pieces appear around the body's torso, neck, arms and legs.
 6. With the **Place** tool, select pattern pieces, press on a guide, drag to set the position and release.
-7. In the **Tool** tab of the Properties editor at the bottom right (AC9 Run, at the top), press **Live Sim**. The seams pull together and the garment settles on the body. It does not stop by itself: press **Esc** once it has settled.
-8. Where you don't like the result, fix the pattern and press Live Sim again (it goes on from the current shape). While it runs, **Ctrl+drag** the cloth to pull it into place. To restart from the placed shape used before the simulation, press **Back to Placed** with nothing selected, then Live Sim.
+7. In the **Tool** tab of the Properties editor at the bottom right (AC9 Run, at the top), press **Simulate**. The seams pull together and the garment settles on the body. It does not stop by itself: press **Esc** once it has settled.
+8. Where you don't like the result, fix the pattern and press Simulate again (it goes on from the current shape). While it runs, **Ctrl+drag** the cloth to pull it into place. To restart from the placed shape used before the simulation, press **Back to Adjusted Shape** with nothing selected, then Simulate.
 9. The dressed garment is saved in the .blend (**Ctrl+S**).
 
 <!-- screenshot: the whole Work Screen (sidebar, pattern view, Tool tab) -->
 
 ### Research features
 
-With **Experimental Features** enabled in the add-on preferences, **Accurate (Research)** is available in **AC9 Run** for Live Sim. It is off by default and hidden in the normal interface. Stop the simulation before switching it; turning it off restores the previous solver setting. The choice is saved in the .blend.
+With **Experimental Features** enabled in the add-on preferences, **Accurate (Research)** is available in **AC9 Run** for Simulate. It is off by default and hidden in the normal interface. Stop the simulation before switching it; turning it off restores the previous solver setting. The choice is saved in the .blend.
 
 This solver is for research on drape with a static body. It does not guarantee better results or faster calculation. Phase Sim and Local Sim keep their existing solvers. Folded double layers still have unresolved behavior; see the user guide for limitations.
 
@@ -82,7 +82,7 @@ This solver is for research on drape with a static body. It does not guarantee b
 
 - **The run buttons are not in the sidebar but in the Tool tab of the Properties editor at the bottom right.** If the Properties editor shows another tab (Render and so on), you won't find them.
 - **Patterns cannot be fixed with Blender's usual editing (Edit Mode, G/R/S).** Use the **Whole Pieces** tool to move whole pieces and the **Edit Pieces** tool to fix corners and edges.
-- **A piece's role** (front, placket, collar stand, sleeve, cuff ...) decides the order it is sewn in, how it is placed (bands as a ring, sleeve panels side by side around the arm) and its start shape. After checking the seams and before placing, press **Propose Roles** in the **Piece Roles** panel and look again at the pieces marked for checking. See [Piece Roles and What Gets Decided Automatically](https://openfashion-labs.github.io/ac9_cloth_sim/features/roles/) in the user guide.
+- **Piece Roles** is a test feature shown with **Experimental Features** enabled. See the user guide for its uses and limitations.
 - To adjust a placed piece by hand, select it in the 3D view with **Whole Pieces** and use the move or rotate gizmo.
 - **Hover over a button that cannot be pressed (gray) to see why.**
 - On a **laptop** without a middle button or numpad, turning on "Emulate 3 Button Mouse" and "Emulate Numpad" under Preferences → Input makes moving the view easier.

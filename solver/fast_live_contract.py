@@ -85,6 +85,12 @@ def configure(cfg):
     if cfg.get('native_three'):
         raise ValueError('Accurate (Research) and Native 3 cannot run together')
     result = dict(cfg)
+    # the Live's own start-up recovery (core/recipe.py LIVE_UNTANGLE / LIVE_DEEP_PUSH) is left out here rather than
+    # refused: this path runs without it, as before
+    if (result.get('untangle_free') or {}).get('sewing_only'):
+        result.pop('untangle_free', None)
+        if (result.get('deep_push') or {}).get('with_free'):
+            result.pop('deep_push', None)
     for key in UNSUPPORTED:
         if key in _test_supported():
             continue
@@ -127,7 +133,7 @@ def validate_config(cfg):
     if cfg.get('fast_live') != MODE:
         raise ValueError('Unsupported AC9 Fast Live version')
     if not cfg.get('live'):
-        raise ValueError('AC9 Fast Live is available only in Live Sim')
+        raise ValueError('AC9 Fast Live is available only in Simulate')
     for key, value in FIXED.items():
         if key == 'substeps' and os.environ.get('AC9_TEST_FAST_SUBSTEPS'):   # test switch: other substep counts
             continue

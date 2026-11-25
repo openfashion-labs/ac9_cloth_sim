@@ -92,7 +92,10 @@ def _mirror_side_by(spec, side, name, tp, M, outlines, skip):
             if np.abs(Q - P).max() < TOL_MM:
                 return dict(side, piece=tp, line=it['id']), None
             if np.abs(Q[::-1] - P).max() < TOL_MM:
-                return dict(side, piece=tp, line=it['id'], **{'from': 1.0 - side['from'], 'to': 1.0 - side['to']}), None
+                out = dict(side, piece=tp, line=it['id'], **{'from': 1.0 - side['from'], 'to': 1.0 - side['to']})
+                if 'wrap' in out:
+                    out['wrap'] = -out['wrap']
+                return out, None
         return None, f"no internal line on {tp} mirrors {side['piece']} {side['line']}"
     ol_s, ol_d = outlines[side['piece']], outlines[tp]
     out = dict(side, piece=tp, dir=-int(side.get('dir', 1)))
@@ -383,7 +386,12 @@ def _same_side(spec, outlines, o, m, tol=1.0):
     if o['piece'] != m['piece'] or ('line' in o) != ('line' in m):
         return False
     if 'line' in o:
-        return o['line'] == m['line'] and abs(min(o['from'], o['to']) - min(m['from'], m['to'])) < 0.02
+        from .line_track import covered_intervals
+        if o['line'] != m['line']:
+            return False
+        a, b = sorted(covered_intervals(o)), sorted(covered_intervals(m))
+        length = S.polyline_len(D.internal(D.piece(spec, o['piece']), o['line'])['pts'])
+        return len(a) == len(b) and np.allclose(a, b, atol=min(tol / max(length, 1e-9), 1e-4), rtol=0)
     ol = outlines[o['piece']]
     a0, a1 = _interval(ol, o)
     b0, b1 = _interval(ol, m)

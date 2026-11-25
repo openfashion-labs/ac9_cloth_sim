@@ -226,8 +226,8 @@ class PreparationBuild:
         self.accepted = None
         self.committed_owner = None
 
-    def job_dir(self):
-        path = self.allocator(self.context)
+    def job_dir(self, *, allocator=None):
+        path = (allocator or self.allocator)(self.context)
         if isinstance(path, OwnedJobDirectory):
             self.directories.append(path)
         return path

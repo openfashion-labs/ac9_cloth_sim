@@ -97,6 +97,44 @@ class PlacedOrigin(unittest.TestCase):
         self.assertLess(np.linalg.norm(mid0 - np.array(M0.translation)) * 1000.0, 0.01)
 
 
+class PairFollowerKept(unittest.TestCase):
+    """A pair shown as two objects (meshed differently): the leader's origin moved onto its piece must not carry the
+    follower (which copies the leader's matrix, mirrored) off its shape. It did, by the shift mirrored, and the
+    follower then counted as moved by hand, so placing again never made it again."""
+    def setUp(self):
+        ctx = bpy.context
+        self.previous_body = ctx.scene.ac9_cloth_sim.body
+        bpy.ops.mesh.primitive_cube_add(size=.1)
+        self.body = ctx.object
+        ctx.scene.ac9_cloth_sim.body = self.body
+        self.sp = S.new_spec('PairFollower')
+        D.add_polygon(self.sp, [[0, 0], [300, 0], [300, 200], [0, 200]], name='A')
+        # the mirror image with one more outline point: meshed differently, so two objects, one following
+        D.add_polygon(self.sp, [[500, 0], [800, 0], [800, 200], [650, 200], [500, 200]], name='B')
+        self.sp['pairs'] = [['A', 'B']]
+        self.sp['placement'] = {'A': dict(guide='torso', theta=40., h=0., anchor=[150, 100]),
+                                'B': dict(guide='torso', theta=140., h=0., anchor=[650, 100])}
+        self.sp['guides'] = {'torso': dict(o=[0, 0, 0], R=np.eye(3).tolist(), r=100, h0=-200, h1=200, points=[])}
+        self.sp['placement'], _ = S.mirror_twins(self.sp, sources={'A'})
+        self.text = ST.new_text(ctx, self.sp['name'])
+        ST.write(ctx, self.sp, keep=True)
+        res = DR.prepare(ctx, 20., shapes_only=True, placed_only=True)
+        PLV.build(ctx, ST.get(ctx)[0], res['pat'], res['tris'], res['X'], res['pairs'])
+        self.obs = PLV.objects(ST.get(ctx)[0])
+
+    tearDown = PlacedOrigin.tearDown
+
+    def test_follower_on_its_shape(self):
+        a, b = self.obs['A'], self.obs['B']
+        self.assertIsNot(a, b)
+        fol = a if a.get(PLV.LEAD_PROP) else b
+        lead = b if fol is a else a
+        self.assertTrue(fol.get(PLV.LEAD_PROP))                              # the case it is about
+        self.assertGreater(np.abs(np.asarray(lead.get(PLV.ORIGIN_SHIFT_PROP, (0, 0, 0)))).max() * 1000.0, 5.0)
+        for ob in (lead, fol):
+            self.assertFalse(PLV.moved_since_made(ob), ob.name)
+
+
 if __name__ == '__main__':
     r = unittest.main(argv=[sys.argv[0]], exit=False).result
     if len(ARGS) > 1:

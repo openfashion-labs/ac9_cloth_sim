@@ -35,7 +35,7 @@ A map for automating with scripts or changing the add-on. The source is GPL-3.0-
 
 - **The pattern data is the truth.** Do not change flat pattern objects directly: edit the pattern data with the
   functions in `core/`, then write it back with `store.py`. The objects are made again.
-- **Placed objects may be moved directly.** The simulation starts from the placed shapes on screen at the time.
+- **Placed objects may be moved directly.** The simulation starts from the adjusted shapes on screen at the time.
 - **Selection is written through `selection.py`.** Calling `select_set` elsewhere puts the 2D and 3D marks out of
   step. The places that write it directly, for a reason, are listed with the reason in
   `tests/test_selection_writers.py`.

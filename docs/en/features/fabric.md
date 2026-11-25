@@ -27,7 +27,7 @@ It appears in the Tool tab when you've selected a piece. If you select several, 
 - The top field: the piece's name (for display; you can also set it with F2). Below it are the number, width x height and the outline length, and the garment group it belongs to.
 - **Symmetric Edit**: editing one piece of a symmetric pair (a "left and right pair").
 - **State**: the four states ("Piece States and Layering") and **Invert Selection**.
-- **Role**: the role.
+- **Role**: the role. Roles are experimental and not required for normal Simulate; see [Piece Roles](roles.md).
 - **Fabric** and **Interlining**: the fabric and interlining. The pencil on the right opens a screen for fixing that fabric's or interlining's numbers (the same screen as **Edit...** in the **Fabrics** tab of **Lists**).
 - **Look**: the appearance (Blender's material field). If empty, the garment's **Default Look** is used.
 - **Thickness**: whether to show the placed pieces and the dressed garment with thickness (appearance only). A fold over an internal line shows as two layers.
@@ -36,7 +36,7 @@ It appears in the Tool tab when you've selected a piece. If you select several, 
 - **Elastic**: the rate of shrinking along the piece's long axis (100 means no shrinking).
 - **Closes Onto**: the partner piece it is fastened to with buttons ("Buttons (Fasteners)").
 - Whether it has been placed ("Placed" or "Not placed yet") and the number of internal lines.
-- Changes take effect from the next time you press **Live Sim** (for what takes effect when changed while it runs, see the "Live Sim" section of "Dress (run)").
+- Changes take effect from the next time you press **Simulate** (for what takes effect when changed while it runs, see the "Simulate" section of "Dress (run)").
 
 ## The fabrics and interlinings list (Fabrics)
 
@@ -94,18 +94,18 @@ An estimated fabric is a starting point: change it in Edit Fabric to match a rea
 
 ## The problem watcher (Watch)
 
-When it is on, it records problems that happen while the garment is being dressed (a piece drifting away, seams pulling against each other, a seam being sewn inside out) and paints the place of the first one in red on the garment. It doesn't stop the simulation.
+When it is on, it records problems that happen while the garment is being dressed, such as drifting pieces, seams pulling against each other, or a seam sewn inside out. It doesn't stop the simulation.
 
-- It is off by default. Turn it on before pressing **Live Sim**.
-- Red marks a "candidate for a problem," and it can show up even on a good garment.
-- The red is drawn by **Diagnose** > **Problems** under **Overlays** (on by default). If you can't see it, check the overlay eye button in the header and the "Problems" checkbox.
+- It is off by default. Turn it on before pressing **Simulate**.
+- A record is a candidate for a problem, and it can occur on a good garment too.
+- **Recorded Run Checks** inside **Diagnosis Results** lists stored check types and vertex counts. These records are separate from a diagnosis of the current shape. Old locations are not repainted as current Problem Areas.
 
 ## Strengthen
 
-Select pieces, open Properties → Tool → **AC9 Piece**, and enable **Strengthen**. **Strength Factor** defaults to 5 and ranges from 1 to 100. It multiplies stretch, shear, and bending stiffness equally; 1 leaves stiffness unchanged. Mass, thickness, and rest shape stay the same. Selected pieces and their pairs change together.
+Select pieces, open Properties → Tool → **AC9 Piece**, and enable **Strengthen**. **Strength Factor** defaults to 5 and ranges from 1 to 100. It multiplies stretch, shear, and bending stiffness equally; 1 leaves stiffness unchanged. Mass and thickness stay the same. On a piece that already hangs (sewn, its folds settled), Strengthen keeps the shape the piece has at that moment: it does not pull the piece back to the flat pattern, and the seams around it are not pulled either. A changed factor keeps that shape; switching Strengthen off and on again takes the shape the piece has then. Selected pieces and their pairs change together.
 
-A purple tint marks strengthened patterns and 3D pieces; Freeze and Off state colors take priority. Toggle Strengthen or edit the factor during Live Sim: the worker applies it at the next frame that receives the change. Disabling it retains the chosen factor. The setting is saved in the spec and .blend and remains effective until disabled.
+A purple tint marks strengthened patterns and 3D pieces; Freeze and Off state colors take priority. Toggle Strengthen or edit the factor during Simulate: the worker applies it at the next frame that receives the change. Disabling it retains the chosen factor. The setting is saved in the spec and .blend and remains effective until disabled.
 
 Interlining adds the mass and bending of a physical material and is separate from Strengthen. You choose whether to retain the strengthened shape or disable it and let the cloth relax. Large multipliers resist sewing and bending more strongly.
 
-The tint is visible when Overlays → Piece Colors is enabled. If Strengthen changes during a Live run using End Taper, the next Live rebuilds from the shown shape. The visible shape and Strengthen settings are still saved.
+The tint is visible when Overlays → Piece Colors is enabled. If Strengthen changes during a Simulate run using End Taper, the next Simulate run rebuilds from the shown shape. The visible shape and Strengthen settings are still saved.

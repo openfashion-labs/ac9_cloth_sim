@@ -55,6 +55,15 @@ def main():
         # a long console: the start line at the top is still read
         r = gpu_failure.diagnose([write(d, 'f.txt', START_OLD + 'x' * (gpu_failure.TAIL + 10) + '\n' + BUILD)])
         assert r is not None and r['old_driver'] is True, r
+        # the GPU has no memory left: Warp's allocation error, or CUDA's own words
+        oom = START_NEW + "Traceback (most recent call last):\nRuntimeError: Failed to allocate 536870912 bytes on device 'cuda:0'\n"
+        assert gpu_failure.out_of_memory([write(d, 'm.txt', oom)])
+        assert gpu_failure.out_of_memory([write(d, 'n.txt', 'Warp CUDA error 2: out of memory\n')])
+        # not out of memory: a build failure, a Python error, the graph-capture pool message, missing files
+        assert not gpu_failure.out_of_memory([write(d, 'o.txt', START_OLD + BUILD), write(d, 'p.txt', PYTHON_ERROR)])
+        assert not gpu_failure.out_of_memory([write(d, 'q.txt', 'Failed to allocate memory during graph capture '
+                                                               'because memory pools are not enabled\n')])
+        assert not gpu_failure.out_of_memory([os.path.join(d, 'missing.txt'), None])
     print('ok test_gpu_failure')
 
 

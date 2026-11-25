@@ -74,8 +74,13 @@ def write_job(context, spec, job):
     RR.write_result(d, 'from mesh', names, job['offs'], job['F'], job['fp'], job['flat'], job['X'], S.dumps(spec),
                     pattern=dict(job['V'], names=np.array(names), nb=job['nb']), stitches=job['E_st'],
                     seams=job['E_seam'], info={'source': spec['source'].get('object', '')})
-    ob = DR.garment_object(context, DR.garment_name(spec), job['flat'], job['F'], job['fp'], job['X'], names)
+    from . import control_basis as CB
+    ob = DR.garment_object(context, DR.garment_name(spec), job['flat'], job['F'], job['fp'], job['X'], names,
+                           editing_basis={n: CB.PLACED for n in names})
     ob['ac9_job'] = d
+    from . import blend_record as BR
+    BR.forget(ob)                                   # a garment object of the same name keeps no other result's record
+    BR.note(ob, d)
     DR.refresh_thickness(context, ob, spec)
     return d, ob
 
@@ -85,8 +90,17 @@ def source_mesh(context):
     return context.scene.ac9_cloth_sim.from_mesh_object or context.active_object
 
 
+def can_be_source(ob, body):
+    """A mesh of the person's own: not a pattern piece, a placed piece, the garment or another AC9 object. From Mesh
+    builds the pattern's objects anew, so one of them as the source was deleted half way (the operator then
+    failed with the old garment's objects gone and no undo step)."""
+    from . import properties
+    return (ob is not None and ob.type == 'MESH' and ob != body and properties._own_mesh(ob)
+            and not ob.name.startswith('AC9_'))
+
+
 class AC9_OT_SimFromMesh(bpy.types.Operator):
-    """Make the pattern from the mesh in the Mesh field (empty: the active mesh): each UV island is a piece, edges shared by two islands are seams. The garment starts as modeled (Live Sim settles it). Model it single-layered and open, as shown (modifiers applied); pick the body first"""
+    """Make the pattern from the mesh in the Mesh field (empty: the active mesh): each UV island is a piece, edges shared by two islands are seams. The garment starts as modeled (Simulate settles it). Model it single-layered and open, as shown (modifiers applied); pick the body first"""
     bl_idname = "ac9_cloth_sim.from_mesh"
     bl_label = "From Mesh"
     bl_options = {'REGISTER', 'UNDO'}
@@ -95,6 +109,9 @@ class AC9_OT_SimFromMesh(bpy.types.Operator):
     def poll(cls, context):
         ob = source_mesh(context)
         body = context.scene.ac9_cloth_sim.body
+        if ob is not None and ob.type == 'MESH' and body is not None and ob != body and not can_be_source(ob, body):
+            cls.poll_message_set(tx("Pick a mesh of your own: this one is a piece or the garment of AC9 Cloth Sim"))
+            return False
         return ob is not None and ob.type == 'MESH' and body is not None and ob != body
 
     def execute(self, context):
@@ -121,7 +138,7 @@ class AC9_OT_SimFromMesh(bpy.types.Operator):
         store.new_text(context, spec['name'])
         store.put(context, spec)
         spec, outlines = store.get(context)
-        PV.rebuild(context, spec, outlines)
+        PV.rebuild(context, spec, outlines, switch_document=True)
         d, g = write_job(context, spec, job)
         inside = _inside_body(context, props.body, job['X'])
         if inside:
@@ -132,8 +149,8 @@ class AC9_OT_SimFromMesh(bpy.types.Operator):
         for line in rep:
             DR.log(context, d, 'from_mesh', line)
         msg = (tx("From Mesh: {0} pieces, {1} seams in {2} s; ", len(spec['pieces']), len(spec['seams']), secs)
-               + (tx("{0} points start inside the body (red)", len(inside)) if inside else tx("none inside the body"))
-               + tx(". Live Sim to settle it"))
+               + (tx("{0} points start inside the body; use Diagnose to locate them", len(inside)) if inside else tx("none inside the body"))
+               + tx(". Simulate to settle it"))
         DR.log(context, d, 'from_mesh', msg, inside=len(inside), seconds=secs)
         props.dress_status = msg
         from . import units

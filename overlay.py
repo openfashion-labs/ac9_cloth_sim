@@ -24,6 +24,7 @@ from .core import body_axes as BA
 from .core import seam_edit as SE
 from .core import seam_path as SPATH
 from .core import spec as S
+from .core.display_layout import side_points
 
 _handles = []
 _geo = {'key': None}
@@ -254,7 +255,7 @@ def _placed_flat(spec, outlines, enabled):
         except Exception:
             continue
         n = max(2, int(max(S.polyline_len(fa), S.polyline_len(fb)) / 2.0) + 1)
-        fa, fb = S.resample(fa, n), S.resample(fb, n)
+        fa, fb = [side_points(spec, sm[k], outlines, n) for k in ('a', 'b')]
         pa, pb = pl.get(a), pl.get(b)
         wa = laid_mm(spec, pa, fa, rad.get(a))
         wa = wa * PV.MM if wa is not None else None
@@ -287,7 +288,7 @@ def _ladder_np(A, B, fa, c, arc=None):
     return pos, np.tile(np.asarray(c, np.float32), (len(pos), 1)), len(pos) // 2
 
 
-def _arc_of(spec, outlines, sid, a, shown):
+def _arc_of(spec, outlines, sid, a, shown, material=()):
     """For a seam pulled round the body (spec seam 'path'): the rung drawing, the arcs round its part's axis on the
     side it is set to go (auto: away from its piece a's cloth, as the solver chooses); None for a straight seam."""
     sm = next((x for x in spec['seams'] if x['id'] == sid), None)
@@ -301,6 +302,10 @@ def _arc_of(spec, outlines, sid, a, shown):
         sd = np.asarray(SPATH.DIRS[side], float)
     else:
         Bo = outlines[a].B
+        if a in material:
+            Bo = _material_points(a, Bo)
+            if Bo is None:
+                return None
         C = PLV.to_world(shown[a], Bo) if a in shown else wrapped_outline(spec, outlines, a)
         if C is None:
             return None
@@ -342,13 +347,117 @@ def placed_seams(spec, outlines, enabled, shown=None):
     return np.vstack(pos), np.vstack(col), ids
 
 
-def _side_verts(spec, outlines, side, flat, lo, hi, n):
+def _side_verts(spec, outlines, side, flat, lo, hi, n, layouts, surfaces):
     """Garment vertex indices of a seam side: n samples of its pattern polyline (layout mm), each the nearest vertex of
     its piece by the vertices' pattern position (flat, the piece's vertices lo:hi)."""
-    P = S.resample(S.side_polyline(spec, side, outlines, step=2.0), n)
+    P = side_points(spec, side, outlines, n)
+    query = layouts.get(side['piece'])
+    Q = query.points(P) if query is not None else None
+    if Q is None or not _covered(Q, *surfaces[side['piece']]):
+        raise ValueError('No verified material query')
     V = flat[lo:hi]
-    d = ((P[:, None, :] - V[None, :, :]) ** 2).sum(2)
+    d = ((Q[:, None, :] - V[None, :, :]) ** 2).sum(2)
     return lo + d.argmin(1), P
+
+
+def _display_layouts(job, ob, spec, flat, ranges, source):
+    """One read-only coordinate contract for all decorations on a verified owner."""
+    from . import blend_record as BR
+    from .core.display_layout import LayoutMap
+    from .core.pattern_build import dist_to_ring, dist_to_segments
+    texts = []
+    if source == 'job' and job:
+        try:
+            texts.append(RR.open_result(job).dressed_spec_text())
+        except (OSError, ValueError):
+            pass
+    texts.append(BR.dressed_spec_text(ob))
+    texts = [text for text in texts if text]
+    if not bpy.context.scene.ac9_cloth_sim.sync_pending:
+        texts.append(None)              # legacy identity still requires mesh/outline verification below
+    for text in texts:
+      try:
+        if not text and text is not None:
+            continue
+        if text is None and bpy.context.scene.ac9_cloth_sim.sync_pending:
+            continue
+        raw = json.loads(text) if text else None
+        saved = S.loads(text) if isinstance(raw, dict) else None
+        if text and saved is None:
+            continue
+        if saved is not None and saved.get('name') != spec.get('name'):
+            continue
+        old = S.piece_index(saved) if saved else {}
+        if saved and len(old) != len(saved['pieces']):
+            continue
+        current = S.piece_index(spec)
+        maps = {}
+        for name, (lo, hi) in ranges.items():
+            pc = old.get(name) if saved else current.get(name)
+            if pc is None or name not in current:
+                continue
+            T = _garment_tris(ob, lo, hi)
+            if not len(T):
+                continue
+            E = np.sort(np.vstack([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), axis=1)
+            E, counts = np.unique(E, axis=0, return_counts=True)
+            E = E[counts == 1]
+            if not len(E):
+                continue
+            V = flat[lo:hi]
+            rings = [S.Outline(pc).B] + [ring for _, ring in S.holes(pc)]
+            boundary = V[np.unique(E)]
+            tol = max(.05, .5 * float(bpy.context.scene.ac9_cloth_sim.mesh_size))
+            if np.min(np.stack([dist_to_ring(boundary, ring) for ring in rings]), axis=0).max() > tol:
+                continue
+            if any(dist_to_segments(ring, V[E[:, 0]], V[E[:, 1]]).max() > tol for ring in rings):
+                continue
+            maps[name] = LayoutMap(current[name], pc)
+        if maps:
+            return maps, saved
+      except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+        continue
+    return {}, None
+
+
+def _same_sewing(old, current, saved, spec, layouts):
+    """A saved edge list is reusable only for the same directed material sides."""
+    if old is None:
+        return saved is None and not bpy.context.scene.ac9_cloth_sim.sync_pending
+    for k in ('a', 'b'):
+        if old.get(k) != current.get(k):
+            return False
+        side = current[k]
+        if 'line' in side:
+            name = side['piece']
+            mapping = layouts.get(name)
+            if mapping is None:
+                return False
+            try:
+                previous = S.side_polyline(saved, old[k], step=2.)
+                now = S.side_polyline(spec, side, step=2.)
+                count = max(len(previous), len(now), 2)
+                mapped = mapping.points(S.resample(now, count))
+                if mapped is None or not np.allclose(mapped, S.resample(previous, count), atol=.001, rtol=0):
+                    return False
+            except (KeyError, ValueError, TypeError):
+                return False
+    return True
+
+
+def _material_points(name, points):
+    mapping = _jobseg.get('layouts', {}).get(name)
+    Q = mapping.points(points) if mapping is not None else None
+    surface = _jobseg.get('surfaces', {}).get(name)
+    return Q if Q is not None and surface is not None and _covered(Q, *surface) else None
+
+
+def _covered(Q, flat, triangles):
+    """A material query must lie on cloth, including a piece's holes."""
+    tree = PLV._layout_bvh(flat, triangles)
+    tol = max(.05, .5 * float(bpy.context.scene.ac9_cloth_sim.mesh_size))
+    return all((hit := tree.find_nearest((float(x), float(y), 0.)))[0] is not None and hit[3] <= tol
+               for x, y in Q)
 
 
 def _scene_seam_index(ob, n_verts, spec, outlines):
@@ -493,19 +602,23 @@ def _seam_index(job, ob, n_verts, spec, outlines):
                                        np.array_equal(offs, np.searchsorted(high, np.arange(len(names)))))
                         if matches and E.dtype.kind in 'iu' and E.ndim == 2 and E.shape[1] == 2 and (E >= 0).all() and (E < n_verts).all() and len(sid) == len(E):
                             by_id = {sm['id']: sm for sm in spec['seams']}
+                            keep = np.ones(len(E), bool)
                             for seam_id in dict.fromkeys(sid.tolist()):
                                 sm = by_id.get(seam_id)
                                 if sm is None:       # deleted seams are ignored as before
                                     continue
                                 if sm['a']['piece'] not in names or sm['b']['piece'] not in names:
-                                    matches = False
-                                    break
+                                    keep[sid == seam_id] = False
+                                    continue
                                 a, b = names.index(sm['a']['piece']), names.index(sm['b']['piece'])
                                 owners_a, owners_b = high[E[sid == seam_id, 0]], high[E[sid == seam_id, 1]]
                                 if not (((owners_a == a) & (owners_b == b)).all() or
                                         ((owners_a == b) & (owners_b == a)).all()):
-                                    matches = False
-                                    break
+                                    keep[sid == seam_id] = False
+                            # A reused/retargeted seam id invalidates its stitches,
+                            # not the independently verified mesh/material frame.
+                            # Current sides are rebuilt below using the saved layout.
+                            E, sid = E[keep], sid[keep]
                 else:
                     matches = False
             if (matches and E.dtype.kind in 'iu' and offs.dtype.kind in 'iu' and
@@ -517,6 +630,17 @@ def _seam_index(job, ob, n_verts, spec, outlines):
                 return flat, offs, E, sid, names, 'job'
         except (OSError, KeyError, ValueError, TypeError):
             pass
+    from . import blend_record as BR
+    try:
+        text = BR.dressed_spec_text(ob)
+        raw = json.loads(text) if text else None
+        saved = S.loads(text) if isinstance(raw, dict) else None
+        if saved is not None and saved.get('name') == spec.get('name'):
+            index = _scene_seam_index(ob, n_verts, saved, S.Outlines(S.piece_index(saved)))
+            if index is not None:
+                return index
+    except (TypeError, ValueError, KeyError, AttributeError):
+        pass
     return _scene_seam_index(ob, n_verts, spec, outlines)
 
 
@@ -533,6 +657,11 @@ def _garment_segments(job, spec, n_verts, outlines=None, ob=None):
         if stat is None:
             raise OSError('No result folder')
         generation = (stat.st_mtime_ns, stat.st_size)
+        try:
+            spec_stat = os.stat(os.path.join(job, RR.SPEC))
+            generation += (spec_stat.st_mtime_ns, spec_stat.st_size)
+        except OSError:
+            generation += (None,)
     except OSError:
         generation = None
     owner_key = ((ob.as_pointer(), ob.data.as_pointer(),
@@ -553,7 +682,12 @@ def _garment_segments(job, spec, n_verts, outlines=None, ob=None):
             by_id = {sm['id']: sm for sm in spec['seams']}
             ends = list(offs) + [len(flat)]
             rng = {nm: (int(ends[i]), int(ends[i + 1])) for i, nm in enumerate(names)}
+            layouts, saved = _display_layouts(job, ob, spec, flat, rng, source)
+            surfaces = {name: (flat[lo:hi], _garment_tris(ob, lo, hi))
+                        for name, (lo, hi) in rng.items() if name in layouts}
+            old_seams = {s['id']: s for s in saved.get('seams', [])} if saved else {}
             segs, cols = [], []
+            done = set()
 
             def color(sm):
                 return OFF if not sm.get('enabled', True) else SE.color(sm)
@@ -561,6 +695,10 @@ def _garment_segments(job, spec, n_verts, outlines=None, ob=None):
                 sm = by_id.get(s_)
                 if sm is None:
                     continue                        # deleted since the Dress
+                old = old_seams.get(s_)
+                if not _same_sewing(old, sm, saved, spec, layouts):
+                    continue                        # same id, a different current sewing contract
+                done.add(s_)
                 rows = E[sid == s_]
                 c = color(sm)
                 for side in (0, 1):
@@ -580,7 +718,6 @@ def _garment_segments(job, spec, n_verts, outlines=None, ob=None):
                 cols += [c] * int(pick.sum())
                 sids += [s_] * int(pick.sum())
                 rung += [True] * int(pick.sum())
-            done = set(sid.tolist())
             for sm in spec['seams'] if outlines is not None else []:
                 if sm['id'] in done or sm['a']['piece'] not in names or sm['b']['piece'] not in names:
                     continue
@@ -588,8 +725,8 @@ def _garment_segments(job, spec, n_verts, outlines=None, ob=None):
                     ia, ib = names.index(sm['a']['piece']), names.index(sm['b']['piece'])
                     n = max(2, int(max(S.polyline_len(S.side_polyline(spec, sm[k], outlines, step=2.0))
                                        for k in ('a', 'b')) / 2.0) + 1)
-                    va, fa = _side_verts(spec, outlines, sm['a'], flat, ends[ia], ends[ia + 1], n)
-                    vb, _fb = _side_verts(spec, outlines, sm['b'], flat, ends[ib], ends[ib + 1], n)
+                    va, fa = _side_verts(spec, outlines, sm['a'], flat, ends[ia], ends[ia + 1], n, layouts, surfaces)
+                    vb, _fb = _side_verts(spec, outlines, sm['b'], flat, ends[ib], ends[ib + 1], n, layouts, surfaces)
                 except Exception:
                     continue
                 c = color(sm)
@@ -610,7 +747,8 @@ def _garment_segments(job, spec, n_verts, outlines=None, ob=None):
     except (OSError, KeyError, ValueError):
         seg, col, sids, rung = None, None, [], []
     _jobseg.update(key=key, seg=seg, col=col, ids=sids, rung=np.asarray(rung, bool), rng=rng,
-                   flat=flat if seg is not None else None, index_source=source)
+                   flat=flat if seg is not None else None, index_source=source,
+                   layouts=layouts if seg is not None else {}, surfaces=surfaces if seg is not None else {})
     return seg, col
 
 
@@ -642,14 +780,19 @@ def _mixed_ladders(spec, outlines, plan, visible, shown, ob, co):
         try:
             sides = [S.side_polyline(spec, sm[k], outlines, step=2.0) for k in ('a', 'b')]
             count = max(2, int(max(S.polyline_len(p) for p in sides) / 2.0) + 1)
-            fa, fb = [S.resample(p, count) for p in sides]
-            A, B = [PLV.to_world(entries[n], p) for n, p in zip(names, (fa, fb))]
+            fa, fb = [side_points(spec, sm[k], outlines, count) for k in ('a', 'b')]
+            queries = [_material_points(n, p) if plan[n]['source'] == 'result' else p
+                       for n, p in zip(names, (fa, fb))]
+            if any(p is None for p in queries):
+                continue
+            A, B = [PLV.to_world(entries[n], p) for n, p in zip(names, queries)]
         except (KeyError, ValueError, IndexError):
             continue
         if A is None or B is None:
             continue
         color = OFF if not sm.get('enabled', True) else SE.color(sm)
-        P, C, size = _ladder_np(A, B, fa, color, _arc_of(spec, outlines, sm['id'], names[0], entries))
+        material = {n for n in names if plan[n]['source'] == 'result'}
+        P, C, size = _ladder_np(A, B, fa, color, _arc_of(spec, outlines, sm['id'], names[0], entries, material))
         pos.append(P)
         colors.extend(C)
         ids.extend([sm['id']] * size)
@@ -659,7 +802,7 @@ def _mixed_ladders(spec, outlines, plan, visible, shown, ob, co):
 def garment_seams(context, spec):
     """Current result seams plus placed and mixed-owner ladders; None without a visible result owner."""
     from . import dress as DR                   # imported here: dress -> placement -> this module
-    ob = bpy.data.objects.get(DR.garment_name(spec))
+    ob = DR.garment(spec)
     if ob is None or ob.type != 'MESH':
         return None
     if not VV.object_decoration_allowed(context, ob):
@@ -785,13 +928,29 @@ def _round_rungs(spec, co, seg, col, ids, rung, rng, open_mm=15.0, n=10):
 _notch3 = {'key': None}
 
 
+def _result_rng(name):
+    """The vertex range of piece `name` on the garment's result, from the verified seam index, or None. Its pattern
+    coordinates are _jobseg['flat']: both are read together, never one from the mesh and one from a job file."""
+    if _jobseg.get('flat') is None:
+        return None
+    return (_jobseg.get('rng') or {}).get(name)
+
+
+def _decoration_plan(spec):
+    """Decorations use the same geometry owner as the cloth, including legacy saved previews."""
+    from . import display_state as DS
+    plan = DS.snapshot(spec)
+    return plan, tuple(sorted((n, v['source'], v['hidden']) for n, v in plan.items()))
+
+
 def notches3d(context, spec, outlines, act, garment):
     """World (m) points of the selected seam's notches in 3D (user 2026-10-21: only the selected seam's, no switch):
     on the garment's result (garment: the 3D seams drawn are the garment's), each at the vertex nearest its pattern
     point (the vertices' flat coordinates); on a piece shown as a placed object, carried by its layout triangles;
     else on the cylinder wrap. (n, 3), maybe empty."""
     from .core import walk as W
-    visible = VV.world_names(context, spec)
+    plan, owners = _decoration_plan(spec)
+    visible = VV.world_names(context, spec, display=plan)
     pts = {}
     for k in ('a', 'b'):
         sd = act[k]
@@ -806,33 +965,37 @@ def notches3d(context, spec, outlines, act, garment):
         return np.zeros((0, 3))
     sh, sig = PLV.shown(context, spec, outlines)
     gk = _gpos['key'] if garment else None
-    key = (store._cache['key'], act['id'], gk, sig, visible)
+    key = (store._cache['key'], act['id'], gk, sig, visible, owners)
     if _notch3['key'] == key:
         return _notch3['P']
     from . import dress as DR
-    ob = bpy.data.objects.get(DR.garment_name(spec)) if garment else None
-    hidden = set(DR.hidden_pieces(ob, spec)) if ob is not None else set()
+    ob = DR.garment(spec) if garment else None
     out = []
     gco = None
     for name, Q in pts.items():
         Q = np.asarray(Q, float)
         P = None
-        if ob is not None and name not in hidden and _jobseg.get('rng') and name in _jobseg['rng']:
+        source = plan.get(name, {}).get('source', 'none')
+        if source == 'result' and ob is not None and _result_rng(name):
             try:
                 if gco is None:
-                    z = np.load(os.path.join(DR.job_of(ob), RR.INDEX))
-                    flat = z['flat']
+                    # the ranges and the pattern coordinates come from one verified index (_jobseg): read apart,
+                    # one from the mesh and one from an older job, they put the points on other pieces
+                    flat = _jobseg['flat']
                     gco = DR.garment_co(context, ob).astype(np.float64)
                     Mw = np.array(ob.matrix_world)
                     gco = gco @ Mw[:3, :3].T + Mw[:3, 3]
                 lo, hi = _jobseg['rng'][name]
+                Q = _material_points(name, Q)
+                if Q is None:
+                    continue
                 d = ((Q[:, None, :] - flat[lo:hi][None, :, :]) ** 2).sum(2)
                 P = gco[lo + d.argmin(1)]
             except Exception:
                 P = None
-        elif name in sh:
+        elif source == 'placed' and name in sh:
             P = PLV.to_world(sh[name], Q)
-        else:
+        elif source == 'proxy':
             pl = spec.get('placement', {}).get(name)
             P = laid_mm(spec, pl, Q, wrap_radii(spec, outlines).get(name))
             P = P * PV.MM if P is not None else None
@@ -930,14 +1093,17 @@ def _lines_to_3d(context, spec, outlines, name, Qs, garment, sh, memo):
     A list as Qs (an entry None where a line could not be carried)."""
     from . import dress as DR
     if 'ob' not in memo:
-        memo['ob'] = bpy.data.objects.get(DR.garment_name(spec)) if garment else None
-        memo['hidden'] = set(DR.hidden_pieces(memo['ob'], spec)) if memo['ob'] is not None else set()
+        memo['ob'] = DR.garment(spec) if garment else None
+    if 'plan' not in memo:
+        memo['plan'] = _decoration_plan(spec)[0]
     ob = memo['ob']
-    if ob is not None and name not in memo['hidden'] and _jobseg.get('rng') and name in _jobseg['rng']:
+    source = memo['plan'].get(name, {}).get('source', 'none')
+    if source == 'result' and ob is not None and _result_rng(name):
         try:
             if 'flat' not in memo:
-                memo['bind_key'] = (store._cache['key'], DR.job_of(ob))
-                memo['flat'] = np.load(os.path.join(DR.job_of(ob), RR.INDEX))['flat'].astype(np.float64)
+                # ranges and flat from the same verified index (see notches3d)
+                memo['bind_key'] = (store._cache['key'], _jobseg['key'])
+                memo['flat'] = np.asarray(_jobseg['flat'], np.float64)
                 gco = DR.garment_co(context, ob).astype(np.float64)
                 Mw = np.array(ob.matrix_world)
                 memo['co'] = gco @ Mw[:3, :3].T + Mw[:3, 3]
@@ -948,7 +1114,11 @@ def _lines_to_3d(context, spec, outlines, name, Qs, garment, sh, memo):
             # the lines bound once to the piece's flat triangles (kept while the pattern, the mesh and these lines
             # stay; each frame only the positions change). The key holds the lines themselves: keyed by the piece
             # only, a line picked after another was drawn through the other's points.
-            Qa = np.vstack(Qs)
+            queries = [_material_points(name, Q) for Q in Qs]
+            valid = [i for i, Q in enumerate(queries) if Q is not None]
+            if not valid:
+                return [None] * len(Qs)
+            Qa = np.vstack([queries[i] for i in valid])
             bk = (memo.get('bind_key'), name, lo, hi, len(T), hash(Qa.tobytes()))
             if _ibind.get(bk) is None:
                 if len(_ibind) > 256:
@@ -957,11 +1127,16 @@ def _lines_to_3d(context, spec, outlines, name, Qs, garment, sh, memo):
             V, W = _ibind[bk]
             X = memo['co'][lo:hi]
             P = (W[:, :, None] * X[V]).sum(1)
-            return np.split(P, np.cumsum([len(Q) for Q in Qs])[:-1])
+            out = [None] * len(Qs)
+            for i, line in zip(valid, np.split(P, np.cumsum([len(Qs[i]) for i in valid])[:-1])):
+                out[i] = line
+            return out
         except Exception:
             return [None] * len(Qs)
-    if name in sh:
+    if source == 'placed' and name in sh:
         return [PLV.to_world(sh[name], Q) for Q in Qs]
+    if source != 'proxy':
+        return [None] * len(Qs)
     pl = spec.get('placement', {}).get(name)
     r = wrap_radii(spec, outlines).get(name)
     out = []
@@ -979,10 +1154,11 @@ def ilines_picked3d(context, spec, outlines, garment):
     picked = [(n, l) for n, l in picked if n]
     sh, sig = PLV.shown(context, spec, outlines)
     gk = _gpos['key'] if garment else None
-    key = (store._cache['key'], tuple(picked), gk, sig)
+    plan, owners = _decoration_plan(spec)
+    key = (store._cache['key'], tuple(picked), gk, sig, owners)
     if _iline3['key'] == key:
         return _iline3['P']
-    visible = VV.world_names(context, spec) if picked else ()
+    visible = VV.world_names(context, spec, display=plan) if picked else ()
     by = {}
     for name, lid in picked:
         if name not in outlines or name not in visible:
@@ -991,7 +1167,7 @@ def ilines_picked3d(context, spec, outlines, garment):
         it = next((x for x in (pc or {}).get('internals', []) if x.get('id') == lid), None)
         if it is not None and len(it.get('pts', [])) >= 2:
             by.setdefault(name, []).append(_dense(it['pts']))
-    memo, out = {}, []
+    memo, out = {'plan': plan}, []
     for name, Qs in by.items():
         for P in _lines_to_3d(context, spec, outlines, name, Qs, garment, sh, memo):
             if P is not None:
@@ -1009,10 +1185,11 @@ ILINES_3D = (0.05, 0.25, 0.85, 1.0)      # deep blue: reads on white cloth and s
 def ilines3d(context, spec, outlines, garment):
     """Segments (world m, (2n, 3) pairs) of every internal line of every piece shown in 3D, thin, as the pattern
     draws them (user 2026-11-14; Overlays > Internal Lines in 3D). Baselines are left out, as on the pattern."""
-    visible = VV.world_names(context, spec)
+    plan, owners = _decoration_plan(spec)
+    visible = VV.world_names(context, spec, display=plan)
     sh, sig = PLV.shown(context, spec, outlines)
     gk = _gpos['key'] if garment else None
-    key = (store._cache['key'], gk, sig, visible)
+    key = (store._cache['key'], gk, sig, visible, owners)
     if _ilines3['key'] == key:
         return _ilines3['P']
     if _ilines3.get('qkey') != store._cache['key']:       # the lines in mm, made again only when the pattern changes
@@ -1020,7 +1197,7 @@ def ilines3d(context, spec, outlines, garment):
             pc['name']: [_dense(it['pts']) for it in pc.get('internals', [])
                          if it.get('kind') != 'baseline' and len(it.get('pts', [])) >= 2]
             for pc in spec['pieces']})
-    memo, segs = {}, []
+    memo, segs = {'plan': plan}, []
     for pc in spec['pieces']:
         name = pc['name']
         if name not in visible or name not in outlines or not pc.get('enabled', True):
@@ -1129,7 +1306,7 @@ def _build(context, spec, outlines):
     act = store.active_seam(context, spec)
     shown = frozenset(n for n, v in display.items() if v['source'] == 'placed')
     from . import dress as DR
-    gob = bpy.data.objects.get(DR.garment_name(spec))
+    gob = DR.garment(spec)
     on_g = DS.result_names(gob)
     more = frozenset(store.seam_more)
     hid = frozenset(n for n, v in display.items() if v.get('hidden'))
@@ -1260,8 +1437,8 @@ def _batch(g, name, sh, pos, col):
     with a shirt's pattern shown, measured 2026-10-14)."""
     k = 'b_' + name
     if g.get(k + '_key') != g['key']:
-        g[k] = batch_for_shader(sh, 'LINES', {'pos': np.asarray(pos, np.float32).reshape(-1, 3),
-                                              'color': np.asarray(col, np.float32).reshape(-1, 4)})
+        g[k] = batch_for_shader(sh, 'LINES', {'pos': np.ascontiguousarray(np.reshape(pos, (-1, 3)), np.float32),
+                                              'color': np.ascontiguousarray(np.reshape(col, (-1, 4)), np.float32)})
         g[k + '_key'] = g['key']
     return g[k]
 
@@ -1508,7 +1685,7 @@ def _draw_view():
         act = store.active_seam(context, spec)
         bkey = (id(p3), k3, np.array(rv.view_matrix).tobytes(), rv.is_perspective, act['id'] if act else None)
         if _batch3['key'] != bkey:
-            L = _lift(p3, rv).astype(np.float32)
+            L = np.ascontiguousarray(_lift(p3, rv), np.float32)   # batch_for_shader reads the memory as laid out
             on = np.repeat(np.asarray(ids3) == (act['id'] if act else None), 2) if act else np.zeros(len(L), bool)
             ca = [c for c, o in zip(c3, on) if o]
             _batch3.update(key=bkey, batch=batch_for_shader(sh, 'LINES', {'pos': L, 'color': c3}),
@@ -1554,7 +1731,7 @@ def _draw_view():
             rv = context.region_data
             bk = (id(A3), np.array(rv.view_matrix).tobytes(), rv.is_perspective)
             if _ilines3.get('bkey') != bk:
-                L = _lift(A3, rv).astype(np.float32)
+                L = np.ascontiguousarray(_lift(A3, rv), np.float32)
                 _ilines3.update(bkey=bk, batch=batch_for_shader(sh, 'LINES', {'pos': L,
                                                                              'color': [ILINES_3D] * len(L)}))
             sh.uniform_float('lineWidth', 2.0)

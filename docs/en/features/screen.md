@@ -16,7 +16,7 @@ These panels line up from the top.
 - **Setup**: loading and exporting patterns, switching the work screen, and switching garments.
 - **Pattern**: the tools for fixing and drawing patterns and attaching seams, and the buttons for the button tools (**Fasteners**).
 - **Lists**: where you view and pick from lists. There are six tabs (**Seams**, **Pieces**, **Fabrics**, **Collision**, **Tapes**, **Fasteners**). Lists are only for viewing and picking; the settings for what you pick appear in the Tool tab. In every list, click a row name to pick one, and Shift+click to add or remove.
-- **Piece Roles** (normally closed): the pieces' roles.
+- **Piece Roles** (experimental): the pieces' roles. Role controls appear only with **Experimental Features** enabled and are not required for normal Simulate; see [Piece Roles (Experimental)](roles.md).
 - **Placement**: the body and guides, and the placing tools.
 - **Measure** (normally closed): measuring. It contains **Size Check**.
 - **Overlays** opens from the eye button in the header of the 3D Viewport (upper right) and the list to its right.
@@ -27,9 +27,9 @@ The settings for whatever you picked appear in the Tool tab of the Properties ed
 
 ![the whole Tool tab (AC9 Run and AC9 Garment)](../img/d_tool_tab.png)
 
-- **AC9 Run**: always at the very top. It shows **Live Sim** and **Gravity**, the **3D Follows Edits** and **Update 3D** controls, and a short status. **Floor (Z = 0)** and other settings, the full status and the log are under the collapsed **Settings** section. **Fix by Hand** appears when a recorded frame can be edited.
+- **AC9 Run**: always at the very top. The run buttons (**Simulate** and **Gravity**, **Floor (Z = 0)**, **Fix by Hand**), whether pattern fixes are carried over to 3D (**3D Follows Edits** and **Update 3D**), and the progress.
 - **AC9 Garment**: when nothing is selected. Garment settings, fabrics, and results.
-- **AC9 Piece**: when you've selected a piece. Name, state, role, fabric, interlining, look, thickness, point spacing, and so on.
+- **AC9 Piece**: when you've selected a piece. Name, state, fabric, interlining, look, thickness, point spacing, and so on. Role appears only with **Experimental Features** enabled.
 - **AC9 Seam**: when you've picked a seam from the list or the pattern. Below it are **Lengths & Notches** and **Blend**.
 - **AC9 Internal Line**: when you've clicked an internal line on the pattern.
 - **AC9 Edges**: when you've clicked an outline edge, a corner or a point of an internal line on the pattern (the lengths and the total, how many corners and points, and **Numeric Input...** to move all you picked, on any pieces, by X / Y).
@@ -60,7 +60,7 @@ AC9's tools line up at the end of the Object Mode tool column. Long-press to sho
 
 ## The Work Screen
 
-Press **Work Screen** in the **Setup** panel and a workspace for working (named AC9 Cloth Sim) appears. It has 3D on the left, the pattern in the middle (a top-down orthographic view with the rotation locked), and the Tool tab of Properties on the right (there is no Outliner; the Timeline is at the bottom). From the second time on, it just switches to the same screen and doesn't add another. A work screen made by an earlier version of the add-on is replaced with a new one when you press it. When you press it on an add-on from an earlier version, the old Work Screen is replaced with the new one.
+Press **Work Screen** in the **Setup** panel and a workspace for working (named AC9 Cloth Sim) appears. It has 3D on the left, the pattern in the middle (a top-down orthographic view with the rotation locked), and the Tool tab of Properties on the right (there is no Outliner or Timeline). From the second time on, it just switches to the same screen and doesn't add another. A work screen made by an earlier version of the add-on is replaced with a new one when you press it. When you press it on an add-on from an earlier version, the old Work Screen is replaced with the new one.
 
 In the Work Screen's two views, Blender's Object Gizmos are turned on. When you pick a placed piece or a dressed piece with **Whole Pieces**, the gizmo appears on it (not on the flat pattern). It shows one kind at a time, move or rotate, so each is drawn whole: switch it with **Gizmo** in the tool's header (above the view), or press **W**. Views in other workspaces are left as they are; to use the gizmo there, turn on Object Gizmos' move and rotate in the gizmo menu at the top right of the 3D view.
 

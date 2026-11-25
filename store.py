@@ -112,6 +112,8 @@ def begin_edit(context):
     """Read an independent snapshot and its exact saved owner once, outside draw/poll."""
     owner = edit_owner(context)
     sp = S.loads(owner.body)
+    from . import pattern_view as PV
+    PV.require_integrity(context, sp)
     return sp, {pc['name']: S.Outline(pc) for pc in sp['pieces']}, owner
 
 
@@ -131,6 +133,8 @@ def _on_undo_or_load(*_args):
     _epoch += 1
     _discard_cache()
     invalidate()
+    from . import pattern_view as PV
+    PV.check_history()
 
 
 _HANDLERS = ('undo_post', 'redo_post', 'load_post')
@@ -159,6 +163,12 @@ def write(context, spec, keep=False, owner=None):
     returns it instead of parsing the text again (a pants' spec is 3.6 M characters: 40 ms to parse and 35 ms of
     outlines; the Tool tab's Fold Angle writes on every slider step, experiments/prepare_cache_2026-10-24 t4); its
     outlines are kept when its pieces are the very list of the spec before. UI refresh is separate."""
+    # Validate the saved document, not the proposed edit: an addition/deletion legitimately changes its IDs.
+    from . import pattern_view as PV
+    PV.require_piece_ids(spec)
+    current, _ = get(context)
+    if current is not None:
+        PV.require_integrity(context, current)
     old_spec, old_out = _cache['spec'], _cache['outlines']
     try:
         body = S.dumps(spec)

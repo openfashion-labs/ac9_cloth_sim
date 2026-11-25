@@ -15,11 +15,9 @@ triangles' winding, the same side as Blender's normals. Blender's own Face Orien
 thickness's Solidify turns its inner shell outward, so both sides read as the face, and it paints the body too. Drawn
 from the meshes before the thickness, culled by winding: one pass for the triangles facing the eye, one for the rest.
 
-Problems: what the add-on found wrong, red on the cloth itself (until 2026-11-02 a color attribute or the object's
-color, seen only in Solid shading with that color mode, so never seen). Each finding is recorded on the object it is
-on -- a placed piece or the dressed garment -- by mark() as {kind: {verts, note}} in the property PROP: verts the
-mesh's vertex indices (their triangles red), or None for the whole piece (lightly red). On by default under the
-Overlays switch (Fable review b-1)."""
+Problems: draw only the validated current-shape snapshot from diagnosis.py: confirmed intersections and intrusion
+red, sewing-unverified crossings yellow, with markers in the cloth and pattern view. The object properties written
+by mark() below are legacy operation/run records; they are not the current-shape overlay's source of truth."""
 
 import bpy
 import blf
@@ -52,6 +50,7 @@ KINDS = {                                 # kind: the legend's words
     'inside': "inside the body",          # From Mesh: the imported garment's vertices inside the body
     'start': "did not start as shown",    # a run: vertices that started over 0.1 mm from the shape on screen
     'layer': "Layer has no effect",       # a run: a piece whose Layer reaches none or few of its vertices (seams)
+    'check': "found by Diagnose",        # Diagnose (place_check): inside the body or through cloth, as shown
 }
 PROBLEM = np.array((1.0, 0.12, 0.08), np.float32)
 FACE = (0.15, 0.4, 1.0, 0.45)       # the cloth's face (blue) and back (red), as Blender's Face Orientation
@@ -108,7 +107,7 @@ def _pieces(context, spec, outlines):
     from . import display_state as DS
     if not VV.allows_world(context, spec):
         return {}, None
-    ob = bpy.data.objects.get(DR.garment_name(spec))
+    ob = DR.garment(spec)
     display = DS.snapshot(spec, ob)
     visible = VV.world_names(context, spec, display=display)
     if not visible:
@@ -135,10 +134,8 @@ def _pieces(context, spec, outlines):
     for n, e in sh.items():
         if e[2] is not None and len(e[1]):
             out[n] = (e[0], np.asarray(e[1]), np.asarray(e[2], float), len(e[3]) > 2 and e[3][2] == 'twin')
+    key.append(tuple((n, hash(f.tobytes()), hash(t.tobytes())) for n, (f, t, _w, _r) in sorted(out.items())))
     return out, tuple(map(str, key))
-
-
-_gflat = {'key': None}
 
 
 def _garment_flat(ob):
@@ -147,16 +144,14 @@ def _garment_flat(ob):
     uv = me.uv_layers.get('UVMap')
     if uv is None:
         return None
-    key = (ob.name, len(me.vertices), len(me.loops), me.session_uid if hasattr(me, 'session_uid') else id(me))
-    if _gflat['key'] != key:
-        lv = np.empty(len(me.loops), np.int64)
-        me.loops.foreach_get('vertex_index', lv)
-        u = np.empty(len(me.loops) * 2, np.float32)
-        uv.data.foreach_get('uv', u)
-        f = np.zeros((len(me.vertices), 2))
-        f[lv] = u.reshape(-1, 2) * 1000.0
-        _gflat.update(key=key, f=f)
-    return _gflat['f']
+    # UV coordinates can change without changing the vertex/loop counts.
+    lv = np.empty(len(me.loops), np.int64)
+    me.loops.foreach_get('vertex_index', lv)
+    u = np.empty(len(me.loops) * 2, np.float32)
+    uv.data.foreach_get('uv', u)
+    f = np.zeros((len(me.vertices), 2))
+    f[lv] = u.reshape(-1, 2) * 1000.0
+    return f
 
 
 _tick = {'n': 0}
@@ -167,6 +162,8 @@ RECHECK_S = 0.5
 @bpy.app.handlers.persistent
 def _changed(_scene, _depsgraph):
     _tick['n'] += 1
+    from . import diagnosis
+    diagnosis.dirty(_scene, _depsgraph)
 
 
 def _pieces_now(context, spec, outlines):
@@ -176,6 +173,12 @@ def _pieces_now(context, spec, outlines):
     no depsgraph). Kept per 3D view: what a view shows depends on the view (view_visibility)."""
     import time
     area = context.area.as_pointer() if context.area else 0
+    from . import diagnosis
+    snapshot = diagnosis.display_pieces(context, spec)
+    if snapshot is not None:
+        got, skey = snapshot
+        _pc[area] = (None, time.monotonic(), got, skey)
+        return got, skey
     key = (_tick['n'], context.scene.frame_current, PLV.store_key(), id(spec))
     c = _pc.get(area)
     now = time.monotonic()
@@ -189,20 +192,30 @@ def _pieces_now(context, spec, outlines):
 
 def _data(context, spec, outlines):
     got, key = _pieces_now(context, spec, outlines)
-    if _d['key'] != key or 'per' not in _d:     # a view showing nothing has the key None, as the empty cache had
+    area = context.area.as_pointer() if context.area else 0
+    view = _d.setdefault('views', {}).get(area)
+    if view is None or view['key'] != key:
         per = {}
         for n, (F, T, W, _turned) in got.items():
             l1, l2 = stretches(F, T, np.asarray(W, float) * 1000.0)
             per[n] = (np.asarray(W, float)[T.ravel()], l1, l2)
-        _d.update(key=key, per=per)
+        view = {'key': key, 'per': per}
+        _d['views'][area] = view
+    _d.update(view)
     return _d
+
+
+def view_stretch(context):
+    area = context.area.as_pointer() if context.area else 0
+    return _d.get('views', {}).get(area, {}).get('per', {})
 
 
 def _draw_view():
     context = bpy.context
     props = getattr(context.scene, 'ac9_cloth_sim', None)
-    stretch, probs = overlay.shows(props, 'show_stretch'), overlay.shows(props, 'show_problems')
-    side = overlay.shows(props, 'show_face_side')
+    from . import diagnosis
+    mode = diagnosis.mode(props) if props is not None and props.show_overlays else 'NONE'
+    stretch, probs, side = mode == 'STRETCH', mode == 'PROBLEMS', mode == 'SIDE'
     if not (stretch or probs or side):
         return
     spec, outlines = store.get(context)
@@ -307,10 +320,11 @@ def summary(per, selected=()):
 # ------------------------------------------------------------------ problems
 
 
-def mark(ob, kind, verts=None, note="", weights=None, detail=""):
+def mark(ob, kind, verts=None, note="", weights=None, detail="", extra=None):
     """Record a problem of `kind` on `ob`: verts (its vertex indices) red, or None for the whole piece.
     weights: 0..1 per vertex in verts' order, the red shaded by it (strong at 1); none, all at full strength.
-    detail: shown after the kind in the legend (which pieces, how far)."""
+    detail: shown after the kind in the legend (which pieces, how far). extra: more keys kept in the record (Diagnose's
+    'spots' and counts)."""
     import json
     d = problems(ob)
     if verts is None:
@@ -326,6 +340,8 @@ def mark(ob, kind, verts=None, note="", weights=None, detail=""):
     rec['note'] = str(note)
     if detail:
         rec['detail'] = str(detail)
+    if extra:
+        rec.update(extra)
     d[kind] = rec
     ob[PROP] = json.dumps(d)
 
@@ -350,9 +366,6 @@ def problems(ob):
         return {}
 
 
-_pb = {'key': None}
-
-
 def _problem_objects(spec):
     """[(object, piece or None, {kind: record})] of the shown objects with problems: placed pieces and the garment."""
     from . import dress as DR
@@ -363,7 +376,7 @@ def _problem_objects(spec):
                 out.append((ob, ob.get(PLV.PROP), problems(ob)))
         except ReferenceError:
             continue
-    g = bpy.data.objects.get(DR.garment_name(spec))
+    g = DR.garment(spec)
     if g is not None and PROP in g and g.visible_get():
         out.append((g, None, problems(g)))
     return out
@@ -416,23 +429,20 @@ def _problem_tris(context, ob, recs, garment):
 
 
 def _draw_problems(context, spec, rv3d):
-    from . import dress as DR
-    gname = DR.garment_name(spec)
-    got = [r for r in (_problem_tris(context, ob, recs, ob.name == gname) for ob, _p, recs in _problem_objects(spec))
-           if r is not None]
-    if not got:
+    from . import diagnosis
+    # Respect local-view membership in the cloth viewport; pattern spots are drawn separately.
+    if not VV.allows_world(context, spec):
         return
-    su = gpu.shader.from_builtin('SMOOTH_COLOR')
-    key = (tuple(r[2] for r in got), np.array(rv3d.view_matrix).tobytes(), rv3d.is_perspective)
-    if _pb['key'] != key:
-        P = _lift(np.vstack([r[0] for r in got]), rv3d)
-        _pb.update(key=key, batch=batch_for_shader(su, 'TRIS', {
-            'pos': np.ascontiguousarray(P, np.float32),
-            'color': np.ascontiguousarray(np.vstack([r[1] for r in got]), np.float32)}))
+    su = gpu.shader.from_builtin('UNIFORM_COLOR')
     gpu.state.blend_set('ALPHA')
     gpu.state.depth_test_set('LESS_EQUAL')
     su.bind()
-    _pb['batch'].draw(su)
+    for candidates, color in ((False, (*PROBLEM, 0.6)), (True, (1.0, .65, .05, .5))):
+        P = diagnosis.problem_geometry(context, candidates=candidates)
+        if P is not None:
+            batch = batch_for_shader(su, 'TRIS', {'pos': np.ascontiguousarray(_lift(P, rv3d), np.float32)})
+            su.uniform_float('color', color)
+            batch.draw(su)
     gpu.state.depth_test_set('NONE')
     gpu.state.blend_set('NONE')
 
@@ -442,19 +452,218 @@ def problem_lines(spec):
     lines = []
     for ob, piece, recs in _problem_objects(spec):
         what = ', '.join(tx(KINDS.get(k, k)) + (f" ({r['detail']})" if r.get('detail') else "")
+                         + (" (" + tx("inside the body {0}, through cloth {1}", r['n_in'], r['n_x']) + ")"
+                            if 'n_in' in r else "")
                          for k, r in recs.items())
         lines.append(tx("Red on {0}: {1}", piece or tx("the garment"), what))
     return lines[:4]
 
 
+SPOT_PX = 11.0          # the spot's square, half side (the click dot's ring is 7)
+SEEN_MM = 6.0           # a hit on the spot's own object this near it is the spot's own cloth (its thickness)
+C_SPOT = (1.0, 0.2, 0.15, 1.0)
+_seen_cache = {}
+
+
+def spot_points(context, spec):
+    """[(object, piece, 3D world point or None, layout world point, inside, through)] of Diagnose's spots. The 3D
+    point is the spot's vertex as the object shows it now (its evaluated mesh: a pair's Mirror half, a follower's
+    constraint), not a point kept in the object's space: a pair linked again on a click rewrites the object's matrix
+    and vertices together, and a kept point moved off the cloth (user 2026-11-23)."""
+    from . import diagnosis
+    return diagnosis.spot_points(context, spec)
+
+
+def _legacy_spot_points(context, spec):
+    from mathutils import Vector
+    out = []
+    L = PV.layout_matrix(context)
+    dg = context.evaluated_depsgraph_get()
+    # every placed object, shown here or not: the pattern's view shows the pieces' flat objects, not the placed ones
+    # (_problem_objects keeps those shown, and the flat spots were never drawn)
+    for ob in {o.name: o for o in PLV.objects(spec).values()}.values():
+        try:
+            recs = problems(ob) if PROP in ob else {}
+            sps = (recs.get('check') or {}).get('spots') or ()
+            if not sps:
+                continue
+            ev = ob.evaluated_get(dg)
+            vs, n = ev.data.vertices, len(ob.data.vertices)
+            M = ev.matrix_world
+        except ReferenceError:
+            continue
+        for s in sps:
+            try:
+                i = int(s['v']) + (n if s.get('half') else 0)
+                w = M @ vs[i].co if 0 <= i < len(vs) else None
+                u, v = s['f']
+            except (KeyError, TypeError, ValueError):
+                continue
+            out.append((ob, s.get('piece'), w, L @ Vector((u, v, 0.0)), int(s.get('in', 0)), int(s.get('x', 0))))
+    return out
+
+
+def spot_label(n_in, n_x):
+    parts = []
+    if n_in:
+        parts.append(tx("Intrusion {0} vertices", n_in))
+    if n_x:
+        parts.append(tx("Cloth crossing {0} faces", n_x))
+    return ", ".join(parts)
+
+
+MERGE_MM = 20.0     # spots closer than this (in 3D, or on the pattern) are one mark: a pair's halves at the middle
+
+
+def merge_spots(spots):
+    """[[point (m), n_in, n_x, key]] with those closer than MERGE_MM made one, the counts added. Measured where the
+    spots are, not on the screen: the count beside a mark does not change with the view (user 2026-11-23: it did,
+    merged by pixels), and the mark stays at the largest spot's point whatever order they come in (key breaks ties)."""
+    out = []
+    for p, a, b, k in sorted(spots, key=lambda s: (-(s[1] + s[2]), s[3])):
+        for m in out:
+            if (m[0] - p).length < MERGE_MM * 0.001:
+                m[1], m[2] = m[1] + a, m[2] + b
+                break
+        else:
+            out.append([p, a, b, k])
+    return out
+
+
+def _seen(context, ob, p):
+    """Is the point p of ob's cloth seen in this view: nothing in front of it but its own cloth near it (inside the
+    body the body is in front: not seen). One ray per spot, kept while the view and the scene stay."""
+    from bpy_extras.view3d_utils import location_3d_to_region_2d, region_2d_to_origin_3d, region_2d_to_vector_3d
+    from . import garment_mark as GM
+    from . import toolbar as TB
+    region, rv3d = context.region, context.region_data
+    xy = location_3d_to_region_2d(region, rv3d, p)
+    if xy is None:
+        return None, False
+    key = (region.as_pointer(), np.array(rv3d.perspective_matrix).tobytes(), region.width, region.height,
+           GM._updates[0], ob.name, tuple(round(c, 6) for c in p))
+    if key in _seen_cache:
+        return xy, _seen_cache[key]
+    o = region_2d_to_origin_3d(region, rv3d, xy)
+    d = region_2d_to_vector_3d(region, rv3d, xy).normalized()
+    far = (p - o).dot(d)
+    t, seen = 0.0, True
+    for _ in range(16):
+        if far - t <= GM.END_M:
+            break
+        try:
+            ok, loc, _n, _i, hob, _m = TB.viewport_ray_cast(context, o + d * t, d, distance=far - t - GM.END_M)
+        except Exception:
+            ok = False
+        if not ok or hob is None:
+            break
+        hob = hob.original
+        own = hob.name == ob.name and (loc - p).length < SEEN_MM * 0.001
+        if not own and hob.display_type not in {'WIRE', 'BOUNDS'}:
+            seen = False
+            break
+        t = (loc - o).dot(d) + 1e-5
+    if len(_seen_cache) > 256:
+        _seen_cache.clear()
+    _seen_cache[key] = seen
+    return xy, seen
+
+
+def _draw_spots(context, spec, *, candidates=False):
+    """Diagnose's spots in this view (user 2026-11-23: the red was said, not where): on the cloth a red square with a
+    count beside it, drawn over everything -- seen as a solid square, behind the body or other cloth a faded dot in a
+    dashed square (the click dot's looks) -- and the same spot on the flat pattern. Returns the labels drawn."""
+    from bpy_extras.view3d_utils import location_3d_to_region_2d
+    from . import garment_mark as GM
+    region, rv3d = context.region, context.region_data
+    if region is None or rv3d is None:
+        return []
+    pieces = PV.piece_objects()
+    on_cloth, on_pattern, obs = [], [], {}
+    from . import diagnosis
+    for ob, piece, w3, wf, n_in, n_x in diagnosis.spot_points(context, spec, candidates=candidates):
+        key = (piece or "", tuple(round(c, 5) for c in wf))
+        # the cloth's spot in a view showing the placed object; the pattern's only in a view not showing it (the
+        # Work Screen's right): a selected piece's flat object is allowed in the 3D view too, and its spot showed at
+        # the pattern's place at the 3D view's edge (user 2026-11-23)
+        if w3 is not None and VV.object_decoration_allowed(context, ob):
+            on_cloth.append([w3, n_in, n_x, key])
+            obs[key] = ob
+        elif piece is not None and VV.object_decoration_allowed(context, pieces.get(piece)):
+            on_pattern.append([wf, n_in, n_x, key])
+    marks = []                                # (xy, seen, label)
+    for p, a, b, key in merge_spots(on_cloth):
+        xy, seen = _seen(context, obs[key], p)
+        if xy is not None:
+            marks.append((xy, seen, tx("Crossing candidate {0} faces", b) if candidates else spot_label(a, b)))
+    for p, a, b, _key in merge_spots(on_pattern):
+        xy = location_3d_to_region_2d(region, rv3d, p)
+        if xy is not None:
+            marks.append((xy, True, tx("Crossing candidate {0} faces", b) if candidates else spot_label(a, b)))
+    if not marks:
+        return []
+    gpu.state.blend_set('ALPHA')
+    gpu.state.depth_test_set('NONE')
+    line = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+    dot = gpu.shader.from_builtin('UNIFORM_COLOR')
+    for xy, seen, _label in marks:
+        ring = GM._ring(xy, SPOT_PX, 4)
+        if seen:
+            segs, kind = ring, 'LINE_STRIP'
+        else:
+            dot.bind()
+            gpu.state.point_size_set(11.0)
+            dot.uniform_float('color', (1., .65, .05, .35) if candidates else GM.C_FADED)
+            batch_for_shader(dot, 'POINTS', {'pos': [(xy[0], xy[1], 0.0)]}).draw(dot)
+            gpu.state.point_size_set(1.0)
+            segs, kind = [q for k in range(0, len(ring) - 1, 2) for q in (ring[k], ring[k + 1])], 'LINES'
+        line.bind()
+        line.uniform_float('viewportSize', (region.width, region.height))
+        for width, col in ((5.0, (1.0, 1.0, 1.0, 0.85)), (3.0, (1., .65, .05, 1.) if candidates else C_SPOT)):
+            line.uniform_float('lineWidth', width)
+            line.uniform_float('color', col)
+            batch_for_shader(line, kind, {'pos': segs}).draw(line)
+    gpu.state.blend_set('NONE')
+    from . import text_band
+    blf.size(0, 12)
+    text_band.draw(0, [(x, y, label, (1., .8, .3, 1.) if candidates else (1.0, 0.55, 0.5, 1.0) if seen else (1.0, 0.75, 0.7, 0.8))
+                       for (x, y), (_xy, seen, label) in zip(label_places(marks, lambda t: blf.dimensions(0, t)), marks)
+                       if label])
+    return [m[2] for m in marks]
+
+
+def label_places(marks, size):
+    """Each mark's label's baseline-left: right of its square, else left, below, above -- the first place clear of
+    the squares and of the labels placed before (two pieces' spots side by side on the pattern overlapped)."""
+    boxes = [(xy[0] - SPOT_PX, xy[1] - SPOT_PX, xy[0] + SPOT_PX, xy[1] + SPOT_PX) for xy, _s, _l in marks]
+    out = []
+    for xy, _seen, label in marks:
+        w, h = size(label) if label else (0.0, 0.0)
+        g = SPOT_PX + 4
+        cands = [(xy[0] + g, xy[1] - 4), (xy[0] - g - w, xy[1] - 4),
+                 (xy[0] - w / 2, xy[1] - g - h), (xy[0] - w / 2, xy[1] + g)]
+        place = cands[0]
+        for x, y in cands:
+            b = (x - 2, y - 3, x + w + 2, y + h + 3)
+            if not any(b[0] < o[2] and o[0] < b[2] and b[1] < o[3] and o[1] < b[3] for o in boxes):
+                place = (x, y)
+                break
+        out.append(place)
+        boxes.append((place[0] - 2, place[1] - 3, place[0] + w + 2, place[1] + h + 3))
+    return out
+
+
 def _draw_px():
     context = bpy.context
     props = getattr(context.scene, 'ac9_cloth_sim', None)
-    stretch = overlay.shows(props, 'show_stretch') and _d.get('per')
-    probs = overlay.shows(props, 'show_problems')
+    from . import diagnosis
+    mode = diagnosis.mode(props) if props is not None and props.show_overlays else 'NONE'
+    per = view_stretch(context)
+    stretch = mode == 'STRETCH' and bool(per)
+    probs = mode == 'PROBLEMS'
     # the legend only in a view that colored something (not the pattern's view)
     area = context.area.as_pointer() if context.area else 0
-    side = overlay.shows(props, 'show_face_side') and bool((_pc.get(area) or (None, 0, {}))[2])
+    side = mode == 'SIDE' and bool((_pc.get(area) or (None, 0, {}))[2])
     from . import dress as D
     prep = D.run_preparing()
     if not (stretch or probs or prep or side):
@@ -462,6 +671,9 @@ def _draw_px():
     spec, _o = store.get(context)
     if not prep and (not spec or PV.layout_empty(context) is None):
         return
+    if probs and spec and PV.layout_empty(context) is not None:
+        _draw_spots(context, spec)
+        _draw_spots(context, spec, candidates=True)
     lines = []                         # (text, rgb)
     # a run that has not made its first frame yet: said where the person looks (user 2026-11-13: "準備中が一切出なかった")
     if prep:
@@ -477,12 +689,12 @@ def _draw_px():
         lines.append((tx("Face Side: blue the face, red the back"), (1.0, 1.0, 1.0)))
     if stretch:
         lines.append((tx("Stretch: up to {0} ok, {1} yellow, {2} red, blue squashed", OK, WARN, BAD), (1.0, 1.0, 1.0)))
-        for n, m, x in summary(_d['per'], PL._selected(context)):
+        for n, m, x in summary(per, PL._selected(context)):
             c = colors(np.array([x]), np.array([1.0]))[0]
             lines.append((tx("{0}: {1:.2f} median, {2:.2f} max", n, m, x),
                           tuple(c[:3]) if x > OK else (0.85, 0.95, 0.85)))
     if probs:
-        lines += [(t, (1.0, 0.45, 0.4)) for t in problem_lines(spec)]
+        lines += [(t, (1.0, 0.45, 0.4)) for t in diagnosis.problem_lines(context)]
     fid = 0
     blf.size(fid, 13)
     # clear of the toolbar whatever its width (it was x = 70, under a toolbar with two columns or names; 2026-11-12)
@@ -493,8 +705,9 @@ def _draw_px():
 
 
 def invalidate():
-    for c in (_d, _b, _gflat, _pb, _fb):
+    for c in (_d, _b, _fb):
         c['key'] = None
+    _d.pop('views', None)
     _pc.clear()
 
 

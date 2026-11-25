@@ -154,7 +154,7 @@ def give_shape(context, spec, names, *, preparation=None):
     was dressed had none, Fold, Move by Hand and Settle could not reach it). (spec as stored after, names given)."""
     from . import dress as D
     from . import place_seam as PS
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     if not D.has_result(g):
         return spec, []
     on_g = D.garment_pieces(g)
@@ -204,14 +204,17 @@ def refold_all(context, names, prepared=None, *, preparation=None):
     (user 2026-10-25 b-1: Place keeps a fold; the spec keeps its angle and side). Report lines for the lines that
     could not be folded."""
     from . import place_fold as PF
+    from . import dress as D
+    from .core import fold_resolve as FR
     spec = store.get(context)[0]
+    fold_spec = PF._effective(context, spec)
     obs = PLV.objects(spec)
     out = []
     for n in with_pairs(spec, names):
         ob = obs.get(n)
         if ob is None or ob.get(PLV.PROP) != n:
             continue
-        for f in [f for f in spec.get('folds', []) if f.get('piece') == n and f.get('line') and f.get('deg')]:
+        for f in [f for f in FR.ordered_folds(fold_spec) if f.get('piece') == n and f.get('line') and f.get('deg')]:
             with preparation.attempt() as child:
                 if prepared is not None and not spec.get('fold_rows'):
                     r = PF.refold(context, n, f['line'], float(f['deg']), prepared=prepared, preparation=preparation)
@@ -228,17 +231,17 @@ def _reset_on_garment(context, spec, names, *, preparation=None):
     placed objects where they were placed (user 2026-10-20 b-1: placing a piece of the dressed garment resets it, one
     step instead of two; Ctrl+Z takes it back). Report lines."""
     from . import dress as D
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     if not D.has_result(g):
         return []
     obs = PLV.objects(spec)
     on_g = D.garment_pieces(g)
     pick = with_pairs(spec, names)
-    # a piece the garment does not have (placed after it) has nothing to Reset: shown as its placed shape at once,
+    # a piece the garment does not have (placed after it) has nothing to Reset: shown as its adjusted shape at once,
     # the next Phase Sim sewing it on from there (user 2026-10-25 b-2)
     spec, new = give_shape(context, spec, pick, preparation=preparation)
     obs = PLV.objects(spec)
-    out = [tx("{0}: placed shape, the next Live Sim sews it on from there", ', '.join(new))] if new else []
+    out = [tx("{0}: adjusted shape, the next Simulate run sews it on from there", ', '.join(new))] if new else []
     todo = sorted(n for n in pick if n not in obs and n in on_g)
     if not todo:
         return out
@@ -246,18 +249,18 @@ def _reset_on_garment(context, spec, names, *, preparation=None):
         done = D.reset_to_placed(context, g, spec, todo, context.scene.ac9_cloth_sim.mesh_size, preparation=preparation)
     except ValueError as exc:
         return out + [tx("not reset ({0})", exc)]
-    return out + ([tx("reset {0} (the next Live Sim sews it on from here)", ', '.join(done))] if done else [])
+    return out + ([tx("reset {0} (the next Simulate run sews it on from here)", ', '.join(done))] if done else [])
 
 
 def replace_prepared(context, spec, res, reset=(), only=None):
-    """Replace derived placed shapes; restore their current state if construction fails."""
+    """Replace derived adjusted shapes; restore their current state if construction fails."""
     backup = PLV.PreparedResetBackup(context, spec)
     try:
         if reset:
             PLV.remove(reset, spec)
         result = PLV.build(context, spec, res['pat'], res['tris'], res['X'], res['pairs'], only=only)
         from . import dress as D
-        D.sync_hidden(bpy.data.objects.get(D.garment_name(spec)), spec)
+        D.sync_hidden(D.garment(spec), spec)
         return result
     except Exception:
         backup.rollback()
@@ -287,7 +290,7 @@ def remake(context, spec, names, prepared_out=None, *, preparation=None):
         return [tx("placed objects not made again ({0}): place the pieces again", exc)]
     if prepared_out is not None:
         prepared_out.append(res)
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     # on a dressed garment only the pieces Reset are shown as objects: the others stay on the garment
     replace_prepared(context, spec, res, reset=hit, only=hit if D.has_result(g) else None)
     if edited:
@@ -364,11 +367,11 @@ def show_start(context, spec, names=(), *, preparation=None):
     the body, the layers -- and a waistband was first seen as a ring after Move by Hand): every placed piece not moved
     by hand, and `names` (just placed, with their pairs) even when moved, folded or edited (as remake: a piece moved by
     hand and placed again stayed where it was, design review 2026-10-25). Not on a dressed garment (None: remake those
-    placed then). Report lines: edits dropped, a band widened past its length to clear the body (red), a piece that
-    starts through another it overlaps (red)."""
+    placed then). Report lines: edits dropped, a piece that starts in the body (red), a piece that starts through another
+    it overlaps (red)."""
     from . import dress as D
     from . import place_settle as PT
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     if D.has_result(g):
         return None
     PLV.leave_edit(context)
@@ -381,40 +384,37 @@ def show_start(context, spec, names=(), *, preparation=None):
     except ValueError as exc:
         PB.cancel(preparation)
         return [tx("placed objects not made ({0}): place the pieces again", exc)]
+    from . import place_check as PCK
+    PCK.forget(spec, sorted(redo))         # placed again: what Diagnose found on them is gone
     notes = replace_prepared(context, spec, res, reset=redo)[2]
     if edited:
         out.append(tx("edits in Edit Mode dropped (moves kept): {0}", ', '.join(edited)))
     if notes:
         out.append(tx("moved to mirror their pair (placed apart before; Unlink Pair to move them apart): {0}", ', '.join(notes)))
+    return out + _start_notes(context, spec, res)
+
+
+def _start_notes(context, spec, res, selected=None):
+    """Placement warnings shared by a rebuilt shape and a committed drag candidate."""
+    if selected is not None:
+        res = dict(res, **{key: {n: value for n, value in res.get(key, {}).items() if n in selected}
+                          for key in ('in_body', 'closures', 'overlaps')})
+    out = []
     obs = PLV.objects(spec)
     from . import diagnose as DG
-    for name, k in sorted(res.get('short_bands', {}).items()):
-        if name in obs and not PLV.is_moved(obs[name]):
-            DG.mark(obs[name], 'placement', None, f"stretched x{k} to clear the body")
-        out.append(tx("{0} starts stretched x{1} to clear the body: it is shorter than the body here (red)", name, k))
-    # a Ring Size set by hand is laid as it is (user 2026-11-02, DECISIONS cloth-sim-ring-size-2026-11-02): what is in
-    # the body is red, where it is seen (its hand move in)
-    for name, vs in sorted(res.get('in_body', {}).items()):
-        if name in obs:
-            DG.mark(obs[name], 'placement', vs, f"{len(vs)} vertices in the body")
-        out.append(tx("{0}: {1} vertices start in the body at this Ring Size (red)", name, len(vs)))
+    # Quality is inspected only by the explicit Diagnose button (user 2026-11-24).
+    # Keep closure-setting failures and all shape-generation decisions below.
+    for name, ob in obs.items():
+        if selected is None or name in selected:
+            DG.clear(ob, 'placement')
     # a band's closure (user 2026-11-03, DECISIONS cloth-sim-closure-over-2026-11-02): with nothing saying which end
     # is on top it is laid as before, its ends apart, and they cross when sewn
     for name, (top, _by, sid) in sorted(res.get('closures', {}).items()):
         if top is None:
-            out.append(tx("{0}: which end of its closure goes on top is not set (Over on seam {1}, Front Over on the "
-                          "garment, or a buttonhole): its ends may cross when sewn", name, sid))
+            out.append(tx("{0}: which end of its closure goes on top is not set (AC9 Piece's Ends: Left on Top or "
+                          "Right on Top): its ends may cross when sewn", name))
     # nothing moves a piece off another it overlaps (user 2026-10-25, DECISIONS cloth-sim-no-auto-placement-2026-10-25):
     # it starts through it or hidden under it, said and red; Move Outside moves the one selected off
-    for name, o in sorted(res.get('overlaps', {}).items()):
-        if name in obs and not PLV.is_moved(obs[name]):
-            DG.mark(obs[name], 'placement', None, "overlaps " + ', '.join(o['through'] or o['inside']))
-        if o['through']:
-            out.append(tx("{0} overlaps {1}: it starts through it (red: select the one on top, Move Outside)",
-                          name, ', '.join(o['through'])))
-        if o['inside']:
-            out.append(tx("{0} starts under {1} (red: if it goes on top, select it, Move Outside)",
-                          name, ', '.join(o['inside'])))
     return out
 
 
@@ -467,7 +467,7 @@ def remake_missing(context, spec, names):
     (the pieces put back to placed, hidden on it). Report lines (empty when made)."""
     from . import dress as D
     sp = store.get(context)[0]
-    g = bpy.data.objects.get(D.garment_name(sp))
+    g = D.garment(sp)
     lines = []
     try:
         with PB.operation(context) as preparation:
@@ -487,9 +487,10 @@ def remake_missing(context, spec, names):
 
 def split_worn(spec, names):
     """(the names Place may place, sorted names on the dressed garment now) -- a piece being worn is placed again only
-    after Back to Placed (user 2026-11-17)."""
-    from . import place_seam as PS
-    worn = set(PS.on_garment(spec, names))
+    after Back to Adjusted Shape (user 2026-11-17)."""
+    from . import control_basis as CB
+    states = CB.contexts(bpy.context, spec)
+    worn = {n for n in names if states.get(n, {}).get('basis') in (CB.RESULT, CB.UNKNOWN)}
     return [n for n in names if n not in worn], sorted(worn)
 
 
@@ -527,18 +528,24 @@ class AC9_OT_SimPlace(bpy.types.Operator):
         if self.kind == 'flat':
             h = flat_hit(context, mx, my)
             return self._snap_ground(region, rv3d, h) if snap else h
-        if self.rel_guide is not None:      # moving placed pieces: on their own guide
-            g = self.guides[self.rel_guide]
-            h = BA.ray_hit({self.rel_guide: g}, o, d)
+        guides = TB.placement_guides(context, getattr(self, 'spec', {'guides': self.guides}))
+        guide = self.rel_guide or getattr(self, '_drag_guide', None)
+        if guide is not None and guide not in guides:
+            return None
+        if guide is not None:             # the guide chosen for this gesture, including a fresh placement
+            g = guides[guide]
+            h = BA.ray_hit({guide: g}, o, d)
             if h is None:
                 # off the cylinder (a piece standing out from it, or the cursor beside it): the spot on it nearest
                 # the ray, so a placed piece slides wherever it is held (user 2026-11-17)
                 n = BA.ray_nearest(g, o, d)
                 if n is None:
                     return None
-                h = (self.rel_guide, *n)
-            return (self._slide_center(region, rv3d, h) if snap else None) or (*h, None)
-        h = BA.ray_hit(self.guides, o, d) if self.guides else None
+                h = (guide, *n)
+            if self.rel_guide is not None:
+                return (self._slide_center(region, rv3d, h) if snap else None) or (*h, None)
+        else:
+            h = BA.ray_hit(guides, o, d) if guides else None
         if h is None:
             if self.kind is not None:
                 return None
@@ -631,7 +638,8 @@ class AC9_OT_SimPlace(bpy.types.Operator):
             # placed pieces pressed on: moved by how far the cursor went round and along the guide since the press,
             # not put under it (user 2026-11-01, DECISIONS cloth-sim-collar-flip-2026-11-01)
             dth, dh = th0 - self.press[1], h0 - self.press[2]
-            return {pc: dict(p, theta=round(float(p['theta']) + dth, 3), h=round(float(p['h']) + dh, 3))
+            return {pc: dict({k: v for k, v in p.items() if k != 'pose'},
+                             theta=round(float(p['theta']) + dth, 3), h=round(float(p['h']) + dh, 3))
                     for pc, p in self.rel.items()}
         order = sorted(self.anchors, key=lambda pc: self.anchors[pc][0])
         widths = [float(np.ptp(self.outlines[pc].B[:, 0])) for pc in order]
@@ -697,11 +705,7 @@ class AC9_OT_SimPlace(bpy.types.Operator):
                     batch_for_shader(sp, 'POINTS', {'pos': [tuple(w)]}).draw(sp)
                     gpu.state.point_size_set(1.0)
                     sh.bind()
-                pls = with_twins(self.spec, self._placements(self.hit))
-                rad = overlay.wrap_radii(self.spec, self.outlines, pls)
-                for pc, pl in pls.items():
-                    P = overlay.wrapped_outline(self.spec, self.outlines, pc, pl, radii=rad)
-                    pts = [tuple(p) for u, v in zip(P[:-1], P[1:]) for p in (u, v)]
+                for pts in getattr(self, '_candidate', {}).get('lines', {}).values():
                     batch_for_shader(sh, 'LINES', {'pos': pts}).draw(sh)
             gpu.state.blend_set('NONE')
         except Exception:
@@ -716,36 +720,48 @@ class AC9_OT_SimPlace(bpy.types.Operator):
         from . import dress as DR
         DR.standby_wake(context)          # a run usually follows a Place: the solver starts while the pieces move
         self.spec, self.outlines = store.get(context)
+        self._source_owner = store.edit_owner(context)
+        self._candidate_key, self._candidate = None, {}
+        self._candidate_cache = {}
         self.guides = self.spec.get('guides') or {}
         self.kind = None                  # 'guide' / 'flat' once pressed (a drag stays the kind it was pressed as)
+        self._drag_guide = None           # a new gesture may choose a new guide; the held gesture may not
         self.ctrl = event.ctrl            # held: no snapping to the center lines
         self.snap_at = None               # world mm of the center held on the ground's center lines (drawn)
         selected = selected_pieces(context)
+        self._selection = tuple(selected)
+        self._selection_lead = SEL.lead(context)
+        # Only editable placement participants may provide a slide reference; a selected result is a destination.
+        selected, worn = split_worn(self.spec, selected)
+        TB._skipped_worn[:] = worn
+        if not selected:
+            return {'CANCELLED'}
         kind, touched, face = TB.under(context, event.mouse_region_x, event.mouse_region_y)
-        self.drag_piece = (PLV.placed_face_piece(context, touched, face)
-                           if kind == 'PLACED' and touched.select_get() else None)
-        self.touched = (touched.name, face) if kind == 'PLACED' else None
+        hit_piece = PLV.placed_face_piece(context, touched, face) if kind == 'PLACED' and SEL.owns(context, touched) else None
+        self.drag_piece = hit_piece if hit_piece in selected else None
+        self.touched = (touched.name, face) if self.drag_piece is not None else None
         self.press_xy = (event.mouse_region_x, event.mouse_region_y)
         if self.drag_piece in selected:
             # An already-selected shared object skipped select_object on this
             # press. Its touched face, not its stored source, owns this drag.
             selected = [self.drag_piece] + [n for n in selected if n != self.drag_piece]
             PLV.clear_control_hints()
-        else:
-            selected = PLV.hand_selection(context, selected)
-        # pieces on the dressed garment are not placed again by a drag (user 2026-11-17: Back to Placed first); the
+        # pieces on the dressed garment are not placed again by a drag (user 2026-11-17: Back to Adjusted Shape first); the
         # Place tool's press says so in one line (TB._skipped_worn)
-        selected, worn = split_worn(self.spec, selected)
-        TB._skipped_worn[:] = worn
-        if not selected:
-            return {'CANCELLED'}
         sel = lead_only(self.spec, selected, selected_first=True)
         self.anchors = {pc: piece_anchor(self.outlines[pc]) for pc in sel}
+        from . import place_candidate as PC
+        participants = with_pairs(self.spec, sel)
+        self._operation = dict(spec=self.spec, selected=participants, owner=self._source_owner,
+                               bindings=PC._bindings(context, self.spec, participants))
         # pressed on a placed piece: the selected pieces placed on its guide move from where they are (user
         # 2026-11-01); pressed elsewhere, the pieces go under the cursor as before
         pl = self.spec.get('placement', {})
         self.rel, self.rel_guide, self.press = None, None, None
         g0 = pl.get(self.drag_piece, {}).get('guide') if self.drag_piece else None
+        if self.drag_piece and any(pl.get(pc, {}).get('guide') != g0 for pc in sel):
+            # A multi-guide selection is re-placed together, never silently narrowed to the touched guide.
+            self.drag_piece, g0 = None, None
         if self.drag_piece and S.is_flat(pl.get(self.drag_piece)):
             # a flat piece pressed on: the selected flat pieces move with the cursor over what is behind them
             self.kind = 'flat'
@@ -763,21 +779,25 @@ class AC9_OT_SimPlace(bpy.types.Operator):
             else:
                 self.rel_guide = None
         if self.drag_piece and self.rel is None and self.dragged:
-            # a placed piece dragged with nothing to slide it on (a flat piece over no surface, a guide seen end on):
-            # the press moves it as G moves it. On a guide it slides wherever it is held (ray_nearest)
-            TB._move_instead['on'] = True
+            # No valid placement reference: cancel without switching to an unrelated free-move gesture.
             return {'CANCELLED'}
         self.hit = self._hit(context, event.mouse_region_x, event.mouse_region_y)
         self.pressed = False
         self.mouse = (event.mouse_region_x, event.mouse_region_y)
         self._handle = bpy.types.SpaceView3D.draw_handler_add(self._draw, (context,), 'WINDOW', 'POST_VIEW')
-        self._status(context)
+        try:
+            self._status(context)
+        except Exception as exc:
+            self._finish(context)
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
         self.live = False             # the press fed by start_modal is the press, not one after a move
         r = TB.start_modal(self, context, event)        # the Place tool's press is the first one
         self.live = True
         return r
 
     def _status(self, context):
+        self._update_candidate(context)
         n = len(self.rel) if self.rel is not None else len(self.anchors)
         if self.hit is None:
             txt = tx("Place {0} piece(s): move over a guide, a surface or the ground", n)
@@ -802,12 +822,49 @@ class AC9_OT_SimPlace(bpy.types.Operator):
             txt += tx("release: keep   angle / height / tilt: Tool tab, AC9 Piece")
         context.area.header_text_set(txt + tx("   Ctrl: no snapping") + tx("   Esc / right click: cancel"))
 
+    def _update_candidate(self, context):
+        if hasattr(self, '_selection') and tuple(SEL.pieces(context)) != self._selection:
+            raise ValueError(rpt('The placement source changed; place the piece again'))
+        if self.hit is None:
+            self._candidate_key = None
+            self._candidate = {}
+            return
+        from . import place_candidate as PC, control_basis as CB
+        if getattr(self, '_operation', None) is not None:
+            PC._require_bindings(context, self._operation)
+        new = self._placements(self.hit)
+        key = json.dumps(new, sort_keys=True)
+        # The same pointer hit can follow a body/obstacle update in another editor.
+        # build's operation-local cache validates those evaluated inputs before reusing them.
+        self._source_owner.require(context)
+        spec = dict(self.spec, placement=dict(self.spec.get('placement', {}), **new))
+        states = CB.contexts(context, spec)
+        selected = {n for n in with_pairs(spec, new)
+                    if states.get(n, {}).get('basis') not in (CB.RESULT, CB.UNKNOWN)}
+        if any(not S.is_flat(p) for p in new.values()):
+            # Re-wrapping replaces free transforms for every editable participant, including the implicit twin.
+            spec['placement'] = {n: {k: v for k, v in p.items() if k != 'pose'} if n in selected else p
+                                 for n, p in spec['placement'].items()}
+        full, _ = S.mirror_twins(spec, sources=set(new))
+        # Only the operation's editable participants acquire a new placement basis.
+        spec['placement'].update({n: p for n, p in full.items() if n in selected})
+        self._candidate = PC.build(context, spec, selected, cache=getattr(self, '_candidate_cache', None))
+        self._candidate_key = key
+
     def _finish(self, context):
         bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
         context.area.header_text_set(None)
         context.area.tag_redraw()
 
     def modal(self, context, event):
+        try:
+            return self._modal(context, event)
+        except Exception as exc:
+            self._finish(context)
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+
+    def _modal(self, context, event):
         context.area.tag_redraw()
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM'}:
             return {'PASS_THROUGH'}
@@ -829,6 +886,7 @@ class AC9_OT_SimPlace(bpy.types.Operator):
                 self.pressed = True
                 self.press_xy = self.mouse
                 self.kind = 'flat' if self.hit[0] == S.FLAT else 'guide'
+                self._drag_guide = None if self.kind == 'flat' else self.hit[0]
             self._status(context)
             return {'RUNNING_MODAL'}
         if event.type in {'ESC', 'RIGHTMOUSE'} and event.value == 'PRESS':
@@ -843,6 +901,7 @@ class AC9_OT_SimPlace(bpy.types.Operator):
             released = self._hit(context, event.mouse_region_x, event.mouse_region_y)
             if released is not None:
                 self.hit = released
+                self._update_candidate(context)
         if event.type != 'LEFTMOUSE' or self.hit is None:
             return {'RUNNING_MODAL'}
         # press: the pieces go there; held, they follow the cursor round and along the guide (this took the separate
@@ -852,6 +911,7 @@ class AC9_OT_SimPlace(bpy.types.Operator):
             self.pressed = True
             self.press_xy = (event.mouse_region_x, event.mouse_region_y)
             self.kind = 'flat' if self.hit[0] == S.FLAT else 'guide'
+            self._drag_guide = None if self.kind == 'flat' else self.hit[0]
             self._status(context)
             return {'RUNNING_MODAL'}
         if self.pressed and event.value in {'RELEASE', 'PRESS'}:
@@ -865,19 +925,16 @@ class AC9_OT_SimPlace(bpy.types.Operator):
                 if ob is not None:
                     TB.select_object(context, ob, face_index=self.touched[1])
                 return {'FINISHED'}
-            spec = S.loads(S.dumps(self.spec))
             new = self._placements(self.hit)
             # what placing again does not make: said in one line (b-1); a fold is made again below
             lost = shape_kinds(store.get(context)[0], list(new))
-            spec.setdefault('placement', {}).update(new)
-            # the twins follow the pieces just placed (Dress used to put them back as the other side's mirror image)
-            spec['placement'], _ = S.mirror_twins(spec, sources=set(new))
-            store.put(context, spec)
-            prepared = []
-            r = rebuild_placement(context, spec, new, prepared_out=prepared)
+            from . import place_candidate as PC
+            self._source_owner.require(context)
+            spec = self._candidate['spec']
+            r = PC.commit(context, self._candidate)
             r += [tx("{0}: {1} dropped (placed again)", n, ', '.join(k)) for n, k in sorted(lost.items())]
             overlay.invalidate()
-            reselect_placed(context, spec, new, self.drag_piece)
+            SEL.project(context, self._selection, active=self._selection_lead, view='world')
             self._finish(context)
             where = tx(self.hit[2]) if self.hit[0] == S.FLAT else self.hit[0]
             self.report({'WARNING'} if r else {'INFO'},
@@ -904,7 +961,7 @@ def flat_hit(context, mx, my):
     """(FLAT, frame, where, t, None) for a press off the guides (user 2026-11-10): the first face under the cursor
     that is not a pattern piece or a placed piece -- the body, a Collision object, another mesh, a garment -- the
     pieces laid flat on it, their face along its normal; nothing there: the ground (Z = 0), face up. None on the
-    pattern's layout plane or when the view looks away from the ground."""
+    visible pattern faces or when the view looks away from the ground."""
     region, rv3d = context.region, context.region_data
     if region is None or rv3d is None:
         return None
@@ -938,33 +995,35 @@ def flat_hit(context, mx, my):
 
 
 PLANE_TOL = 1e-5     # m: the pattern's plane this near the face / ground hit counts as on it (they are often both Z = 0)
-PATTERN_MARGIN = 50.0   # mm round the pattern's pieces where a press is on the pattern, not the ground under it
 
 
 def _pattern_plane_t(context, o, d):
-    """Distance along the ray to the pattern's layout plane where it crosses it over the pattern (its pieces' box,
-    PATTERN_MARGIN round), else None. Only there does the pattern take the press: the layout plane is the ground's
-    own plane in most scenes (Z = 0), and taken everywhere it made the ground under the cursor come and go with the
-    rounding of two equal distances (the preview flickered, user 2026-11-11)."""
-    emp = PV.layout_empty(context)
-    if emp is None:
-        return None
-    from mathutils.geometry import intersect_line_plane
-    M = emp.matrix_world
-    n_ = (M.to_3x3() @ Vector((0, 0, 1))).normalized()
-    hp = intersect_line_plane(o, o + d, M.translation, n_)
-    if hp is None or (hp - o).dot(d) <= 0:
-        return None
-    outlines = store.get(context)[1] or {}
-    if not outlines:
-        return None
-    q = M.inverted() @ hp
-    q = np.array([q.x, q.y]) / MM
-    B = np.vstack([np.asarray(ol.B, float) for ol in outlines.values()])
-    lo, hi = B.min(0) - PATTERN_MARGIN, B.max(0) + PATTERN_MARGIN
-    if (q < lo).any() or (q > hi).any():
-        return None
-    return (hp - o).length
+    """Nearest visible pattern face, independently of coplanar support-mesh hit order.
+
+    Keep flat_hit's tolerance: a pattern and floor can share Z=0 and the scene
+    ray cast may return either. Empty layout space is never a pattern face.
+    """
+    from . import view_visibility as VV
+    graph = context.evaluated_depsgraph_get()
+    best = None
+    for ob in PV.piece_objects().values():
+        if not VV.object_allowed(context, ob):
+            continue
+        ev = ob.evaluated_get(graph)
+        matrix = ev.matrix_world
+        inverse = matrix.inverted_safe()
+        direction = inverse.to_3x3() @ d
+        scale = direction.length
+        if scale < 1e-12:
+            continue
+        ok, loc, _normal, _index = ev.ray_cast(inverse @ o, direction / scale)
+        if ok:
+            hit = matrix @ loc
+            if (hit - o).dot(d) <= 0:
+                continue
+            distance = (hit - o).length
+            best = distance if best is None else min(best, distance)
+    return best
 
 
 def flat_row(frame, anchors, outlines_B, old=None):
@@ -1014,7 +1073,7 @@ def shape_points(context, spec, outlines, name, Q):
     on the flat coordinates), else on its placed object, else as its placement lays it. None when it is nowhere."""
     from . import dress as D
     Q = np.asarray(Q, float)
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     if D.has_result(g) and name in D.garment_pieces(g) and name not in set(D.hidden_pieces(g, spec)):
         rng = D._piece_ranges(g) or {}
         if name in rng:
@@ -1060,8 +1119,87 @@ def flat_where(context, spec, outlines, name):
     return {'o': [round(float(v), 3) for v in P[0]], 'R': [[round(float(v), 6) + 0.0 for v in r] for r in (ex, ey, n)]}
 
 
+class AC9_OT_SimUnplace(bpy.types.Operator):
+    """Remove selected pieces from 3D so they can be placed again. Linked pairs return together. Keep the 2D patterns, internal lines, fold settings, seams and fabrics; discard their 3D placement and hand edits. Select pieces first. Ctrl+Z restores the change"""
+    bl_idname = "ac9_cloth_sim.unplace"
+    bl_label = S.UNPLACE_NAME
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return store.get(context)[0] is not None and not _dress_running()
+
+    def execute(self, context):
+        from . import dress as D, display_state as DS, control_basis as CB
+        from . import piece_move as PM, garment_mark as GM, place_check as PCK
+        current, outlines = store.get(context)
+        selected = set(selected_pieces(context))
+        if not selected:
+            self.report({'WARNING'}, tx("Select the pieces to return to unplaced first"))
+            return {'CANCELLED'}
+        names = set(selected)
+        if current.get('symmetry') != 'off':
+            pairs = [(a, b) for a, b in S.twins(current, any_state=True) if not S.pair_unlinked(current, a, b)]
+            pairs += list(current.get('pairs', []))
+            for _ in range(len(pairs) + 1):
+                before = set(names)
+                for a, b in pairs:
+                    if names & {a, b}:
+                        names.update((a, b))
+                if names == before:
+                    break
+        g = D.garment(current)
+        # The mask needs authoritative membership. Refuse before any partial removal.
+        from . import mesh_correspondence as MC
+        if g is not None and len(g.data.polygons) and MC.membership(g) is None:
+            self.report({'ERROR'}, tx("Result piece mapping is invalid; nothing was changed"))
+            return {'CANCELLED'}
+        PLV.leave_edit(context)
+        backup = PLV.PreparedResetBackup(context, current)
+        try:
+            spec = S.loads(S.dumps(current))
+            for pc in spec['pieces']:
+                if pc['name'] in names and spec.get('placement', {}).get(pc['name'], {}).get('unlinked'):
+                    pc['placement_unlinked'] = True
+            # Pair independence belongs to the patterns even when neither has a 3D placement.
+            for a, b in S.twins(spec, any_state=True):
+                if S.pair_unlinked(spec, a, b) and names & {a, b}:
+                    for pc in spec['pieces']:
+                        if pc['name'] in (a, b):
+                            pc['placement_unlinked'] = True
+            obs = PLV.objects(current)
+            for ob in set(obs.values()):
+                held = {n for n, other in obs.items() if other == ob}
+                if held & names and held - names:
+                    a, b = ob.get(PLV.PROP), ob.get(PLV.TWIN_PROP)
+                    if not a or not b:
+                        raise ValueError(tx("Result piece mapping is invalid; nothing was changed"))
+                    PLV.split_pair(context, current, outlines, a, b, keep_shape=True)
+                    context.view_layer.update()
+            PLV.remove(names, current)
+            for n in names:
+                spec.get('placement', {}).pop(n, None)
+            store.put(context, spec)
+            if g is not None:
+                D.set_shown_as_placed(g, spec, set(D.reset_pieces(g)) | names)
+                CB.clear_pose(g, names)
+            DS.apply(context, spec)
+        except Exception as exc:
+            backup.rollback()
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
+        finally:
+            backup.close()
+        PM.clear(context)
+        GM.clear(context)
+        PCK.forget(current, sorted(names))
+        overlay.invalidate()
+        self.report({'INFO'}, rpt("{0} piece(s) returned to unplaced", len(names)))
+        return {'FINISHED'}
+
+
 class AC9_OT_SimClearPlacement(bpy.types.Operator):
-    """Lay the selected pieces flat where they are: each keeps its place and turn in 3D, unrolled from its guide (or the garment) into the plane under its center. Nothing selected: every placed piece, after a question. Their hand moves and edits made on the placed shape are dropped; Ctrl+Z restores the change"""
+    """Lay the selected pieces flat where they are: each keeps its place and turn in 3D, unrolled from its guide (or the garment) into the plane under its center. Nothing selected: every placed piece, after a question. Their hand moves and edits made on the adjusted shape are dropped; Ctrl+Z restores the change"""
     bl_idname = "ac9_cloth_sim.clear_placement"
     bl_label = "Back to Flat"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1104,9 +1242,11 @@ class AC9_OT_SimClearPlacement(bpy.types.Operator):
             self.report({'WARNING'}, str(exc))
             return {'CANCELLED'}
         if not names:
-            self.report({'WARNING'}, tx("Select a placed pattern piece or placed shape first"))
+            self.report({'WARNING'}, tx("Select a placed pattern piece or adjusted shape first"))
             return {'CANCELLED'}
         PLV.leave_edit(context)
+        from . import place_check as PCK
+        PCK.forget(current, sorted(with_pairs(current, names)))
         spec = S.loads(S.dumps(sync(context)))
         outlines = store.get(context)[1]
         leads = lead_only(spec, sorted(names))
@@ -1149,7 +1289,7 @@ def _dress_running():
 
 @PB.prepared_consumer
 def show_placed(context, *, placed_only=True, report=None, preparation=None):
-    """Construct and reveal placed shapes inside the caller's operation, without starting a nested RNA operator."""
+    """Construct and reveal adjusted shapes inside the caller's operation, without starting a nested RNA operator."""
     report = report or (lambda kinds, message: None)
     from . import dress as D
     sync(context, preparation=preparation)
@@ -1201,9 +1341,9 @@ def restore_selection(context, selected, active):
 
 
 class AC9_OT_SimResetPlaced(bpy.types.Operator):
-    """Put the selected pieces (nothing selected: all) back on their guides, the cylinders round the body: their hand moves (moved or edited by hand) go and they are placed again from the placement. Pieces on the dressed garment go back to placed first (Back to Placed)"""
+    """Rebuild the selected pieces (nothing selected: all) as their placed shapes from the current placement settings, on a guide or laid flat. Discard hand moves and vertex edits. Pieces on the dressed garment first leave the dressed result"""
     bl_idname = "ac9_cloth_sim.reset_placed"
-    bl_label = "Back to Guide"
+    bl_label = "Back to Placed Shape"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -1222,9 +1362,9 @@ class AC9_OT_SimResetPlaced(bpy.types.Operator):
         names, picked = self._names(context, spec)
         if not picked:
             return context.window_manager.invoke_confirm(
-                self, event, title="All pieces back on their guides?",
+                self, event, title="All pieces back to their placed shapes?",
                 message=tx("{0} piece(s) lose their hand moves (and a dressed result is taken off; Ctrl+Z brings it "
-                           "back). Select pieces first to put back only those", len(names)), confirm_text="Back to Guide")
+                           "back). Select pieces first to put back only those", len(names)), confirm_text="Back to Placed Shape")
         return self.execute(context)
 
     @PB.prepared_consumer
@@ -1235,22 +1375,28 @@ class AC9_OT_SimResetPlaced(bpy.types.Operator):
         if not names:
             return {'CANCELLED'}
         # on the dressed garment: back to placed first, the step between (user 2026-10-22: the three "Back to")
-        g = bpy.data.objects.get(D.garment_name(spec))
+        g = D.garment(spec)
         if D.has_result(g) and (not picked or any(n not in PLV.objects(spec) for n in names)):
             if D.reset_result(context, to_guide=True, report=self.report, preparation=preparation) != {'FINISHED'}:
                 return {'CANCELLED'}
             spec, _ = store.get(context)
         PLV.leave_edit(context)
         names = with_pairs(spec, names)
+        from . import place_check as PCK
+        PCK.forget(spec, sorted(names))
         PLV.remove(names, spec)
-        # the hand moves go too: only Back to Guide drops them (user 2026-10-14 b-3)
+        # the hand moves go too: only Back to Placed Shape drops them (user 2026-10-14 b-3)
         sp = S.loads(S.dumps(spec))
         for n in names:
             sp.get('placement', {}).get(n, {}).pop('pose', None)
         store.put(context, sp)
         PB.replan_source(preparation)
-        if not D.has_result(bpy.data.objects.get(D.garment_name(sp))):
-            return show_placed(context, placed_only=True, report=self.report, preparation=preparation)
+        if D.garment(sp) is None or not picked:
+            result = show_placed(context, placed_only=True, report=self.report, preparation=preparation)
+            if result == {'FINISHED'}:
+                from . import control_basis as CB
+                CB.clear_pose(D.garment(sp), names)
+            return result
         # on a dressed garment only these pieces (put back to placed) come back as objects: Move by Hand would have
         # made every piece's object over the garment (user 2026-10-21)
         try:
@@ -1260,8 +1406,10 @@ class AC9_OT_SimResetPlaced(bpy.types.Operator):
             self.report({'ERROR'}, str(exc))
             return {'CANCELLED'}
         PLV.build(context, sp, res['pat'], res['tris'], res['X'], res['pairs'], only=set(names))
-        D.sync_hidden(bpy.data.objects.get(D.garment_name(sp)), sp)
-        self.report({'INFO'}, rpt("back on the guide: {0}", ', '.join(sorted(names))))
+        from . import control_basis as CB
+        CB.clear_pose(D.garment(sp), names)
+        D.sync_hidden(D.garment(sp), sp)
+        self.report({'INFO'}, rpt("back to the placed shape: {0}", ', '.join(sorted(names))))
         return {'FINISHED'}
 
 
@@ -1290,7 +1438,13 @@ class AC9_OT_SimUnlinkPair(bpy.types.Operator):
         for a, b in S.twins(spec):
             if a not in sel and b not in sel:
                 continue
-            link = bool(pl.get(a, {}).get('unlinked') or pl.get(b, {}).get('unlinked'))
+            link = S.pair_unlinked(spec2, a, b)
+            for pc in spec2['pieces']:
+                if pc['name'] in (a, b):
+                    if link:
+                        pc.pop('placement_unlinked', None)
+                    else:
+                        pc['placement_unlinked'] = True
             for x in (a, b):
                 if x in pl:
                     if link:
@@ -1410,7 +1564,7 @@ def mirror_partner(spec, name):
             return b if name == a else a
     pl = spec.get('placement', {})
     for a, b in S.twins(spec):
-        if name in (a, b) and (pl.get(a, {}).get('unlinked') or pl.get(b, {}).get('unlinked')):
+        if name in (a, b) and S.pair_unlinked(spec, a, b):
             return b if name == a else a
     return None
 
@@ -1550,11 +1704,11 @@ class AC9_OT_SimSwapSides(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a simulation runs")
+            cls.poll_message_set(tx("Not while a simulation runs"))
             return False
         sel = selected_pieces(context)
         if not side_pairs(spec, sel):
-            cls.poll_message_set("Select a placed pair (both sides On)")
+            cls.poll_message_set(tx("Select a placed pair (both sides On)"))
             return False
         return True
 
@@ -1592,11 +1746,11 @@ class AC9_OT_SimPairPlane(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a simulation runs")
+            cls.poll_message_set(tx("Not while a simulation runs"))
             return False
         sel = set(selected_pieces(context))
         if not any(a in sel or b in sel for a, b in list(S.twins(spec)) + [tuple(p) for p in spec.get('pairs', [])]):
-            cls.poll_message_set("Select a piece of a pair")
+            cls.poll_message_set(tx("Select a piece of a pair"))
             return False
         return True
 
@@ -1631,7 +1785,7 @@ class AC9_OT_SimPairPlane(bpy.types.Operator):
         # the garment carried over the turn only when the pair is in its result (a pair Reset or placed after it is
         # made again from its placement below)
         from . import dress as D_
-        g_ = bpy.data.objects.get(D_.garment_name(sp))
+        g_ = D_.garment(sp)
         in_g = g_ is not None and D_.has_result(g_) and {src, turned} <= (set(D_.garment_pieces(g_))
                                                                            - set(D_.reset_pieces(g_) or ()))
         note = DT.commit(context, sp, [turned], old_spec=spec if in_g else None, rigid={turned: rigid})
@@ -1697,7 +1851,7 @@ class AC9_OT_SimCenterSelect(bpy.types.Operator):
     def poll(cls, context):
         spec = store.get(context)[0]
         if spec is None or S.garment_center(spec) is None:
-            cls.poll_message_set("No mirror center yet (made with the first pair laid flat)")
+            cls.poll_message_set(tx("No mirror center yet (made with the first pair laid flat)"))
             return False
         return True
 
@@ -1740,10 +1894,10 @@ class AC9_OT_SimCenterAlign(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a simulation runs")
+            cls.poll_message_set(tx("Not while a simulation runs"))
             return False
         if not any(off_center(spec, n) for n in selected_pieces(context)):
-            cls.poll_message_set("Select a pair laid flat that does not mirror about the garment's center")
+            cls.poll_message_set(tx("Select a pair laid flat that does not mirror about the garment's center"))
             return False
         return True
 
@@ -1862,7 +2016,39 @@ def set_ring(context, names, k=None):
     return lead, _remade(context, spec, sp, lead)
 
 
-def move_placed(context, names, theta=None, h=None):
+_KEEP = object()
+
+
+def set_ends(context, names, ends=_KEEP, overlap=_KEEP):
+    """The placed pieces `names` given Ends ('open' | 'closed' | 'left' | 'right', closure.ENDS) and / or an overlap
+    (mm; None: Auto, from the seam or button joining the ends, else 0) -- AC9 Piece's Ends and Overlap (user
+    2026-11-22). Open drops the Ring Size; their pairs follow (left / right turned over for a pair drawn mirrored).
+    (pieces, report lines), or (None, why)."""
+    spec, lead = _placed_lead(context, names)
+    if not lead:
+        return None, tx("Place the piece first")
+    PLV.leave_edit(context)
+    sp = S.loads(S.dumps(spec))
+    lead = [n for n in lead if not S.is_flat(sp['placement'][n])]
+    if not lead:
+        return None, tx("Place the piece on a guide first")
+    for n in lead:
+        p = dict(sp['placement'][n])
+        if ends is not _KEEP:
+            p['ends'] = ends
+            if ends == 'open':
+                p.pop('ring', None)
+        if overlap is not _KEEP:
+            if overlap is None:
+                p.pop('overlap', None)
+            else:
+                p['overlap'] = round(max(0.0, float(overlap)), 2)
+        sp['placement'][n] = p
+    sp['placement'], _ = S.mirror_twins(sp, sources=set(lead))
+    return lead, _remade(context, spec, sp, lead)
+
+
+def move_placed(context, names, theta=None, h=None, *, absolute=False):
     """The placed pieces `names` moved to the active one's angle round its guide `theta` (deg) or height `h` (mm), the
     others by as much (AC9 Piece's Around / Height, user 2026-11-01: the angle changed without the height, which a
     drag could not do). Their pairs follow. (pieces, report lines), or (None, why)."""
@@ -1876,7 +2062,9 @@ def move_placed(context, names, theta=None, h=None):
     dth = 0.0 if theta is None else float(theta) - float(a['theta'])
     dh = 0.0 if h is None else float(h) - float(a['h'])
     for n in lead:
-        pl[n] = dict(pl[n], theta=round(float(pl[n]['theta']) + dth, 3), h=round(float(pl[n]['h']) + dh, 3))
+        to_theta = float(theta) if absolute and theta is not None else float(pl[n]['theta']) + dth
+        to_h = float(h) if absolute and h is not None else float(pl[n]['h']) + dh
+        pl[n] = dict(pl[n], theta=round(to_theta, 3), h=round(to_h, 3))
     sp['placement'], _ = S.mirror_twins(sp, sources=set(lead))
     return lead, _remade(context, spec, sp, lead)
 
@@ -1893,10 +2081,10 @@ class AC9_OT_SimFlipUpDown(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a simulation runs")
+            cls.poll_message_set(tx("Not while a simulation runs"))
             return False
         if not any(n in spec.get('placement', {}) for n in selected_pieces(context)):
-            cls.poll_message_set("Place the piece first")
+            cls.poll_message_set(tx("Place the piece first"))
             return False
         return True
 
@@ -1922,11 +2110,11 @@ class AC9_OT_SimTurnFlat90(bpy.types.Operator):
         if spec is None:
             return False
         if _dress_running():
-            cls.poll_message_set("Not while a simulation runs")
+            cls.poll_message_set(tx("Not while a simulation runs"))
             return False
         pl = spec.get('placement', {})
         if not any(S.is_flat(pl.get(n)) for n in selected_pieces(context)):
-            cls.poll_message_set("Lay the piece flat first")
+            cls.poll_message_set(tx("Lay the piece flat first"))
             return False
         return True
 
@@ -1952,7 +2140,7 @@ class AC9_OT_SimMoveOutside(bpy.types.Operator):
         if spec is None or context.scene.ac9_cloth_sim.body is None or _dress_running():
             return False
         if not selected_pieces(context):
-            cls.poll_message_set("Select a piece first")
+            cls.poll_message_set(tx("Select a piece first"))
             return False
         return True
 
@@ -1977,7 +2165,7 @@ class AC9_OT_SimMoveOutside(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (AC9_OT_SimDetectGuides, AC9_OT_SimPlace, AC9_OT_SimClearPlacement, AC9_OT_SimShowPlaced,
+CLASSES = (AC9_OT_SimDetectGuides, AC9_OT_SimPlace, AC9_OT_SimClearPlacement, AC9_OT_SimUnplace, AC9_OT_SimShowPlaced,
            AC9_OT_SimResetPlaced, AC9_OT_SimUnlinkPair, AC9_OT_SimPair, AC9_OT_SimSetPose,
            AC9_OT_SimMirrorPose, AC9_OT_SimSwapSides, AC9_OT_SimFlipUpDown, AC9_OT_SimTurnFlat90, AC9_OT_SimMoveOutside,
            AC9_OT_SimPairPlane, AC9_OT_SimCenterSelect, AC9_OT_SimCenterAlign)

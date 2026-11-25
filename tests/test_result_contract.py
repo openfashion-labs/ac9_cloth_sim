@@ -96,6 +96,22 @@ class Contract(unittest.TestCase):
             g = self.garment(names, offs, F, fp, flat, X, d)
         return d, g
 
+    def test_long_carry_chain_keeps_the_last_run_config(self):
+        """Edits carried one after another (3D Follows Edits) chain their folders through job.json 'from': Continue
+        and Live read the config of the run at the chain's root however long the chain is (cut at 10 links, the
+        eleventh edit lost stitch_rest_mm and the other settings taken over)."""
+        names, offs, F, fp, flat, X = two_squares()
+        root = os.path.join(self.tmp, 'run')
+        RR.write_result(root, 'carried', names, offs, F, fp, flat, X, '{}', info={'kind': 'live'})
+        json.dump({'stitch_rest_mm': 0.3}, open(os.path.join(root, 's1', 'config.json'), 'w'))
+        prev = root
+        for i in range(15):
+            d = os.path.join(self.tmp, f"edit{i}")
+            RR.write_result(d, 'carried', names, offs, F, fp, flat, X, '{}', info={'from': prev})
+            prev = d
+        self.assertEqual(DR._last_stage_config(prev).get('stitch_rest_mm'), 0.3)
+        self.assertEqual(DR._last_stage_config(os.path.join(self.tmp, 'missing')), {})
+
     def test_writers_meet_the_contract(self):
         for kind in ('from the .blend', 'from mesh', 'carried'):
             with self.subTest(kind=kind):
@@ -180,7 +196,7 @@ class Contract(unittest.TestCase):
         for root, dirs, files in os.walk(HERE):
             dirs[:] = [x for x in dirs if x not in ('tests', 'solver', '__pycache__', 'LLM', 'docs')]
             for f in files:
-                if not f.endswith('.py') or f == 'result_reference.py':
+                if not f.endswith('.py') or f in ('result_reference.py', 'result_names.py'):
                     continue
                 p = os.path.join(root, f)
                 rel = os.path.relpath(p, HERE)
@@ -192,5 +208,9 @@ class Contract(unittest.TestCase):
 
 
 if __name__ == '__main__':
+    if not hasattr(bpy.types.Scene, 'ac9_cloth_sim'):     # run alone (the release check): the add-on registered here
+        import ac9_cloth_sim
+        ac9_cloth_sim.register()
     r = unittest.main(argv=['test_result_contract'], exit=False).result
     print('AC9 TEST RESULT', 'OK' if r.wasSuccessful() else 'FAILED', len(r.failures), len(r.errors))
+    sys.exit(0 if r.wasSuccessful() else 1)      # the release check reads the exit code

@@ -2,9 +2,9 @@
 """The piece selection promise, row by row: a picked piece carries the same mark in every view it shows in, and
 only marked pieces are acted on.
 
-Each row is one state (pattern only / placed shape / dressed garment) x view x entry the tools call (the pattern
+Each row is one state (pattern only / adjusted shape / dressed garment) x view x entry the tools call (the pattern
 click, the placed click, the garment click, each with or without Shift). A row checks the logical selection and
-the marks: the pattern objects' selection, the placed shapes' fill, the dressed garment's tint.
+the marks: the pattern objects' selection, the adjusted shapes' fill, the dressed garment's tint.
 
 Rows whose behavior is not decided yet are skipped, not written down as today's behavior (it would turn today's
 behavior into the spec). Rows that need Blender's own select operators in a real view are skipped here too: they
@@ -29,7 +29,7 @@ from ac9_cloth_sim import (selection as SEL, toolbar as TB, pattern_view as PV, 
                            piece_move as PM, store as ST, dress as D)
 from ac9_cloth_sim.core import spec as S, draft as DR        # noqa: E402
 
-PLACED = ('A', 'B')       # placed shapes (before the garment, or Reset after it)
+PLACED = ('A', 'B')       # adjusted shapes (before the garment, or Reset after it)
 WORN = ('C', 'D')         # on the dressed garment
 ALL = PLACED + WORN
 

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """An owned, disposable candidate. Fresh click-time preparation always wins."""
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -24,6 +25,8 @@ class Candidate:
             raise
 
     def _initialize(self, python, environment, idx, avatar, config_path, generation, positions):
+        from ..solver.runtime_guard import before_launch
+        before_launch(environment)
         self.python = str(Path(python).resolve())
         self.environment = dict(environment)
         self.generation = generation
@@ -41,13 +44,15 @@ class Candidate:
         for key in ('native_runtime_dir', 'native_runtime_token'):
             config.pop(key, None)
         config.update(grab_file=str(stage / 'grab.json'), params_file=str(stage / 'params.json'))
-        def copy_input(value, name):
-            if isinstance(value, dict):return {key:copy_input(child,name+'_'+key) for key,child in value.items()}
-            if isinstance(value, list):return [copy_input(child,name+'_'+str(i)) for i,child in enumerate(value)]
-            if isinstance(value,str) and Path(value).is_file():
-                target=self.root/(name+Path(value).suffix);shutil.copy2(value,target);return str(target)
+        def copy_input(value, name, field):
+            if isinstance(value, dict):return {key:copy_input(child,name+'_'+key,field+(key,)) for key,child in value.items()}
+            if isinstance(value, list):return [copy_input(child,name+'_'+str(i),field+(i,)) for i,child in enumerate(value)]
+            if isinstance(value,str) and not protocol.literal_config_field(field) and Path(value).is_file():
+                target=self.root/('config_'+hashlib.sha256(json.dumps(field).encode()).hexdigest()+Path(value).suffix)
+                if target.exists():raise ValueError('Prepared candidate refuses an existing config input')
+                shutil.copy2(value,target);return str(target)
             return value
-        config = {key:copy_input(value,'config_'+key) for key,value in config.items()}
+        config = {key:copy_input(value,'config_'+key,(key,)) for key,value in config.items()}
         idx_copy=self.root/'scene.idx.npz';avatar_copy=self.root/'avatar.npz'
         shutil.copy2(idx,idx_copy);shutil.copy2(avatar,avatar_copy)
         if positions is not None:
@@ -82,7 +87,7 @@ class Candidate:
 
     def matches(self, python, environment, idx, avatar, config_path, generation, *, allow_loading=False):
         if self.consumed or generation!=self.generation or self.process.poll()is not None:return False
-        if str(Path(python).resolve())!=self.python or dict(environment)!=self.environment:return False
+        if not protocol.same_interpreter(python,self.python) or dict(environment)!=self.environment:return False
         ready=self.status()
         if ready is None and allow_loading:
             # Before the worker publishes its manifest, retain only a numeric-

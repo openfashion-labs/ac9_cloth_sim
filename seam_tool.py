@@ -6,9 +6,8 @@ Steps: A start -> A end -> B start -> B end -> confirm. The two sides are paired
 clicks, so click both starts at the same end of the seam. While placing an end, the stretch runs the
 shorter way round from the start; F runs it the other way. Points snap to the corners of the outline
 (where one edge meets the next) and to its notches. Backspace steps back, Esc cancels, Enter / click confirms at the end.
-A start clicked on the middle of an edge takes the whole edge (or internal line) as that side, starting at
-its end nearer the click (user 2026-10-22, DECISIONS cloth-sim-edge-select-2026-10-22); Ctrl+click puts a
-free start point there instead.
+The Tool Header selects One Edge or Two Points, shared with Add Seam M:N.
+Ctrl temporarily inverts the magnet; it never changes the selection mode.
 """
 import bpy
 import gpu
@@ -17,7 +16,7 @@ from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 from mathutils.geometry import intersect_line_plane
-from .i18n import rpt, tx
+from .i18n import CTX, rpt, tx
 
 from . import overlay
 from . import pattern_view as PV
@@ -26,26 +25,13 @@ from . import view_visibility as VV
 from . import toolbar as TB
 from .core import seam_edit as SE
 from .core import spec as S
+from .core.line_track import LineTrack, make_side as internal_side
 
 SNAP_PX = 14          # pick distance to an outline
 CORNER_PX = 10        # snap to a corner or a notch inside this
 
 
 SEP = "\x1f"          # track key of an internal line: piece + SEP + line id (an outline's key is the piece name)
-
-
-class LineTrack:
-    """An internal line as a track a seam side can run along (open: no wrap-round)."""
-    closed = False
-
-    def __init__(self, pts):
-        self.B = np.asarray(pts, float)
-        self.cum = np.r_[0, np.cumsum(np.linalg.norm(np.diff(self.B, axis=0), axis=1))]
-        self.L = float(self.cum[-1])
-
-    def at(self, s):
-        s = np.clip(np.asarray(s, float), 0.0, self.L)
-        return np.stack([np.interp(s, self.cum, self.B[:, 0]), np.interp(s, self.cum, self.B[:, 1])], -1)
 
 
 def tracks_of(spec, outlines):
@@ -58,7 +44,7 @@ def tracks_of(spec, outlines):
         for it in pc.get('internals', []):
             if it.get('kind') == 'baseline' or len(it['pts']) < 2:
                 continue
-            out[pc['name'] + SEP + it['id']] = LineTrack(it['pts'])
+            out[pc['name'] + SEP + it['id']] = LineTrack(it['pts'], it.get('closed', False), it)
     return out
 
 
@@ -78,7 +64,7 @@ class OutlineIndex:
             self.tracks = {key: tr for key, tr in self.tracks.items() if key.split(SEP)[0] in names}
         for key, tr in self.tracks.items():
             B = tr.B
-            if is_closed(tr):
+            if not getattr(tr, 'internal', False):
                 n = len(B)
                 segA.append(B)
                 segB.append(np.roll(B, -1, 0))
@@ -92,7 +78,7 @@ class OutlineIndex:
                 segA.append(B[:-1])
                 segB.append(B[1:])
                 s_at.append(tr.cum[:-1])
-                self.corners[key] = np.array([0.0, tr.L])
+                self.corners[key] = np.asarray(tr.vertices)
             owner += [key] * n
         self.A = np.vstack(segA) if segA else np.zeros((0, 2))
         self.D = (np.vstack(segB) - self.A) if segA else np.zeros((0, 2))
@@ -126,9 +112,9 @@ class OutlineIndex:
 
 
 def make_side(outline, piece, s_from, s_to, direction):
-    if not is_closed(outline):
+    if SEP in piece:
         pc, line = piece.split(SEP)
-        return {'piece': pc, 'line': line, 'from': round(s_from / outline.L, 6), 'to': round(s_to / outline.L, 6)}
+        return internal_side(outline, pc, line, s_from, s_to, direction)
     ef, tf = outline.edge_t(s_from)
     et, tt = outline.edge_t(s_to)
     return {'piece': piece, 'from': [ef, round(tf, 6)], 'to': [et, round(tt, 6)], 'dir': int(direction)}
@@ -137,8 +123,8 @@ def make_side(outline, piece, s_from, s_to, direction):
 def whole_edge(track, s):
     """(s start, s end, dir) of the whole edge (an outline) or line (an internal line) at s, starting at its end
     nearer s; None for a closed outline of one edge (it would start and end at the same point)."""
-    if not is_closed(track):
-        return (0.0, track.L, 1) if s <= track.L / 2 else (track.L, 0.0, -1)
+    if getattr(track, 'internal', False):
+        return track.whole_edge(s)
     eid, t = track.edge_t(s)
     s0, L, _ = track.edges[eid]
     if L >= track.L - 1e-6:
@@ -151,6 +137,22 @@ def shorter_dir(outline, s0, s1):
         return 1 if s1 >= s0 else -1
     ccw = (s1 - s0) % outline.L
     return 1 if ccw <= outline.L - ccw else -1
+
+
+def pick_start(idx, hit, mode, snapping, tolerance):
+    """The same hovered point/edge before the first click and during the modal."""
+    pc, raw, _, _ = hit
+    s, corner = idx.snap_corner(pc, raw, tolerance) if snapping else (raw, False)
+    edge = whole_edge(idx.tracks[pc], raw) if mode == 'EDGE' else None
+    return (pc, s, corner), ((pc,) + edge if edge is not None else None)
+
+
+def track_poly(track, s0, s1, direction, step=2.0):
+    if getattr(track, 'internal', False):
+        from .core.line_track import sample
+        return sample(track, s0, s0 + SE.signed_len(track, s0, s1, direction), step)
+    span = SE.signed_len(track, s0, s1, direction)
+    return track.at(s0 + np.linspace(0.0, span, max(2, int(abs(span) / step) + 1)))
 
 
 class _AddSeamBase:
@@ -195,6 +197,7 @@ class _AddSeamBase:
 
     # ---------------------------------------------------------------- state
     def _hover_update(self, context, mx, my):
+        self.edge_unavailable = False
         visible = VV.pattern_names(context, self.spec)
         if visible != self._visible:
             self._visible = visible
@@ -226,12 +229,15 @@ class _AddSeamBase:
         if hit is None or hit[3] > SNAP_PX * mmpx:
             return
         pc, s, _, _ = hit
-        s, corner = self.idx.snap_corner(pc, s, CORNER_PX * mmpx)
-        self.hover = (pc, s, corner)
-        if not self._placing_end() and not corner and not getattr(self, 'ctrl', False):
-            w = whole_edge(self.outlines[pc], s)
-            if w is not None:
-                self.hover_edge = (pc,) + w
+        from .shape_tool import snap_settings
+        snap = snap_settings(context)[0] != bool(getattr(self, 'ctrl', False))
+        mode = context.window_manager.ac9_seam_pick_mode if not self._placing_end() else 'POINTS'
+        self.hover, self.hover_edge = pick_start(self.idx, hit, mode, snap, CORNER_PX * mmpx)
+        if mode == 'EDGE' and self.hover_edge is None:
+            self.edge_unavailable = True
+            self.hover = None
+            return
+        s = self.hover[1]
         if self._placing_end() and not self.dir_forced:
             self.cur_dir = shorter_dir(self.outlines[pc], self.cur_start, s)
 
@@ -242,35 +248,34 @@ class _AddSeamBase:
         return getattr(self, 'hover_edge', None)
 
     def _side_poly(self, piece, s0, s1, d):
-        ol = self.outlines[piece]
-        if not is_closed(ol):
-            return ol.at(np.linspace(s0, s1, max(2, int(abs(s1 - s0) / 2.0) + 1)))
-        span = ((s1 - s0) % ol.L) if d > 0 else -((s0 - s1) % ol.L)
-        n = max(2, int(abs(span) / 2.0) + 1)
-        return ol.at(s0 + np.linspace(0.0, span, n))
+        return track_poly(self.outlines[piece], s0, s1, d)
 
     def _status(self, context):
-        names = ["A: click an edge (whole) or a START (corner / notch / Ctrl+click)", "A: click the END",
-                 "B: click an edge or a START (same end as A's start)", "B: click the END",
+        edge = context.window_manager.ac9_seam_pick_mode == 'EDGE'
+        names = ["A: click one edge" if edge else "A: click the START", "A: click the END",
+                 "B: click one edge" if edge else "B: click the START", "B: click the END",
                  ">>> Enter / click: add the seam <<<"]
-        txt = names[min(self.step, 4)]
+        txt = tx(names[min(self.step, 4)])
+        if getattr(self, 'edge_unavailable', False):
+            txt = tx("Cannot select one edge here; use Two Points to choose a stretch")
+        txt += tx("   Ctrl: invert snapping")
         if self.step in (1, 3) and is_closed(self.outlines[self.cur_piece]):
-            txt += tx("   F: other way round ({0})", 'ccw' if self.cur_dir > 0 else 'cw')
+            txt += tx("   F: other way round ({0})", tx('ccw' if self.cur_dir > 0 else 'cw'))
         elif self.step in (1, 3):
-            txt += "   (along an internal line)"
+            txt += tx("   (along an internal line)")
         if self.sides:
             L = [S.polyline_len(self._side_poly(*sd)) for sd in self.sides]
             pv = self._preview_side()
             if pv:
                 L.append(S.polyline_len(self._side_poly(*pv)))
             from .shape_tool import fmt
-            txt += "   lengths " + " / ".join(fmt(context, x) for x in L)
+            txt += tx("   lengths {0}", " / ".join(fmt(context, x) for x in L))
             if len(L) == 2:
                 txt += tx("  (diff {0})", fmt(context, L[0] - L[1], True))
         elif self._preview_side():
             from .shape_tool import fmt
             txt += tx("   length {0}", fmt(context, S.polyline_len(self._side_poly(*self._preview_side()))))
-        txt += "   Backspace: back   Esc / right click: cancel"
+        txt += tx("   Backspace: back   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
     # ---------------------------------------------------------------- draw
@@ -354,6 +359,8 @@ class _AddSeamBase:
         return {'CANCELLED'} if canceled else {'FINISHED'}
 
     def _click(self, context):
+        if not hasattr(self, 'input_steps'):
+            self.input_steps = []
         if self.step == 4:
             return self._commit(context)
         if self.hover is None:
@@ -361,6 +368,7 @@ class _AddSeamBase:
         pc, s, _ = self.hover
         if self.step in (0, 2) and self.hover_edge is not None:
             self.sides.append(self.hover_edge)
+            self.input_steps.append(1)
             self.step += 2
             return None
         if self.step in (0, 2):
@@ -373,6 +381,7 @@ class _AddSeamBase:
             if gap < 1e-3:
                 return None                                  # an end on top of its start
             self.sides.append((self.cur_piece, self.cur_start, s, self.cur_dir))
+            self.input_steps.append(2)
             self.step += 1
         return None
 
@@ -401,6 +410,8 @@ class _AddSeamBase:
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM'}:
             return {'PASS_THROUGH'}
         self.ctrl = event.ctrl
+        if event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            self._hover_update(context, event.mouse_region_x, event.mouse_region_y)
         if event.type == 'MOUSEMOVE' or event.type in {'LEFT_CTRL', 'RIGHT_CTRL'}:
             self._hover_update(context, event.mouse_region_x, event.mouse_region_y)
             self._status(context)
@@ -416,8 +427,9 @@ class _AddSeamBase:
                 self.step -= 1
             elif self.step in (2, 4):
                 p, s0, _, d = self.sides.pop()
+                steps = self.input_steps.pop()
                 self.cur_piece, self.cur_start, self.cur_dir, self.dir_forced = p, s0, d, True
-                self.step -= 1
+                self.step -= 2 if steps == 1 else 1
         elif event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'}:
             if event.type != 'LEFTMOUSE' and self.step != 4:
                 return {'RUNNING_MODAL'}
@@ -447,6 +459,7 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
 
     def invoke(self, context, event):
         self.side, self.half, self.runs = 0, 0, [[], []]
+        self.run_steps = [[], []]
         return super().invoke(context, event)
 
     def _sync(self):
@@ -462,13 +475,16 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
     def _status(self, context):
         ab = "AB"[self.side]
         if self.half == 0:
-            txt = tx("M:N side {0}: click an edge (whole) or a START (corner / notch / Ctrl+click)", ab)
+            txt = tx("M:N side {0}: click one edge", ab) if context.window_manager.ac9_seam_pick_mode == 'EDGE' else tx("M:N side {0}: click the START", ab)
             if self.runs[self.side]:
                 txt += tx("   >>> Enter: {0} <<<", 'go to side B' if self.side == 0 else 'add the seam')
         else:
             txt = tx("M:N side {0}: click the END", ab)
             if is_closed(self.outlines[self.cur_piece]):
-                txt += tx("   F: other way round ({0})", 'ccw' if self.cur_dir > 0 else 'cw')
+                txt += tx("   F: other way round ({0})", tx('ccw' if self.cur_dir > 0 else 'cw'))
+        if getattr(self, 'edge_unavailable', False):
+            txt = tx("Cannot select one edge here; use Two Points to choose a stretch")
+        txt += tx("   Ctrl: invert snapping")
         la, lb = self._lengths(0), self._lengths(1)
         from . import units as U
         txt += f"   A {U.fmt(context, sum(la))} ({len(la)})"
@@ -478,7 +494,7 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
                 txt += tx("  diff {0}", U.num(context, sum(la) - sum(lb), signed=True))
         if self.runs[0] and self.runs[1] and self.half == 0:
             txt += tx("   -> {0} seam(s)", len(self._pairs()))
-        txt += "   Backspace: back   Esc / right-click: cancel"
+        txt += tx("   Backspace: back   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
     def _pairs(self):
@@ -500,11 +516,14 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
         return out[2:]                                  # the cuts, not the seam's start
 
     def _click(self, context):
+        if not hasattr(self, 'run_steps'):
+            self.run_steps = [[], []]
         if self.hover is None:
             return None
         pc, s, _ = self.hover
         if self.half == 0 and self.hover_edge is not None:
             self.runs[self.side].append(self.hover_edge)
+            self.run_steps[self.side].append(1)
             self._sync()
             return None
         if self.half == 0:
@@ -517,6 +536,7 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
         if gap < 1e-3:
             return None
         self.runs[self.side].append((self.cur_piece, self.cur_start, s, self.cur_dir))
+        self.run_steps[self.side].append(2)
         self.half = 0
         self._sync()
         return None
@@ -534,8 +554,9 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
             self.half = 0
         elif self.runs[self.side]:
             p, s0, _, d = self.runs[self.side].pop()
+            steps = self.run_steps[self.side].pop()
             self.cur_piece, self.cur_start, self.cur_dir, self.dir_forced = p, s0, d, True
-            self.half = 1
+            self.half = 0 if steps == 1 else 1
         elif self.side == 1:
             self.side = 0
         self._sync()
@@ -576,6 +597,8 @@ class AC9_OT_SimAddSeamMN(_AddSeamBase, bpy.types.Operator):
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM'}:
             return {'PASS_THROUGH'}
         self.ctrl = event.ctrl
+        if event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            self._hover_update(context, event.mouse_region_x, event.mouse_region_y)
         if event.type == 'MOUSEMOVE' or event.type in {'LEFT_CTRL', 'RIGHT_CTRL'}:
             self._hover_update(context, event.mouse_region_x, event.mouse_region_y)
             self._status(context)
@@ -604,10 +627,17 @@ CLASSES = (AC9_OT_SimAddSeam, AC9_OT_SimAddSeamMN)
 
 
 def register():
+    bpy.types.WindowManager.ac9_seam_pick_mode = bpy.props.EnumProperty(
+        name="Seam Selection", translation_context=CTX,
+        items=[('EDGE', "One Edge", "Select the highlighted edge on an outline or internal line"),
+               ('POINTS', "Two Points", "Click the start and end on an outline or internal line")],
+        default='EDGE')
     for c in CLASSES:
         bpy.utils.register_class(c)
 
 
 def unregister():
+    if hasattr(bpy.types.WindowManager, 'ac9_seam_pick_mode'):
+        del bpy.types.WindowManager.ac9_seam_pick_mode
     for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)

@@ -2,11 +2,13 @@
 import os
 from .i18n import CTX, fabric_name, tx, wrap
 from . import units as U
+from .core import spec as S
 
 import bpy
 
 from . import store
 from . import selection as SEL
+from . import diagnosis as DIAG
 
 
 class AC9_UL_SimSeams(bpy.types.UIList):
@@ -97,18 +99,21 @@ def draw_solver_preload(layout, context):
         layout.label(text=tx('Waiting for GPU memory'), icon='INFO')
 
 
-# While Live Sim or Local Sim runs, only the values it reads as it runs take effect at once (core/recipe.live_params,
-# solver _live_apply): gravity, an internal line's fold angle / direction / end taper, a seam's On / Off, a piece's
+# While Simulate or Local Sim runs, only the values it reads as it runs take effect at once (core/recipe.live_params,
+# solver _live_apply): gravity, an internal line's fold angle / direction / end taper, a folded seam's fold angle /
+# direction (the seams folded when the run began, user 2026-11-22), a seam's On / Off, a piece's
 # Active / Freeze, Strengthen and a whole piece's Elastic. Every other field is read when a run starts, so it is
 # grayed while one of these runs, and the fields that act at once carry LIVE_ICON (user 2026-11-16: which values
-# can be moved during Live Sim was not visible). A new key in live_params needs its field marked here too.
+# can be moved during Simulate was not visible). A new key in live_params needs its field marked here too.
 LIVE_ICON = 'REC'
 LIVE_STATES = ('active', 'freeze')
-LIVE_FIELDS = ("Gravity", "Fold Angle", "Seam On / Off", "Active / Freeze", "Strengthen", "Elastic (piece)")
+# the folds' fields come from core/fold_effect (when each fold field takes effect)
+from .core import fold_effect as _FE
+LIVE_FIELDS = ("Gravity", *_FE.live_names(), "Seam On / Off", "Active / Freeze", "Strengthen", "Elastic (piece)")
 
 
 def live_running():
-    """True while Live Sim or Local Sim runs (the runs that take changes as they go)."""
+    """True while Simulate or Local Sim runs (the runs that take changes as they go)."""
     from . import dress as D
     return D.AC9_OT_SimDress.running_button() in ('LIVE', 'LOCAL')
 
@@ -122,18 +127,18 @@ def draw_live_note(layout, context):
     """Under the run buttons while Live / Local Sim runs: what it takes now, and that the rest waits."""
     col = layout.column(align=True)
     first = True
-    for ln in wrap(tx("Live now: {0}", ", ".join(tx(f) for f in LIVE_FIELDS)), _wrap_width(context)):
+    for ln in wrap(tx("Takes effect now: {0}", ", ".join(tx(f) for f in LIVE_FIELDS)), _wrap_width(context)):
         col.label(text=ln, icon=LIVE_ICON if first else 'BLANK1')
         first = False
     r = col.row()
     r.active = False
-    r.label(text="Grayed fields: at the next run", icon='BLANK1')
+    r.label(text_ctxt=CTX, text="Grayed fields: at the next run", icon='BLANK1')
 
 
 def draw_run(layout, context, status=True):
     """The run buttons, one place (user 2026-10-14, REVIEW_fable_run_buttons_2026-10-14): Simulate (dresses in
     stages and stops; goes on from the result) and Live (from the shape on screen until stopped, Ctrl+drag pulls),
-    then Reset (back to the placed shapes: the selected pieces, or the whole garment) and Fix by Hand / Back to
+    then Reset (back to the adjusted shapes: the selected pieces, or the whole garment) and Fix by Hand / Back to
     Frames. While a run goes the button that started it reads Stop (pressing it again stops as Esc does) and the
     others are off. Drawn by the Tool tab's AC9 Run (tool_tab.py; user 2026-10-20: the only place in the new
     layout). status: the run's state under the buttons (draw_run_status)."""
@@ -141,35 +146,35 @@ def draw_run(layout, context, status=True):
     run = D.AC9_OT_SimDress.running()
     btn = D.AC9_OT_SimDress.running_button()
     p = context.scene.ac9_cloth_sim
-    # Phase Sim, Local Sim and the Native 3 choice only with Experimental Features on (user 2026-11-12, 0.2.0:
-    # Live Sim at the center for a first user); a run started elsewhere still shows its Stop
+    # Phase Sim only with Experimental Features on (user 2026-11-12, 0.2.0:
+    # Simulate at the center for a first user); a run started elsewhere still shows its Stop
     exp = D.experimental(context)
     L = btn in ('LIVE', 'LOCAL')
     # Kept short (user 2026-11-17, REVIEW_fable_run_panel_location_2026-11-17): the Tool tab is where the selected
     # piece is read, so only what is pressed every run stays open -- the run buttons with Live's Gravity, the two
     # 3D buttons, one status line, and the notes that show only when they apply. What is set once before a run
-    # (Floor, Local's Gravity, Accurate, Native 3, the brush) and the full status and log are under Settings, closed.
+    # (Floor, Accurate, the brush) and the full status and log are under Settings, closed.
     col = layout.column(align=True)
-    if exp or btn in ('SIMULATE', 'LOCAL'):
-        # Phase Sim and Local Sim, Experimental only (user 2026-11-12: Live Sim at the center for a first user); a
-        # run started elsewhere still shows its Stop. The running one drawn pressed, as the tool buttons (10/21)
+    if exp or btn == 'SIMULATE':
+        # Phase Sim, Experimental only (user 2026-11-12: Simulate at the center for a first user); a run started
+        # elsewhere still shows its Stop. The running one drawn pressed, as the tool buttons (10/21). Local Sim has no
+        # button any more (user 2026-11-22, DECISIONS cloth-sim-drop-local-sim-2026-11-22: the selected pieces alone
+        # without gravity drifted; switching the others off or frozen and a Live does the same)
         row = col.row(align=True)
-        if exp or btn == 'SIMULATE':
-            sub = row.row(align=True)
-            sub.enabled = run is None or btn == 'SIMULATE'
-            sub.operator("ac9_cloth_sim.update_3d", text="Stop" if btn == 'SIMULATE' else "Phase Sim",
-                         icon='PAUSE' if btn == 'SIMULATE' else 'PLAY', depress=btn == 'SIMULATE')
-        if exp or btn == 'LOCAL':
-            _run_button(row, run, btn, 'LOCAL', "Local Sim", 'PIVOT_INDIVIDUAL')
+        sub = row.row(align=True)
+        sub.enabled = run is None or btn == 'SIMULATE'
+        sub.operator("ac9_cloth_sim.update_3d", text="Stop" if btn == 'SIMULATE' else "Phase Sim",
+                     icon='PAUSE' if btn == 'SIMULATE' else 'PLAY', depress=btn == 'SIMULATE')
     row = col.row(align=True)
-    _run_button(row, run, btn, 'LIVE', "Live Sim", 'HAND')
+    _run_button(row, run, btn, 'LIVE', S.run_name('LIVE'), 'HAND')
     sub = row.row(align=True)
     sub.ui_units_x = 4.5                 # the button takes the rest; "Gravity" whole at the default width
     sub.prop(p, "live_gravity", text="Gravity", icon=live_icon(L))
-    if btn == 'LOCAL':                   # the gravity Local Sim takes while it runs: beside its Stop
-        col.prop(p, "local_gravity", text="Gravity (Local Sim)", icon=live_icon(L))
     if L:
         draw_live_note(layout, context)
+        if D.AC9_OT_SimDress.held_pieces():
+            # Freeze Garment While Sewing: the garment tinted as Freeze until the re-placed piece is sewn on
+            layout.label(text_ctxt=CTX, text="Garment frozen until the piece is sewn on", icon='FREEZE')
     # pattern edits to the 3D at once, or when asked (user 2026-10-27, TASKS 85): under the run buttons, where the
     # runs that take the waiting edits are
     # always both, side by side (user 2026-10-28: no button that shows up only now and then): the switch as a button
@@ -180,9 +185,9 @@ def draw_run(layout, context, status=True):
     sub = row.row(align=True)
     sub.alert = p.sync_pending
     sub.operator("ac9_cloth_sim.sync_3d", icon='FILE_REFRESH')
-    # Back to Placed (the old Reset) is with the other "Back to" in Placement (user 2026-10-22)
+    # Back to Adjusted Shape (the old Reset) is with the other "Back to" in Placement (user 2026-10-22)
     spec = store.get(context)[0]
-    g = bpy.data.objects.get(D.garment_name(spec)) if spec is not None else None
+    g = D.garment(spec) if spec is not None else None
     draw_fix_by_hand(layout, context, g, enabled=run is None)
     # pieces a Reset put back: what the next Simulate does with them (an id property, cheap to read in a draw)
     n = len(D.reset_pieces(g))
@@ -200,35 +205,32 @@ def draw_run(layout, context, status=True):
         draw_run_status(layout, context, spec)
     # Settings, closed: always there (no button that shows up only now and then, 10/28)
     head, body = layout.panel("ac9_cloth_sim_run_settings", default_closed=True)
-    head.label(text="Settings")
+    head.label(text_ctxt=CTX, text="Settings")
     if body is None:
         return
     # the floor at Z = 0 for every run (user 2026-11-10); off while one runs (read at its start)
     col = body.column(align=True)
     col.enabled = run is None
     col.prop(p, "floor", text="Floor (Z = 0)")
-    if exp and btn != 'LOCAL':           # Local Sim starts without gravity by default (user 2026-10-23)
-        col.prop(p, "local_gravity", text="Gravity (Local Sim)")
-    # Research controls only under Experimental Features (user 2026-11-14); Native 3 remains the default and its
-    # stored preference survives the research override
+    col.prop(p, "hold_while_sewing")
+    # Research controls only under Experimental Features (user 2026-11-14). Native 3 has no switch (always on, user
+    # 2026-11-22); the research solver still takes Simulate over while it is on
     if exp:
         col.prop(p, "accurate_research", text="Accurate (Research)")
         if p.accurate_research:
-            col.label(text="Live Sim only", icon='INFO')
-            col.label(text="May be slower")
-        sub = col.row()
-        sub.enabled = run is None and not p.accurate_research
-        sub.prop(p, "native_three", text="Native 3")
+            col.label(text=tx("{0} only", tx(S.run_name('LIVE'))), icon='INFO')
+            col.label(text_ctxt=CTX, text="May be slower")
     # the stroke brush (Ctrl+Shift+drag while Live runs, user 2026-11-02): set once before a run
     row = body.row(align=True)
     row.prop(p, "stroke_radius_len", text="Smooth")
     row.prop(p, "stroke_strength", text="Strength")
     if spec is not None:
         draw_run_log(body, context)
+    # Diagnostic reporting is withheld until its content and intake workflow are agreed.
 
 
 def _run_button(row, run, btn, mode, text, icon):
-    """One of Live Sim / Local Sim: Stop while it runs (pressed), off while another runs."""
+    """Simulate's button: Stop while it runs (pressed), off while another runs."""
     sub = row.row(align=True)
     sub.enabled = run is None or btn == mode
     op = sub.operator("ac9_cloth_sim.dress", text="Stop" if btn == mode else text,
@@ -268,6 +270,20 @@ def draw_cache_row(layout, context):
     prefs = D.addon_prefs(context)
     if prefs is not None:
         row.prop(prefs, "keep_cache", text="Keep Cache")
+        # every frame of a Live run, not only the sewing ones (user 2026-11-23)
+        r2 = layout.row(align=True)
+        r2.enabled = bool(prefs.keep_cache)
+        r2.prop(prefs, "keep_all_frames", text=D.KEEP_ALL_FRAMES_NAME)
+    # this file's run folders (user 2026-11-22): how much they take, and the older runs deleted now
+    from . import blend_record as BR
+    mb, old = BR.usage()
+    row = layout.row(align=True)
+    row.label(text_ctxt=CTX, text=tx("Runs: {0:.0f} MB", mb) if mb is not None else tx("Runs: measuring"), icon='DISK_DRIVE')
+    sub = row.row(align=True)
+    sub.enabled = D.AC9_OT_SimDress.running() is None and bool(old)
+    sub.operator("ac9_cloth_sim.clean_up_runs", text=tx("Clean Up ({0:.0f} MB)", old) if old else tx("Clean Up"),
+                 icon='BRUSH_DATA')
+    # Check Start Shapes left this row (user 2026-11-23): Placement > Diagnose reports the same lines
 
 
 def draw_fix_by_hand(layout, context, g, enabled=True):
@@ -358,9 +374,7 @@ def draw_run_log(body, context):
         for entry in props.log_tail.split(chr(10))[-3:]:
             for i, line in enumerate(wrap(entry, n)[:2]):
                 col.label(text=line if i == 0 else '  ' + line)
-    col = body.column(align=True)        # one a row: "To AC9 Cloth Retopo" does not fit beside Log
-    col.operator("ac9_cloth_sim.log", text=tx("Log"), icon='TEXT')
-    col.operator("ac9_cloth_sim.export_retopo", text="To AC9 Cloth Retopo", icon='EXPORT')
+    body.operator("ac9_cloth_sim.log", text=tx("Log"), icon='TEXT')
     draw_cache_row(body, context)
 
 
@@ -376,11 +390,43 @@ class AC9_PT_SimMissing(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        from . import draft_tool as DT
-        return bool(DT.missing_pieces(context, store.get(context)[0]))
+        from . import pattern_view as PV
+        spec = store.get(context)[0]
+        return spec is not None and not PV.integrity(context, spec)['ok']
 
     def draw(self, context):
         draw_missing_pieces(self.layout, context, store.get(context)[0])
+
+
+class AC9_PT_SimLegacyOwner(bpy.types.Panel):
+    """An unresolved saved 3D result must not silently look like an absent result."""
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "AC9 Cloth Sim"
+    bl_label = "Garment Ownership"
+    bl_options = {'HIDE_HEADER'}
+
+    @classmethod
+    def poll(cls, context):
+        from . import legacy_garment
+        return bool(legacy_garment.notices(context))
+
+    def draw(self, context):
+        from . import legacy_garment
+        box = self.layout.box()
+        box.alert = True
+        entries = legacy_garment.notices(context)
+        width = max(16, _wrap_width(context) - 8)  # box padding and the leading warning icon
+        for i, line in enumerate(wrap(tx("A garment result has unclear ownership"), width)):
+            box.label(text=line, icon='ERROR' if i == 0 else 'NONE')
+        for name, reason in entries[:3]:
+            for line in wrap(name + ': ' + tx(reason), width):
+                box.label(text=line)
+        if len(entries) > 3:
+            box.label(text=tx("{0} more garment result(s)", len(entries) - 3))
+        for line in wrap(tx("Check the original result folder and pattern, then recheck ownership"), width):
+            box.label(text=line)
+        box.operator("ac9_cloth_sim.recheck_garment_owner", icon='FILE_REFRESH')
 
 
 class AC9_PT_SimMain(bpy.types.Panel):
@@ -424,12 +470,12 @@ class AC9_PT_SimMain(bpy.types.Panel):
         if store.text(context) is not None and spec is None:
             box = layout.box()
             box.alert = True
-            box.label(text="The spec text is not valid JSON", icon='ERROR')
+            box.label(text_ctxt=CTX, text="The spec text is not valid JSON", icon='ERROR')
             box.label(text=(store.error() or '')[:80])
             layout.operator("ac9_cloth_sim.refresh", icon='FILE_REFRESH')
             return
         if spec is None:
-            layout.label(text="No pattern yet", icon='INFO')
+            layout.label(text_ctxt=CTX, text="No pattern yet", icon='INFO')
             return
         on = sum(1 for pc in spec['pieces'] if pc.get('enabled', True))
         col = layout.column(align=True)
@@ -447,6 +493,9 @@ class AC9_PT_SimMain(bpy.types.Panel):
         draw_garments(layout, spec)
         draw_overlay_switch(layout.row(align=True), props)
         layout.operator("ac9_cloth_sim.refresh", icon='FILE_REFRESH')
+        # handing the dressed garment on to the next tool is not a setting of a run (user 2026-11-23): at Setup's foot
+        layout.separator()
+        layout.operator("ac9_cloth_sim.export_retopo", text="To AC9 Cloth Retopo", icon='EXPORT')
 
 
 def draw_units(layout, context):
@@ -454,7 +503,7 @@ def draw_units(layout, context):
     distance stays mm."""
     from . import units
     row = layout.row(align=True)
-    row.label(text="Units")
+    row.label(text_ctxt=CTX, text="Units")
     cur = units.current(context)
     for key, label, _sy, _lu in units.CHOICES:
         row.operator("ac9_cloth_sim.set_units", text=label, depress=(cur == key)).unit = key
@@ -480,7 +529,7 @@ def draw_garments(layout, spec):
         row.alert = bool(g.get('check'))
         on = sum(1 for pc in spec['pieces'] if pc['name'] in set(names) and pc.get('enabled', True))
         op = row.operator("ac9_cloth_sim.select_garment", icon='STICKY_UVS_LOC',
-                          text=f"{g.get('name', gid) or tx('(no garment)')} ({on}/{len(names)})")
+                          text=f"{g.get('name', gid) or tx('(no garment)')} ({on}/{len(names)})", translate=False)
         op.garment = gid
         row.operator("ac9_cloth_sim.rename_garment", text="", icon='GREASEPENCIL').garment = gid
     if alone:
@@ -551,7 +600,7 @@ class AC9_PT_SimDraft(bpy.types.Panel):
         # what is done to the selected pieces (the Tool tab's AC9 Piece holds their settings; user 2026-10-21)
         layout.separator()
         col = layout.column(align=True)
-        col.label(text="Selected Pieces")
+        col.label(text_ctxt=CTX, text="Selected Pieces")
         row = col.row(align=True)
         row.operator("ac9_cloth_sim.mirror_copy", text="Mirror Copy", icon='MOD_MIRROR')
         # (Mirror to Pair, a twin made the mirror image of the other again, was taken out: deleting one and Mirror
@@ -570,7 +619,7 @@ class AC9_PT_SimDraft(bpy.types.Panel):
             box.label(text=tx("{0} left / right pair(s) no longer mirror images", len(apart)), icon='ERROR')
             for a, b in apart[:3]:
                 box.label(text=tx("    {0}  /  {1}", a, b))
-            box.label(text="Delete one and Mirror Copy the other to make them match")
+            box.label(text_ctxt=CTX, text="Delete one and Mirror Copy the other to make them match")
         draw_keys(layout, context)
         # Simulate is in the Run panel (user 2026-10-14: one place for the run buttons)
 
@@ -580,7 +629,7 @@ def draw_keys(layout, context):
     cursor (user 2026-10-23, Fable review REVIEW_fable_tool_hints_2026-10-23)."""
     from . import draft_tool as DT
     head, body = layout.panel("ac9_cloth_sim_pattern_keys", default_closed=True)
-    head.label(text="Keys", icon='EVENT_K')
+    head.label(text_ctxt=CTX, text="Keys", icon='EVENT_K')
     if body is None:
         return
     n = max(12, _wrap_width(context) - 12)
@@ -590,7 +639,7 @@ def draw_keys(layout, context):
         for key, what in keys:
             for i, ln in enumerate(wrap(tx(what), n)):
                 sp = col.split(factor=0.3, align=True)
-                sp.label(text=(tx(key) if key in ("click", "drag") else key) if i == 0 else "")   # a letter as is
+                sp.label(text_ctxt=CTX, text=(tx(key) if key in ("click", "drag") else key) if i == 0 else "")   # a letter as is
                 sp.label(text=ln)
 
 
@@ -600,7 +649,7 @@ def draw_seam_list(layout, context, spec):
     props = context.scene.ac9_cloth_sim
     n_flag = sum(1 for sm in spec['seams'] if sm.get('check'))
     row = layout.row()
-    row.label(text=tx("{0} seams", len(spec['seams'])) + (tx(", {0} to check", n_flag) if n_flag else ""))
+    row.label(text_ctxt=CTX, text=tx("{0} seams", len(spec['seams'])) + (tx(", {0} to check", n_flag) if n_flag else ""))
     row.prop(props, "seams_selected_only", text="", icon='RESTRICT_SELECT_OFF')
     layout.template_list("AC9_UL_SimSeams", "", props, "seams", props, "seam_index", rows=8)
 
@@ -611,20 +660,20 @@ def draw_seam_attrs(layout, context, spec, act, viewport=True):
     props = context.scene.ac9_cloth_sim
     from .core import seam_edit as SE
     sel = store.selected_seams(context, spec)
-    L = live_running()               # Live takes On / Off as it runs, nothing else of a seam
+    L = live_running()               # Live takes On / Off as it runs (and a folded seam's angle)
     if len(sel) > 1:                # several picked (Shift+click): only what acts on all of them
         layout.label(text=tx("{0} seams selected", len(sel)), icon='RESTRICT_SELECT_OFF')
-        layout.label(text=", ".join(sm['id'] for sm in sel[:6]) + (" ..." if len(sel) > 6 else ""))
+        layout.label(text_ctxt=CTX, text=", ".join(sm['id'] for sm in sel[:6]) + (" ..." if len(sel) > 6 else ""))
         row = layout.row(align=True)
         row.operator("ac9_cloth_sim.seam_edit", text="On" if not act.get('enabled', True) else "Off",
                      icon=LIVE_ICON if L else 'CHECKBOX_HLT').action = 'TOGGLE'
         sub = row.row(align=True)
         sub.enabled = not L
         sub.operator("ac9_cloth_sim.seam_edit", text="Delete", icon='TRASH').action = 'DELETE'
-        layout.label(text="Shift+click: add / take out", icon='INFO')
+        layout.label(text_ctxt=CTX, text="Shift+click: add / take out", icon='INFO')
         return
     n_st = len(SE.stretches(spec, act))
-    layout.label(text=tx("Seam {0}", act['id']) + (tx("  (M:N, {0} stretches)", n_st) if n_st > 1 else ""))
+    layout.label(text_ctxt=CTX, text=tx("Seam {0}", act['id']) + (tx("  (M:N, {0} stretches)", n_st) if n_st > 1 else ""))
     if act.get('check'):
         # wrapped to the region's width: a check reads "shared line: other pieces use the same line number"
         import textwrap
@@ -640,7 +689,7 @@ def draw_seam_attrs(layout, context, spec, act, viewport=True):
         col = layout.column(align=True)
         col.alert = True
         col.label(text=tx("Same lines as {0}", ', '.join(dup[:3])), icon='ERROR')
-        col.label(text="(a duplicate: delete one)", icon='BLANK1')
+        col.label(text_ctxt=CTX, text="(a duplicate: delete one)", icon='BLANK1')
     it = props.seams[props.seam_index]
     lab = {pc['name']: pc.get('label') for pc in spec['pieces']}
     for k, Ln in (('a', it.len_a), ('b', it.len_b)):
@@ -650,9 +699,8 @@ def draw_seam_attrs(layout, context, spec, act, viewport=True):
         if 'line' in sd:
             txt = tx("{0}: {1}  internal {2}  {3:.2f} > {4:.2f}", k.upper(), nm, sd['line'], sd['from'], sd['to'])
         else:
-            arrow = "ccw" if sd['dir'] > 0 else "cw"
-            txt = (f"{k.upper()}: {nm}  {sd['from'][0]} {sd['from'][1]:.2f} > "
-                   f"{sd['to'][0]} {sd['to'][1]:.2f} ({arrow})")
+            txt = tx("{0}: {1}  {2} {3:.2f} > {4} {5:.2f} ({6})", k.upper(), nm, sd['from'][0], sd['from'][1],
+                     sd['to'][0], sd['to'][1], tx("ccw" if sd['dir'] > 0 else "cw"))
         layout.label(text=txt)
         r = layout.row(align=True)
         r.label(text="    " + U.fmt(context, Ln))
@@ -661,24 +709,34 @@ def draw_seam_attrs(layout, context, spec, act, viewport=True):
             mv.enabled = not L
             mv.operator("ac9_cloth_sim.seam_move_side", text=tx("Move {0}", k.upper()), icon='FORWARD').side = k
     _seam_buttons(layout, spec, act, L)
+    outer = layout
     layout = layout.column()         # the rest is read when a run starts
     layout.enabled = not L
-    if act['a']['piece'] == act['b']['piece']:
-        # a closure (a stand's, a cuff's ends buttoned over each other): which end goes on top on its placed ring
-        # (user 2026-11-02/03, DECISIONS cloth-sim-closure-over-2026-11-02)
-        r = layout.row(align=True)
-        r.label(text=tx("Over"))
-        r.prop(context.scene, "ac9_seam_over", expand=True)
+    # which end of a closure is on top is the piece's Ends now (AC9 Piece > Placement, user 2026-11-22); a seam's
+    # 'over' from an older file is still read while the piece has no Ends (closure.top_end)
     from . import dart_ui
+    from . import dress as _D
     dart_ui.draw_dart_rows(layout, context, spec, act, viewport)
     # the angle the two sides keep across the seam while simulated (user 2026-10-23), as on internal lines; on
     # every seam alike, a dart's or a one-piece sleeve's too (user 2026-10-23)
-    f = layout.column()
+    # Live takes the angle and the direction of a seam folded when it began (user 2026-11-22, its fold hinges ease
+    # to the new angle), not Turns nor a seam it began with unfolded
+    folded = L and str(act['id']) in _D.AC9_OT_SimDress.live_seam_folds()
+    live_fold = _FE.live_now("ac9_seam_fold_angle", L, folded)
+    f = (outer if live_fold else layout).column()
     f.use_property_split = True
     f.use_property_decorate = False
-    f.prop(context.scene, "ac9_seam_fold", text="Fold (deg)")
+    # an angle and Mountain / Valley, as on internal lines (user 2026-11-22: a signed angle did not say which way the
+    # seam folds), seen from the face of the piece that turns (Turns)
+    f.prop(context.scene, "ac9_seam_fold_angle", icon=live_icon(live_fold))
+    if abs(context.scene.ac9_seam_fold) > 1e-6:
+        f.row(align=True).prop(context.scene, "ac9_seam_fold_dir", expand=True)
+    if live_fold:
+        f = layout.column()
+        f.use_property_split = True
+        f.use_property_decorate = False
     if abs(context.scene.ac9_seam_fold) > 1e-6 and act['a']['piece'] != act['b']['piece']:
-        # the piece that turns on the placed shape (user 2026-10-24: was the Fold button's Tab)
+        # the piece that turns on the adjusted shape (user 2026-10-24: was the Fold button's Tab)
         f.row(align=True).prop(context.scene, "ac9_seam_fold_turn", expand=True)
         from . import place_fold as PF
         PF.draw_why(f, context, PF.seam_turn(spec, act), PF.SEAM_KEY + act['id'])
@@ -690,7 +748,7 @@ def draw_seam_attrs(layout, context, spec, act, viewport=True):
     if not _AT.ON_HOLD:
         _seam_attach_rows(layout, spec, act)
     if not viewport:
-        layout.label(text="Move a side: Edit Seams tool on the pattern", icon='INFO')
+        layout.label(text_ctxt=CTX, text="Move a side: Edit Seams tool on the pattern", icon='INFO')
 
 
 def _sfold_get(self):
@@ -717,28 +775,27 @@ def _sfold_set(self, v):
     if abs(v) > 1e-6:
         folds += [dict(old.get(r, {}), seam=r, deg=round(float(v), 2)) for r in run]
     store.put(context, dict(spec, folds=folds), keep=True, seams=False)       # only the folds change
-    # folded on the placed shape already: folded again now, the same piece turning (user 2026-10-23)
+    # folded on the adjusted shape already: folded again now, the same piece turning (user 2026-10-23)
     from . import place_fold as PF
     PF.refold_seam(context, act['id'], float(v))
     overlay.invalidate()
 
 
-def _sover_get(self):
-    spec = store.get(bpy.context)[0]
-    act = store.active_seam(bpy.context, spec) if spec else None
-    return {'a': 1, 'b': 2}.get((act or {}).get('over'), 0)
+def _sfangle_get(self):
+    return abs(_sfold_get(self))
 
 
-def _sover_set(self, v):
-    """The seam's 'over' in the spec ('a' / 'b', none removes it): closure.py puts that end on top."""
-    context = bpy.context
-    spec = store.get(context)[0]
-    act = store.active_seam(context, spec) if spec else None
-    if act is None or v == _sover_get(self):
-        return
-    seams = [dict({k: x for k, x in sm.items() if k != 'over'}, **({'over': 'ab'[v - 1]} if v else {}))
-             if sm['id'] == act['id'] else sm for sm in spec['seams']]
-    store.put(context, dict(spec, seams=seams), seams=False)
+def _sfangle_set(self, v):
+    _sfold_set(self, -abs(v) if _sfold_get(self) < 0 else abs(v))          # Mountain from flat
+
+
+def _sfdir_get(self):
+    return 1 if _sfold_get(self) < 0 else 0
+
+
+def _sfdir_set(self, v):
+    a = abs(_sfold_get(self))
+    _sfold_set(self, -a if v == 1 else a)
 
 
 def _sturn_items(self, context):
@@ -746,8 +803,8 @@ def _sturn_items(self, context):
     act = store.active_seam(context, spec) if spec else None
     if act is None:
         return [('A', "A", ""), ('B', "B", "")]
-    return [('A', act['a']['piece'][:16], "This piece turns over the seam on the placed shape"),
-            ('B', act['b']['piece'][:16], "This piece turns over the seam on the placed shape")]
+    return [('A', act['a']['piece'][:16], "This piece turns over the seam on the adjusted shape"),
+            ('B', act['b']['piece'][:16], "This piece turns over the seam on the adjusted shape")]
 
 
 def _sturn_get(self):
@@ -785,17 +842,17 @@ def _seam_path_rows(box, spec, act):
     if pth:
         gname, _g = SPATH.guide_of(spec, act)
         row = box.row(align=True)
-        row.label(text="Part")
+        row.label(text_ctxt=CTX, text="Part")
         row.operator_menu_enum("ac9_cloth_sim.seam_path_part", "guide", text=gname or "none")
         if gname is None:
-            box.label(text="No body part: pulled straight", icon='ERROR')
+            box.label(text_ctxt=CTX, text="No body part: pulled straight", icon='ERROR')
 
 
 def _seam_attach_rows(box, spec, act):
     """The tape on the body the seam is held to while simulated (core/attach.py): its name, and for how long"""
     att = next((a for a in spec.get('attach', []) if str(a.get('seam')) == str(act['id'])), None)
     row = box.row(align=True)
-    row.label(text="Tape")
+    row.label(text_ctxt=CTX, text="Tape")
     from .measure_tool import LABEL
     row.operator_menu_enum("ac9_cloth_sim.seam_attach", "tape", text=tx(LABEL.get(att['tape'], att['tape'])) if att else "None")
     if att:
@@ -811,11 +868,11 @@ def _seam_buttons(layout, spec, act, live=False):
     # live: Live / Local Sim runs, only On / Off acts at once
     box = layout.column()
     box.enabled = not live
-    box.label(text="Fit the length of")
+    box.label(text_ctxt=CTX, text="Fit the length of")
     row = box.row(align=True)
     row.operator("ac9_cloth_sim.match_length", text="A").side = 'a'
     row.operator("ac9_cloth_sim.match_length", text="B").side = 'b'
-    box.label(text="Flip the direction of")
+    box.label(text_ctxt=CTX, text="Flip the direction of")
     row = box.row(align=True)
     row.operator("ac9_cloth_sim.seam_edit", text="A").action = 'FLIP_A'
     row.operator("ac9_cloth_sim.seam_edit", text="B").action = 'FLIP_B'
@@ -844,7 +901,9 @@ class AC9_PT_SimRoles(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return store.get(context)[0] is not None
+        # under Experimental Features (user 2026-11-22, DECISIONS cloth-sim-roles-auto-dressing-2026-11-22)
+        from . import dress as D
+        return store.get(context)[0] is not None and D.experimental(context)
 
     def draw(self, context):
         from .core import roles as RO
@@ -854,7 +913,7 @@ class AC9_PT_SimRoles(bpy.types.Panel):
         set_ = [p for p in on if p.get('role_by')]
         ask = [p for p in on if p.get('role_ask')]
         g = (spec.get('garment') or {}).get('kind')
-        layout.label(text=(tx("{0}: ", tx(RO.GARMENTS.get(g, g))) if g else "") + tx("{0} / {1} set, {2} to check", len(set_), len(on), len(ask)))
+        layout.label(text_ctxt=CTX, text=(tx("{0}: ", tx(RO.GARMENTS.get(g, g))) if g else "") + tx("{0} / {1} set, {2} to check", len(set_), len(on), len(ask)))
         layout.operator("ac9_cloth_sim.propose_roles", icon='LIGHT')
         col = layout.column(align=True)
         for p in sorted(on, key=lambda p: (not p.get('role_ask'), p['name']))[:ROLE_ROWS]:
@@ -865,13 +924,30 @@ class AC9_PT_SimRoles(bpy.types.Panel):
             sp.label(text=nm, icon='ERROR' if p.get('role_ask') else
                      ('USER' if p.get('role_by') == 'user' else 'BLANK1'))
             sp = sp.split(factor=0.5, align=True)
-            sp.label(text=tx(RO.EN.get(RO.role_of(p), "Other")) if p.get('role_by') or p.get('role') else "-")
+            sp.label(text_ctxt=CTX, text=tx(RO.EN.get(RO.role_of(p), "Other")) if p.get('role_by') or p.get('role') else "-")
             stt = RO.start_of(p)
             sub = sp.row(align=True)
             sub.active = stt != 'placed'
             sub.label(text=tx(RO.START_EN[stt]))
         if len(on) > ROLE_ROWS:
             col.label(text=tx("... {0} more", len(on) - ROLE_ROWS))
+
+
+class AC9_PT_SimDiagnosis(bpy.types.Panel):
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "AC9 Cloth Sim"
+    bl_label = DIAG.NAME
+
+    @classmethod
+    def poll(cls, context):
+        return store.get(context)[0] is not None
+
+    def draw(self, context):
+        from . import place_check as PCK, diagnosis
+        spec, _outlines = store.get(context)
+        self.layout.operator("ac9_cloth_sim.diagnose_placed", text=PCK.NAME, icon='VIEWZOOM')
+        diagnosis.draw_result(self.layout, context, spec)
 
 
 class AC9_PT_SimPlacement(bpy.types.Panel):
@@ -906,30 +982,30 @@ class AC9_PT_SimPlacement(bpy.types.Panel):
         else:
             row.operator("ac9_cloth_sim.edit_guides", icon='OBJECT_ORIGIN')
         gd = spec.get('guides', {})
-        if not gd:
-            layout.label(text="Pick the body, then Detect Guides", icon='INFO')
-            return
+        if not gd and props.body is not None:
+            layout.label(text_ctxt=CTX, text="Pick the body, then Detect Guides", icon='INFO')
+        # Guides are optional: Place also lays pieces flat on a surface or the floor. Keep the tools and
+        # body-independent checks/restoration available for bags and other garments without an avatar.
         on = [pc['name'] for pc in spec['pieces'] if pc.get('enabled', True)]
         placed = [n for n in on if n in spec.get('placement', {})]
         layout.label(text=tx("{0} guides; {1} / {2} pieces placed", len(gd), len(placed), len(on)))
         # Place is the Place tool (its operator only works in the 3D view's own region); dragging with it slides the
         # pieces round their guide, which Adjust did (user 2026-10-15)
+        # Place and Whole Pieces side by side: placing and moving a placed piece (user 2026-11-23, Fable review
+        # REVIEW_fable_placement_panel_2026-11-23 b-2; the hint line that named Whole Pieces is gone). How to drag is
+        # in Place's tooltip and its header while dragging; how to pick targets is in the status bar while picking
+        # (b-3): the panel holds buttons and states only
         row = layout.row(align=True)
         from . import toolbar as TB
         TB.tool_button(row, context, "ac9_cloth_sim.place_tool", "Place", 'PIVOT_CURSOR')
-        # the Overlays' Stretch here too: the popover is easily missed, and a placed piece is where it shows first
-        # (Fable review 2026-11-02 §2.2)
-        row.prop(props, "show_stretch", text="", icon='MOD_SIMPLEDEFORM')
-        # no Move by Hand button (user 2026-11-20): Whole Pieces picks a placed piece or a piece on the garment in 3D
-        # and its gizmo moves it; the placed shapes are made by Place and when the guides are found again
-        draw_hint(layout, context, tx("Pick pieces, press on a guide, drag, release, then Live Sim"))
+        TB.tool_button(row, context, TB.WHOLE_PIECES_ID, TB.NAMES['TRANSFORM_PATTERN'], 'ORIENTATION_GLOBAL')
         from . import placed_view as PLV
         nob = len({ob.name for ob in PLV.objects(spec).values()})
         from . import dress as D
-        dressed = D.has_result(bpy.data.objects.get(D.garment_name(spec)))
-        # no Fold button (user 2026-10-24): the Tool tab's Fold Angle on a line, a seam's Fold (deg), fold the placed shape
+        dressed = D.has_result(D.garment(spec))
+        # no Fold button (user 2026-10-24): the Tool tab's Fold Angle on a line, a seam's Fold (deg), fold the adjusted shape
         # The tools that pick targets (click, Enter) apart from the ones that act on a press, each under a short
-        # heading (user 2026-11-15, Fable review 2026-11-15 3-1): the hints under the first row read as the second's
+        # heading (user 2026-11-15, Fable review 2026-11-15 3-1)
         layout.label(text=tx("Sew On"), icon='SNAP_EDGE')
         # a small piece carried onto the pieces it is sewn to, its shape kept as far as it goes (user 2026-10-22)
         row = layout.row(align=True)
@@ -937,12 +1013,9 @@ class AC9_PT_SimPlacement(bpy.types.Panel):
         row.operator("ac9_cloth_sim.move_to_seam", text="Part to Seam", icon='SNAP_EDGE')
         # a narrow band laid on the edge it is sewn to, for Live (user 2026-10-22)
         row.operator("ac9_cloth_sim.lay_on_edge", text="Band on Edge", icon='MOD_CURVE')
-        if show_hints(context):
-            col = layout.column(align=True)
-            col.label(text=tx("Choose targets, then Enter"), icon='INFO')
-            col.label(text=tx("Shift-click: add/remove"), icon='BLANK1')
-            col.label(text=tx("A: all targets; Esc: cancel"), icon='BLANK1')
-        layout.label(text=tx("Fix Overlaps"), icon='SELECT_EXTEND')
+        # check first, then fix (user 2026-11-23 b-1): Diagnose says what is inside the body or through cloth, red,
+        # moving nothing; its line is what the last press found (no shape read here)
+        layout.label(text=tx("Adjust Placement"), icon='SELECT_EXTEND')
         row = layout.row(align=True)
         # the piece on top of the ones it overlaps, only when asked (user 2026-10-25)
         row.operator("ac9_cloth_sim.move_outside", text="Move Outside", icon='SELECT_EXTEND')
@@ -950,24 +1023,23 @@ class AC9_PT_SimPlacement(bpy.types.Panel):
         row.operator("ac9_cloth_sim.settle_placed", text="Settle", icon='MOD_SMOOTH')
         # the three steps back, the nearest first: the selected pieces, else all (user 2026-10-22)
         col = layout.column(align=True)
-        col.operator("ac9_cloth_sim.reset", text="Back to Placed", icon='LOOP_BACK')
-        col.operator("ac9_cloth_sim.reset_placed", text="Back to Guide", icon='LOOP_BACK')
+        col.operator("ac9_cloth_sim.reset", text="Back to Adjusted Shape", icon='LOOP_BACK')
+        col.operator("ac9_cloth_sim.reset_placed", text="Back to Placed Shape", icon='LOOP_BACK')
         col.operator("ac9_cloth_sim.clear_placement", text="Back to Flat", icon='MESH_PLANE')
-        if dressed:
-            draw_hint(layout, context, tx("Simulated: Whole Pieces, click a piece on the garment to move it"))
-        elif nob:
-            draw_hint(layout, context, tx("Whole Pieces: click a placed piece to move it"))
-        elif placed:
-            # placed but no objects (Place and the guides found again make them): nothing to click in 3D
-            draw_hint(layout, context, tx("No placed shapes: Place the pieces again"))
+        row = layout.row()
+        row.operator("ac9_cloth_sim.unplace", text=S.UNPLACE_NAME, icon='X')
+        if placed and not nob and not dressed:
+            # placed but no objects (Place and the guides found again make them): nothing to click in 3D. A state,
+            # not a how-to: shown with Show Hints off too (Fable review 2026-11-23 a-7)
+            draw_state(layout, context, tx("No placed shapes: Place the pieces again"), icon='ERROR')
         ob = context.active_object
         if ob is not None and ob.get(PLV.PROP) and ob.get(PLV.GARMENT_PROP, '') == PLV.garment(spec):
             # the active placed piece's move from its placement (the spec's pose; G / R and the fields change it)
             p = PLV.pose_of(ob) or {'loc': [0.0] * 3, 'rot': [0.0] * 3}
             col = layout.column(align=True)
             col.label(text=ob[PLV.PROP] + (tx(" + {0}", ob[PLV.TWIN_PROP]) if ob.get(PLV.TWIN_PROP) else ""))
-            col.label(text=tx("Move ") + "  ".join(U.num(context, v, signed=True) for v in p['loc']) + " " + U.unit(context)[1])
-            col.label(text=tx("Turn ") + "  ".join(tx("{0:+.1f}", v) for v in p['rot']) + tx(" deg"))
+            col.label(text_ctxt=CTX, text=tx("Move ") + "  ".join(U.num(context, v, signed=True) for v in p['loc']) + " " + U.unit(context)[1])
+            col.label(text_ctxt=CTX, text=tx("Turn ") + "  ".join(tx("{0:+.1f}", v) for v in p['rot']) + tx(" deg"))
             # Type Move (set_pose) is not drawn here (user 2026-11-12): Tool tab > AC9 Piece > Location & Rotation
         # the pair's state and buttons: Tool tab > AC9 Piece > Pair (user 2026-11-11, REVIEW_fable_pair_ui b-1)
 
@@ -982,7 +1054,7 @@ def lr_state(spec, name):
     for a, b in S.twins(spec):
         if name in (a, b):
             o = b if name == a else a
-            if pl.get(a, {}).get('unlinked') or pl.get(b, {}).get('unlinked'):
+            if S.pair_unlinked(spec, a, b):
                 return ([tx("Set apart from {0}", o), tx("Link: place as a pair")], 'unlinked')
             return ([tx("Pair: {0} follows", o), tx("as its mirror image")], 'twin')
     for p in spec.get('pairs', []):
@@ -1004,8 +1076,15 @@ def draw_hint(layout, context, text, icon='INFO'):
     if not show_hints(context):
         return
     col = layout.column(align=True)
-    for i, line in enumerate(wrap(text, max(12, _wrap_width(context) - 4))):
+    for i, line in enumerate(wrap(tx(text), max(12, _wrap_width(context) - 4))):
         col.label(text=line, icon=icon if i == 0 else 'BLANK1')
+
+
+def draw_state(layout, context, text, icon='INFO'):
+    """A state line (already translated), wrapped to the region, shown whatever Show Hints is."""
+    col = layout.column(align=True)
+    for i, line in enumerate(wrap(text, max(12, _wrap_width(context) - 4))):
+        col.label(text=line, icon=icon if i == 0 else 'BLANK1', translate=False)
 
 
 # the eye is the 3D display's alone (piece_hide); Off is a cross: it left the simulation, it is not just hidden
@@ -1071,22 +1150,26 @@ def draw_garment_rows(layout, context):
             op = r.operator("ac9_cloth_sim.piece_state", text="", icon=STATE_ICON[st])
             op.state, op.scope, op.text = st, 'GARMENT', tname
     if len(rows) > 1:
-        layout.label(text="Other garments: obstacles, not moved", icon='INFO')
+        layout.label(text_ctxt=CTX, text="Other garments: obstacles, not moved", icon='INFO')
 
 
-def draw_selected_states(layout, current=None, title="Selected pieces:"):
+def draw_selected_states(layout, current=None, title="Selected pieces:", states=None):
     """The four state buttons (core/spec.py STATE_NAMES) for the selected pieces (current: the one shown pressed)."""
     if title:
-        layout.label(text=title)
+        layout.label(text=tx(title))
     g = layout.grid_flow(columns=2, align=True)
     L = live_running()
     from .core import spec as S
+    states = set(states) if states is not None else {current}
+    mixed = len(states) > 1
     for st in S.PIECE_STATES:
         txt = S.state_name(st)
         c = g.row(align=True)
         # Live takes Active / Freeze as it runs, for a piece in its stage; not Off, nor a piece Off now
-        c.enabled = not L or (st in LIVE_STATES and current in LIVE_STATES)
-        op = c.operator("ac9_cloth_sim.piece_state", text=txt, icon=STATE_ICON[st], depress=(current == st))
+        c.enabled = not L or (st in LIVE_STATES and states <= set(LIVE_STATES))
+        c.alert = mixed
+        op = c.operator("ac9_cloth_sim.piece_state", text=txt, icon=STATE_ICON[st],
+                        depress=(not mixed and current == st))
         op.state, op.scope = st, 'SELECTED'
 
 
@@ -1135,7 +1218,7 @@ def draw_piece_list(layout, spec, select=False):
             r.alert = pc['name'] in gone
             eye(r, pc['name'])
             r.active = pc['name'] not in hid
-            r.label(text=(pc.get('label') or pc['name'])[:16])
+            r.label(text_ctxt=CTX, text=(pc.get('label') or pc['name'])[:16])
             states(r)
     if n_off and hasattr(layout, 'panel'):
         # folded by default: a BOM keeps every piece of the file (a jacket's 125 unused ones); opened, each piece
@@ -1150,7 +1233,7 @@ def draw_piece_list(layout, spec, select=False):
                 r = bc.row(align=True)
                 r.alert = pc['name'] in gone
                 r.enabled = not L                 # an Off piece is not in the running stage
-                r.label(text=(pc.get('label') or pc['name'])[:16])
+                r.label(text_ctxt=CTX, text=(pc.get('label') or pc['name'])[:16])
                 for st in S.PIECE_STATES:
                     op = r.operator("ac9_cloth_sim.piece_state", text="", icon=STATE_ICON[st], depress=(st == 'off_all'))
                     op.state, op.scope, op.piece = st, 'PIECE', pc['name']
@@ -1164,6 +1247,29 @@ def draw_missing_pieces(layout, context, spec):
     could neither see nor edit a piece for a while (user 2026-10-27: keep X, show it at the top and in the
     viewport)."""
     from . import draft_tool as DT
+    from . import pattern_view as PV
+    if spec is None:
+        return
+    check = PV.integrity(context, spec)
+    severe = any(check[k] for k in PV.ISSUES if k != 'missing')
+    if severe:
+        box = layout.box()
+        box.alert = True
+        box.label(text=tx("Pattern object mismatch"), icon='ERROR')
+        for line in PV.integrity_lines(check):
+            for ln in wrap(line, 32):
+                box.label(text=ln, translate=False)
+        for ln in wrap(tx("Pattern editing is paused. No objects were deleted."), 32):
+            box.label(text=ln, translate=False)
+        plan = PV.restore_plan(context, spec, verify_legacy=False)
+        if not plan['reason']:
+            for ln in wrap(tx("Undo the last change, or restore the pattern display."), 32):
+                box.label(text=ln, translate=False)
+            box.operator("ac9_cloth_sim.restore_pieces", text=tx("Restore Pieces"), icon='FILE_REFRESH')
+        else:
+            for ln in wrap(plan['reason'], 32):
+                box.label(text=ln, translate=False)
+        return
     gone = DT.missing_pieces(context, spec)
     if not gone:
         return
@@ -1199,7 +1305,7 @@ def draw_fabric(layout, context, spec):
     # every piece has one fabric, the default one of the list (user 2026-10-20): no Weight / Bending / Physical here
     col.prop(props, "garment_fabric")
     if fixed:
-        col.label(text="Settings fix the fabric", icon='ERROR')
+        col.label(text_ctxt=CTX, text="Settings fix the fabric", icon='ERROR')
     row = col.row()
     row.active = 'watch' not in fixed
     row.prop(props, "watch", text="Watch")
@@ -1272,7 +1378,7 @@ def draw_fabric_list(layout, context, spec):
     d = FA.default_fabric(spec)
     if d is None:          # saved before 2026-10-20: the default is made (core/fabric.migrate) at the next change
         box = layout.box()
-        box.label(text="Garment (old values)", icon='SOLO_ON')
+        box.label(text_ctxt=CTX, text="Garment (old values)", icon='SOLO_ON')
         box.label(text=tx("{0:g} g/m², {1:g} µN·m", props.fabric_weight, props.fabric_bending))
     from . import piece_look as PL
     cols = PL.fabric_colors(spec)
@@ -1306,7 +1412,7 @@ def draw_obstacles(layout, context):
     Add Selected / Remove below (REVIEW_fable_lists_ui_2026-10-25 section 2)."""
     from . import dress as D
     cols = D.collider_objects(context)
-    layout.label(text=tx("{0} collision object(s)", len(cols)) if cols else "No collision object", icon='MOD_PHYSICS')
+    layout.label(text_ctxt=CTX, text=tx("{0} collision object(s)", len(cols)) if cols else "No collision object", icon='MOD_PHYSICS')
     col = layout.column(align=True)
     for ob in cols:
         draw_pick_row(col, "ac9_cloth_sim.collider_select", ob.name[:24], depress=ob.select_get(),
@@ -1323,37 +1429,38 @@ def draw_result(layout, spec, box=False):
     """P1 #6: what the result is and where it is kept (user 2026-10-13: "when is the Dress saved?"); each line kept
     to ~24 characters, longer ones were cut at the default sidebar width. False when the garment has no result."""
     from . import dress as D
-    ri = D.result_info(bpy.data.objects.get(D.garment_name(spec)))
+    ri = D.result_info(D.garment(spec))
     if not ri:
         return False
     box = layout.box().column(align=True) if box else layout.column(align=True)
     if ri.get('missing'):
-        box.label(text="Result: folder gone", icon='ERROR')
-        box.label(text="Shape stays in garment")
+        box.label(text_ctxt=CTX, text="Result: folder gone", icon='ERROR')
+        box.label(text_ctxt=CTX, text="Shape stays in garment")
         return True
-    what = ({'SIMULATE': 'Phase Sim', 'REDRESS': 'Restart', 'LIVE': 'Live Sim', 'LOCAL': 'Local Sim'}.get(ri.get('button'))
-            or {'START': 'Phase Sim', 'CONTINUE': 'Phase Sim', 'LIVE': 'Live Sim', 'LOCAL': 'Local Sim'}.get(ri['mode'], ri['mode']))
+    # CONTINUE was pressed as Phase Sim (the result line names the button)
+    what = (S.RUN_NAMES.get(ri.get('button'))
+            or S.RUN_NAMES.get({'CONTINUE': 'START'}.get(ri['mode'], ri['mode']), ri['mode']))
     stopped = tx(" (stopped)") if ri.get('error') else ""
     box.label(text=tx("Result: {0}{1} {2}", tx(what), stopped, ri['when']), icon='CHECKMARK')
-    box.label(text=tx("{0} frames, {1:.0f} s", ri['frames'], ri['wall_s']) if ri.get('wall_s') is not None
+    box.label(text_ctxt=CTX, text=tx("{0} frames, {1:.0f} s", ri['frames'], ri['wall_s']) if ri.get('wall_s') is not None
               else tx("{0} frames", ri['frames']))
     # the shape is the garment's own vertices: in the blend once it is saved
     if not bpy.data.is_saved:
-        box.label(text="Shape: file never saved", icon='ERROR')
+        box.label(text_ctxt=CTX, text="Shape: file never saved", icon='ERROR')
     elif bpy.data.is_dirty:
-        box.label(text="Shape: Ctrl+S to keep it", icon='FILE_TICK')
+        box.label(text_ctxt=CTX, text="Shape: Ctrl+S to keep it", icon='FILE_TICK')
     else:
-        box.label(text="Shape: saved in the blend", icon='FILE_TICK')
-    box.label(text=("Frames: on the timeline" if ri['playing'] else
+        box.label(text_ctxt=CTX, text="Shape: saved in the blend", icon='FILE_TICK')
+    box.label(text_ctxt=CTX, text=("Frames: on the timeline" if ri['playing'] else
                     "Frames: dropped (shape kept)" if ri.get('dropped') else
                     "Frames: off (shape kept)"), icon='SEQUENCE')
     if ri['playing']:            # to fix a frame by hand, right under the line saying frames play
-        draw_fix_by_hand(box, bpy.context, bpy.data.objects.get(D.garment_name(spec)),
+        draw_fix_by_hand(box, bpy.context, D.garment(spec),
                          enabled=D.AC9_OT_SimDress.running() is None)
     if ri.get('temp'):
-        box.label(text="Frames in a temp folder", icon='ERROR')
+        box.label(text_ctxt=CTX, text="Frames in a temp folder", icon='ERROR')
     row = box.row(align=True)
-    row.label(text=os.path.basename(ri['dir']))
+    row.label(text_ctxt=CTX, text=os.path.basename(ri['dir']))
     row.operator("wm.path_open", text="Open", icon='FILE_FOLDER').filepath = ri['dir']
     return True
 
@@ -1391,14 +1498,14 @@ class AC9_PT_SimLists(bpy.types.Panel):
             draw_fabric_list(layout, context, spec)
         elif tab == 'OBSTACLES':
             from . import dress as D
-            me = D.garment_name(spec)
-            auto = [ob for ob in context.scene.objects if ob.name.startswith(D.GARMENT_PREFIX) and ob.name != me
+            me = D.garment(spec, context)
+            auto = [ob for ob in context.scene.objects if ob.name.startswith(D.GARMENT_PREFIX) and ob != me
                     and D.job_of(ob)]
             col = layout.column(align=True)
             for ob in auto:
-                col.label(text=ob.name[len(D.GARMENT_PREFIX):] + tx(" (garment)"), icon='MOD_CLOTH')
+                col.label(text_ctxt=CTX, text=ob.name[len(D.GARMENT_PREFIX):] + tx(" (garment)"), icon='MOD_CLOTH')
             if auto:
-                col.label(text="Garments with a result: always", icon='INFO')
+                col.label(text_ctxt=CTX, text="Garments with a result: always", icon='INFO')
             draw_obstacles(layout, context)
         elif tab == 'FASTENERS':
             from . import button_ui as BU
@@ -1411,7 +1518,7 @@ class AC9_PT_SimLists(bpy.types.Panel):
 def draw_overlay_switch(row, props):
     """The master switch and the popover with each kind (the header and the sidebar)."""
     row.prop(props, "show_overlays", text="", toggle=True, icon='HIDE_OFF' if props.show_overlays else 'HIDE_ON')
-    row.popover(panel="AC9_PT_SimOverlays", text="Overlays")
+    row.popover(panel="AC9_PT_SimOverlays", text_ctxt=CTX, text="Overlays")
 
 
 class AC9_PT_SimOverlays(bpy.types.Panel):
@@ -1436,7 +1543,7 @@ class AC9_PT_SimOverlays(bpy.types.Panel):
         col.prop(props, "show_lengths")
         col.prop(props, "show_notches")
         col.separator()
-        col.label(text="Pieces")
+        col.label(text_ctxt=CTX, text="Pieces")
         col.prop(props, "show_piece_colors")
         sub = col.row()
         sub.active = props.show_piece_colors
@@ -1445,20 +1552,25 @@ class AC9_PT_SimOverlays(bpy.types.Panel):
         col.prop(props, "show_internal_3d")
         col.separator()
         # colors that tell what is wrong with the cloth (diagnose.py, user 2026-11-02)
-        col.label(text="Diagnose")
-        col.prop(props, "show_problems")
-        col.prop(props, "show_stretch")
-        col.prop(props, "show_face_side")
+        col.label(text=tx(DIAG.DISPLAY_NAME))
+        col.prop(props, "diagnosis_display", text="")
         col.separator()
-        col.label(text="Body")
+        col.label(text_ctxt=CTX, text="Body")
         col.prop(props, "show_guides")
         mp = getattr(context.scene, 'ac9_cloth_sim_measure', None)
         if mp is not None:
             col.prop(mp, "show", text="Measurements")
+        from . import silhouette
+        if silhouette.pattern_view(context):
+            col.separator()
+            col.label(text="2D Silhouettes", text_ctxt=CTX)
+            col.prop(props, "show_silhouette_avatar")
+            col.prop(props, "show_silhouette_collisions")
+            col.operator("ac9_cloth_sim.silhouette_position")
         # the cloth's thickness: a Solidify on the garment, not drawn over it, so not under the switch above
         layout.separator()
         col = layout.column(align=True)
-        col.label(text="Garment")
+        col.label(text_ctxt=CTX, text="Garment")
         col.prop(props, "show_thickness")
         sub = col.row()
         sub.active = props.show_thickness
@@ -1476,7 +1588,7 @@ def _header(self, context):
     draw_overlay_switch(layout.row(align=True), props)
 
 
-CLASSES = (AC9_PT_SimOverlays, AC9_UL_SimSeams, AC9_PT_SimMissing, AC9_PT_SimMain, AC9_PT_SimDraft, AC9_PT_SimLists, AC9_PT_SimRoles, AC9_PT_SimPlacement)
+CLASSES = (AC9_PT_SimOverlays, AC9_UL_SimSeams, AC9_PT_SimMissing, AC9_PT_SimLegacyOwner, AC9_PT_SimMain, AC9_PT_SimDraft, AC9_PT_SimLists, AC9_PT_SimRoles, AC9_PT_SimDiagnosis, AC9_PT_SimPlacement)
 
 
 def register():
@@ -1484,23 +1596,24 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.Scene.ac9_seam_fold = bpy.props.FloatProperty(
         name="Fold", min=-180.0, max=180.0, get=_sfold_get, set=_sfold_set, options=set(),
-        description="The angle the two pieces keep across this seam while simulated (+ = mountain seen from "
-                    "outside, as on internal lines; 0 = none)")
+        description="The angle the two pieces keep across this seam while simulated: + mountain, - valley, seen "
+                    "from the face of the piece that turns (Turns); 0 = no fold")
+    bpy.types.Scene.ac9_seam_fold_angle = bpy.props.FloatProperty(
+        name="Fold Angle", translation_context=CTX, min=0.0, max=180.0, precision=1, step=100, get=_sfangle_get, set=_sfangle_set,
+        options=set(), description="How far the two pieces fold across this seam while simulated, 0 = no fold "
+                                   "(Mountain / Valley below it, seen from the face of the piece that turns)")
+    from .core.spec import FOLD_DIRECTIONS
+    bpy.types.Scene.ac9_seam_fold_dir = bpy.props.EnumProperty(
+        name="Direction", translation_context=CTX, items=FOLD_DIRECTIONS, get=_sfdir_get, set=_sfdir_set, options=set())
     bpy.types.Scene.ac9_seam_fold_turn = bpy.props.EnumProperty(
         name="Turns", items=_sturn_items, get=_sturn_get, set=_sturn_set, options=set(),
-        description="The piece that turns over the seam on the placed shape (the other stays)")
-    bpy.types.Scene.ac9_seam_over = bpy.props.EnumProperty(
-        name="Over", get=_sover_get, set=_sover_set, options=set(),
-        items=[('NONE', "Auto", "From the garment's Front Over, else the buttonholes (the end with the hole on top)"),
-               ('A', "A", "Side A's end on top: over the other on the placed ring"),
-               ('B', "B", "Side B's end on top: over the other on the placed ring")],
-        description="Which end of this closure is on top (a stand's or a cuff's ends buttoned over each other)")
+        description="The piece that turns over the seam on the adjusted shape (the other stays)")
     store.register_handlers()
     bpy.types.VIEW3D_HT_header.append(_header)
 
 
 def unregister():
-    for k in ('ac9_seam_fold', 'ac9_seam_fold_turn', 'ac9_seam_over'):
+    for k in ('ac9_seam_fold', 'ac9_seam_fold_angle', 'ac9_seam_fold_dir', 'ac9_seam_fold_turn'):
         if hasattr(bpy.types.Scene, k):
             delattr(bpy.types.Scene, k)
     bpy.types.VIEW3D_HT_header.remove(_header)

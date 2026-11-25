@@ -38,7 +38,8 @@ class SignatureBoundaryTests(unittest.TestCase):
         with self.assertRaises(ValueError):validate_config(dict(native_three=True,live=True,checkpoint_in='old.npz'))
     def test_native_three_save_refuses_before_consuming_signatures(self):
         from solver.live_checkpoint import save
-        with patch.dict(sys.modules,{'warp':NS(synchronize=lambda:None)}):
+        # the solver runs with solver/ as its script folder: its modules import each other by bare name
+        with patch.dict(sys.modules,{'warp':NS(synchronize=lambda:None)}),patch.object(sys,'path',[str(ROOT/'solver')]+sys.path):
             with self.assertRaisesRegex(ValueError,'full-state resume'):
                 save('unused.npz',{'cfg':{'native_three':True}},1)
 

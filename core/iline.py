@@ -79,9 +79,11 @@ def set_shape(it, N, C):
     P, idx = sample(N, C, closed)
     it['pts'] = D._r(P)
     if any(c is not None for c in C):
+        it.pop('seam_authored_vertices', None)
         it['nodes'] = [int(i) for i in idx]
         it['ctrl'] = [None if c is None else D._r(c) for c in C]
     else:
+        it['seam_authored_vertices'] = True
         it.pop('nodes', None)
         it.pop('ctrl', None)
 
@@ -91,7 +93,10 @@ def _targets(spec, name, lid):
     other way along the mirror image."""
     P = np.asarray(D.internal(D.piece(spec, name), lid)['pts'], float)
     out = []
-    for nm, l2, M in D.mirror_lines(spec, name, lid):
+    from . import internal_sync as IS
+    targets = D.mirror_lines(spec, name, lid)
+    IS.bind_targets(spec, name, lid, targets)
+    for nm, l2, M in targets:
         Q = np.asarray(D.internal(D.piece(spec, nm), l2)['pts'], float)
         MP = np.asarray(M(P), float)
         rev = (not D.internal(D.piece(spec, nm), l2).get('closed')
@@ -101,13 +106,16 @@ def _targets(spec, name, lid):
 
 
 def _copy_to(src, dst, M, rev):
-    N, C, _, _ = shape(src)
+    N, C, _, own = shape(src)
     N2 = np.asarray(M(N), float)
     C2 = [None if c is None else np.asarray(M(c), float) for c in C]
     if rev:
         N2 = N2[::-1]
         C2 = [None if c is None else c[::-1] for c in C2[::-1]]
     set_shape(dst, N2, C2)
+    if not own and not src.get('seam_authored_vertices'):
+        # Moving an imported sampled curve does not author new sewing corners.
+        dst.pop('seam_authored_vertices', None)
 
 
 def _edit(spec, name, lid, fn, keep=None, flags=None):
@@ -139,6 +147,8 @@ def _edit(spec, name, lid, fn, keep=None, flags=None):
         _copy_to(it, dst, M, rev)
         n = len(N)
         _set_smooth_nodes(dst, {n - 1 - k for k in sm} if rev else sm, n)
+        from . import fold_hand as FH
+        FH.carry(it, dst, M)
     return list(dict.fromkeys([name] + [t[0] for t in targets]))
 
 

@@ -65,10 +65,12 @@ def find_three(stencils,proper,max_steps=200000,max_seconds=20.0,initial_colors=
         if step % 256 == 0:_cancel_check()
         if not bad or time.monotonic()-started>=max_seconds:break
         used=step+1;eid=bad[int(rng.integers(len(bad)))];row=edge(eid);v=int(row[rng.integers(len(row))]);current=int(colors[v]);ids=incident(v)
-        before=int(np.maximum(counts[ids]-2,0).sum());options=[]
+        # moving v from current to target changes only those two columns of its rows: each row with target already
+        # at 2 or more gains one over-2, each with current at 3 or more loses one (the same integer as recounting)
+        held=counts[ids];gain=(held>=2).sum(0);loss=int((held[:,current]>=3).sum());options=[]
         for target in range(3):
             if target==current:continue
-            changed=counts[ids].copy();changed[:,current]-=1;changed[:,target]+=1;delta=int(np.maximum(changed-2,0).sum()-before)
+            delta=int(gain[target])-loss
             if tabu[v,target]<=step or excess+delta<lowest:options.append((delta,target))
         if not options:continue
         delta=min(x[0]for x in options);choices=[target for score,target in options if score==delta];target=int(choices[rng.integers(len(choices))])

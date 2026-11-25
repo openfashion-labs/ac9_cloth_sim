@@ -28,9 +28,9 @@ class AutomaticDiagnostics(unittest.TestCase):
             self.slot.candidate=NS(status=lambda:dict(phase='loading',completed=2),
                                    process=NS(pid=100,poll=lambda:None,error=None))
             self.offers.append(kwargs);return True
-        self.scope=dict(os=NS(environ={},path=os.path),json=json,np=np,hashlib=hashlib,time=time,
+        self.scope=dict(os=NS(environ={'AC9_PREPARED_LIVE':'1'},path=os.path),json=json,np=np,hashlib=hashlib,time=time,
             bpy=NS(data=NS(objects={'garment':self.g})),store=NS(get=lambda ctx:({'ok':True},None),text=lambda ctx:NS(as_string=lambda:self.spec)),
-            garment_name=lambda spec:'garment',job_of=lambda g:str(self.job),frozen=lambda g:True,
+            garment_name=lambda spec:'garment',garment=lambda spec:self.g,job_of=lambda g:str(self.job),frozen=lambda g:True,
             reset_pieces=lambda g:[],job_last_frame=lambda job:self.shape,standby_enabled=lambda ctx:True,
             newton_python=lambda ctx:'python',solver_process_env=lambda *a:{'test':'value'},shown_shape=lambda *a:self.shape,
             _standby_key=lambda *a:('python',(),('native_three',True),1),_session_enabled=lambda *a:False,
@@ -42,6 +42,10 @@ class AutomaticDiagnostics(unittest.TestCase):
         fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef)and n.name=='_prepared_automatic')
         exec(compile(ast.Module(body=[fn],type_ignores=[]),'<production automatic>','exec'),self.scope)
     def run_auto(self):return self.scope['_prepared_automatic'](self.context)
+    def test_automatic_candidate_is_off_without_explicit_opt_in(self):
+        self.scope['os'].environ.clear()
+        self.assertFalse(self.run_auto())
+        self.assertEqual(self.offers, [])
     def test_unchanged_input_retains_same_candidate(self):
         self.assertTrue(self.run_auto());candidate=self.slot.candidate
         for _ in range(4):self.assertTrue(self.run_auto())

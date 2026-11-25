@@ -5,6 +5,8 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProp
 
 from .i18n import CTX
 from .units import LEN_STEP
+from . import closure as _CL
+from . import diagnosis as DIAG
 from bpy.types import PropertyGroup
 
 
@@ -31,6 +33,29 @@ def _redraw(self, context):
     for area in context.screen.areas if context.screen else []:
         if area.type in ('VIEW_3D', 'PROPERTIES'):
             area.tag_redraw()
+
+
+def _diagnosis_display_get(self):
+    # One interpretation for the dropdown and renderer, including old saved bools.
+    if '_ac9_diagnosis_display' in self:
+        return int(self['_ac9_diagnosis_display'])
+    return 3 if self.show_face_side else 2 if self.show_stretch else 1 if self.show_problems else 0
+
+
+def _diagnosis_display_set(self, value):
+    self['_ac9_diagnosis_display'] = value
+    self.show_problems = value == 1
+    self.show_stretch = value == 2
+    self.show_face_side = value == 3
+
+
+def _mesh_size_changed(self, context):
+    # the new particle distance's mesh made in the background, as after a pattern edit (draft_tool.prewarm_later)
+    try:
+        from . import draft_tool
+        draft_tool.prewarm_later(context, delay=0.8)
+    except Exception:
+        pass
 
 
 def _follow_edits_on(context):
@@ -96,7 +121,8 @@ def _style_picked(self, context):
 
 
 def _from_mesh_poll(self, ob):
-    return _own_mesh(ob) and not ob.name.startswith('AC9_') and ob != self.body
+    from . import mesh_import
+    return mesh_import.can_be_source(ob, self.body)
 
 
 def _keep_color(self, context):
@@ -135,9 +161,22 @@ def _act(context=None):
     from . import store
     ctx = context or bpy.context
     spec = store.get(ctx)[0]
-    O = _ops()
-    sel = O._sel_pieces(ctx)
-    return spec, (O._active_piece(ctx, sel) if spec is not None else None), sel
+    from . import selection as SEL
+    names, lead = SEL.piece_selection(ctx, spec)
+    return spec, lead, names
+
+
+def _different(names, value, read, tolerance=1e-6):
+    """Same as the representative is still a change for other selected pieces.
+
+    Only regenerate pieces whose value actually changes; an unchanged fitted shape must survive.
+    """
+    import math
+    def same(old):
+        if isinstance(value, (int, float)) and isinstance(old, (int, float)):
+            return math.isclose(value, old, abs_tol=tolerance, rel_tol=0.)
+        return old == value
+    return tuple(n for n in names if not same(read(n)))
 
 
 def _get_dist(self):
@@ -148,7 +187,9 @@ def _get_dist(self):
 
 def _set_dist(self, v):
     spec, n, sel = _act()
-    if spec is not None and abs(v - _get_dist(self)) > 1e-6:
+    if spec is not None:
+        pcs = _ops().bom_to_spec.S.piece_index(spec)
+        sel = _different(sel, v, lambda n: pcs[n].get('mesh_mm') or self.mesh_size)
         _ops().set_piece_mesh(bpy.context, sel, max(2.0, v))
 
 
@@ -167,7 +208,9 @@ def _get_thick(self):
 
 def _set_thick(self, v):
     spec, n, sel = _act()
-    if spec is not None and bool(v) != _get_thick(self):
+    if spec is not None:
+        pcs = _ops().bom_to_spec.S.piece_index(spec)
+        sel = _different(sel, bool(v), lambda n: pcs[n].get('thickness', True) is not False)
         _ops().set_piece_thickness(bpy.context, sel, bool(v))
 
 
@@ -203,7 +246,10 @@ def _get_layer(self):
 
 def _set_layer(self, v):
     spec, n, sel = _act()
-    if spec is not None and int(v) != _get_layer(self):
+    if spec is not None:
+        from .core import spec as S
+        pcs = S.piece_index(spec)
+        sel = _different(sel, int(v), lambda n: S.piece_layer(pcs[n]))
         _ops().set_piece_layer(bpy.context, sel, int(v))
 
 
@@ -219,12 +265,15 @@ def _get_around(self):
 def _set_around(self, v):
     from . import placement as PL
     spec, n, sel = _act()
-    if spec is not None and abs(v - _get_around(self)) > 1e-6:
-        PL.move_placed(bpy.context, sel, theta=v)
+    if spec is not None:
+        sel = _different(sel, v, lambda n: spec.get('placement', {}).get(n, {}).get('theta', 0.))
+        if not sel:
+            return
+        PL.move_placed(bpy.context, sel, theta=v, absolute=True)
 
 
 def _ring_of(n, spec):
-    """(a band's ring as a share of its own length's, set by hand?): the one set, else the last made (Auto)."""
+    """(a band's ring as a share of its own length's, set by hand?): the one set, else 1.00 (never stretched by itself)."""
     from . import dress as D
     k = ((spec or {}).get('placement', {}).get(n) or {}).get('ring')
     return (float(k), True) if k else (float(D.RING_USED.get(n, (1.0, True))[0]), False)
@@ -239,39 +288,71 @@ def _set_ring(self, v):
     from . import placement as PL
     spec, n, sel = _act()
     k, by_hand = _ring_of(n, spec)
-    if spec is not None and (not by_hand or abs(v - k) > 1e-6):
+    if spec is not None:
+        sel = tuple(n for n in sel if not _ring_of(n, spec)[1] or abs(_ring_of(n, spec)[0] - v) > 1e-6)
+        if not sel:
+            return
         PL.set_ring(bpy.context, sel, k=v)
 
 
-def _get_closure_over(self):
-    from . import store
-    spec = store.get(bpy.context)[0]
-    return {'left': 1, 'right': 2}.get((spec or {}).get('closure_over'), 0)
+def _ends_of(n, spec):
+    """A placed piece's Ends: the one set, else as it was laid last (a file before Ends, dress.ENDS_LAST)."""
+    from . import dress as D
+    e = ((spec or {}).get('placement', {}).get(n) or {}).get('ends')
+    return e if e else D.ENDS_LAST.get(n, 'open')
 
 
-def _set_closure_over(self, v):
-    # the garment's front closure: which front is on top (closure.py; user 2026-11-02)
-    from . import store
-    spec = store.get(bpy.context)[0]
-    if spec is None or v == _get_closure_over(self):
-        return
-    sp = {k: x for k, x in spec.items() if k != 'closure_over'}
-    if v:
-        sp['closure_over'] = ('left', 'right')[v - 1]
-    store.put(bpy.context, sp, seams=False)
-
-
-def _get_ring_auto(self):
+def _get_ends(self):
+    from . import closure as CL
     spec, n, _ = _act()
-    return not _ring_of(n, spec)[1]
+    return CL.ENDS.index(_ends_of(n, spec))
 
 
-def _set_ring_auto(self, v):
-    # on: measured again where the band is now; off: the ring it has now is kept as set by hand
+def _set_ends(self, v):
+    from . import closure as CL, placement as PL
+    spec, n, sel = _act()
+    if spec is None:
+        return
+    e = CL.ENDS[v]
+    sel = tuple(m for m in sel if ((spec.get('placement', {}).get(m) or {}).get('ends')) != e)
+    if sel:
+        PL.set_ends(bpy.context, sel, ends=e)
+
+
+def _overlap_of(n, spec):
+    """(a lapped piece's overlap in mm, typed?): the one typed, else as it was laid last (Auto)."""
+    from . import dress as D
+    o = ((spec or {}).get('placement', {}).get(n) or {}).get('overlap')
+    return (float(o), True) if o is not None else (float(D.LAP_LAST.get(n, 0.0)), False)
+
+
+def _get_overlap(self):
+    spec, n, _ = _act()
+    return _overlap_of(n, spec)[0] / 1000.0          # a length field (m); the placement's overlap is mm
+
+
+def _set_overlap(self, v):
     from . import placement as PL
     spec, n, sel = _act()
     if spec is not None:
-        PL.set_ring(bpy.context, sel, k=None if v else _ring_of(n, spec)[0])
+        sel = tuple(m for m in sel if not _overlap_of(m, spec)[1] or abs(_overlap_of(m, spec)[0] - v * 1000.) > 1e-6)
+        if sel:
+            PL.set_ends(bpy.context, sel, overlap=v * 1000.0)
+
+
+def _get_overlap_auto(self):
+    spec, n, _ = _act()
+    return not _overlap_of(n, spec)[1]
+
+
+def _set_overlap_auto(self, v):
+    # on: from the seam or button joining the ends again; off: the overlap it has now is kept as typed
+    from . import placement as PL
+    spec, n, sel = _act()
+    if spec is not None:
+        sel = tuple(m for m in sel if (not _overlap_of(m, spec)[1]) != bool(v))
+        if sel:
+            PL.set_ends(bpy.context, sel, overlap=None if v else _overlap_of(n, spec)[0])
 
 
 def _get_tilt(self):
@@ -281,7 +362,11 @@ def _get_tilt(self):
 def _set_tilt(self, v):
     from . import placement as PL
     spec, n, sel = _act()
-    if spec is not None and abs(PL.norm_tilt(v) - PL.norm_tilt(_get_tilt(self))) > 1e-6:
+    if spec is not None:
+        sel = _different(sel, PL.norm_tilt(v),
+                         lambda n: PL.norm_tilt(spec.get('placement', {}).get(n, {}).get('tilt', 0.)))
+        if not sel:
+            return
         PL.set_tilt(bpy.context, sel, deg=v)
 
 
@@ -296,7 +381,12 @@ def _get_turn(self):
 def _set_turn(self, v):
     from . import placement as PL
     spec, n, sel = _act()
-    if spec is not None and abs((v - _get_turn(self) + 180.0) % 360.0 - 180.0) > 1e-6:
+    if spec is not None:
+        from .core import body_axes as BA, spec as S
+        sel = tuple(n for n in sel if S.is_flat(spec.get('placement', {}).get(n, {}))
+                    and abs((v - BA.flat_turn(spec['placement'][n]['flat']) + 180.) % 360. - 180.) > 1e-6)
+        if not sel:
+            return
         PL.set_turn(bpy.context, sel, deg=v)
 
 
@@ -307,13 +397,18 @@ def _get_height(self):
 def _set_height(self, v):
     from . import placement as PL
     spec, n, sel = _act()
-    if spec is not None and abs(v - _get_height(self)) > 1e-9:
-        PL.move_placed(bpy.context, sel, h=v * 1000.0)
+    if spec is not None:
+        sel = _different(sel, v * 1000., lambda n: spec.get('placement', {}).get(n, {}).get('h', 0.))
+        if not sel:
+            return
+        PL.move_placed(bpy.context, sel, h=v * 1000.0, absolute=True)
 
 
 def _set_elastic(self, v):
     spec, n, sel = _act()
-    if spec is not None and abs(v - _get_elastic(self)) > 1e-6:
+    if spec is not None:
+        from .core import elastic as EL
+        sel = _different(sel, v, lambda n: 100. * (EL.piece_ratio(spec, n) or 1.))
         _ops().set_piece_elastic(bpy.context, sel, v)
 
 
@@ -339,7 +434,7 @@ def _get_fabric(self):
 def _set_fabric(self, i):
     spec, n, sel = _act()
     items = _ops()._fabric_items(self, bpy.context)
-    if spec is not None and 0 <= i < len(items) and i != _get_fabric(self):
+    if spec is not None and 0 <= i < len(items):
         _ops().set_piece_fabric(bpy.context, sel, items[i][0])
 
 
@@ -414,7 +509,7 @@ def _thickness_changed(self, context):
     from . import dress as D
     spec = store.get(context)[0]
     if spec is not None:
-        g = bpy.data.objects.get(D.garment_name(spec))
+        g = D.garment(spec)
         if D.has_result(g):
             D.refresh_thickness(context, g, spec)
         from . import placed_view as PV
@@ -432,7 +527,7 @@ def _get_bond(self):
 def _set_bond(self, i):
     spec, n, sel = _act()
     items = _ops()._bond_items(self, bpy.context)
-    if spec is not None and 0 <= i < len(items) and i != _get_bond(self):
+    if spec is not None and 0 <= i < len(items):
         _ops().set_piece_bond(bpy.context, sel, items[i][0])
 
 
@@ -448,6 +543,13 @@ class AC9ClothSimProps(PropertyGroup):
     # (its old name kept for files)
     show_overlays: BoolProperty(name="Overlays", default=True, update=_redraw,
                                 description="Draw the add-on's overlays (seams, piece colors, names, ...)")
+    show_silhouette_avatar: BoolProperty(name="Avatar", default=True, translation_context=CTX, update=_redraw,
+                                         description="Show the body from the front and both sides on the flat pattern")
+    show_silhouette_collisions: BoolProperty(name="Registered Collisions", default=True, translation_context=CTX,
+                                             update=_redraw,
+                                             description="Show registered collision meshes; this switch does not change simulation collisions")
+    silhouette_position: FloatVectorProperty(name="Silhouette Position", size=2, default=(0.0, 0.0), update=_redraw)
+    silhouette_positioned: BoolProperty(default=False, update=_redraw)
     show_overlay: BoolProperty(name="Seams", default=True, translation_context=CTX, update=_redraw,
                                description="The seams, on the pattern and in 3D")
     show_lengths: BoolProperty(name="Seam Lengths", default=True, update=_redraw,
@@ -467,6 +569,10 @@ class AC9ClothSimProps(PropertyGroup):
                                    description="Draw every internal line on the cloth in 3D. The lines picked on the "
                                                "pattern are drawn orange either way")
     # what the add-on found wrong, red on the cloth (diagnose.py; on by default, Fable review b-1, user 2026-11-02)
+    diagnosis_display: EnumProperty(name=DIAG.DISPLAY_NAME, get=_diagnosis_display_get,
+        set=_diagnosis_display_set, update=_redraw,
+        items=DIAG.DISPLAY_ITEMS)
+    diagnosis_details: BoolProperty(name=DIAG.RESULTS_NAME, default=False, update=_redraw)
     show_problems: BoolProperty(name="Problems", default=True, update=_redraw,
                                 description="Red where the add-on found something wrong: left inside the body or "
                                             "through other cloth, a run's anomaly, cloth still moving at the end")
@@ -500,20 +606,21 @@ class AC9ClothSimProps(PropertyGroup):
     show_piece_list: BoolProperty(name="Piece List", default=False,
                                   description="List the current garment's pieces with their states")
     # the usual name (user 2026-10-20; the prop keeps its name: files and tests set mesh_size)
-    mesh_size: FloatProperty(name="Particle Distance (mm)", default=6.0, min=2.0, max=30.0,
+    mesh_size: FloatProperty(name="Particle Distance (mm)", default=6.0, min=2.0, max=30.0, update=_mesh_size_changed,
                              description="Distance between the cloth's points in mm, the triangle size (smaller: "
                                          "finer, slower)")
-    # gravity in Live Sim (user 2026-10-23, DECISIONS cloth-sim-phase-live-local-sim-2026-10-23): switched while it
+    # gravity in Simulate (user 2026-10-23, DECISIONS cloth-sim-phase-live-local-sim-2026-10-23): switched while it
     # runs too (core/recipe.live_params)
     fast_live: BoolProperty(name="AC9 Fast Live (Experimental)", default=False, update=_fast_live_choice,
-        description="Live Sim with 2 substeps and a correction in each (a test feature). Static body only, with lower contact damping. Native remains the default")
+        description="Simulate with 2 substeps and a correction in each (a test feature). Static body only, with lower contact damping. Native remains the default")
     accurate_research: BoolProperty(name="Accurate (Research)", default=False,
-        description="Research solver for Live Sim: 2 substeps with a correction. Static body only; may be slower and does not guarantee more realistic drape. Off restores your Native setting. Phase and Local Sim are unchanged")
-    # Native 3 is the default Live (user 2026-11-12, 0.2.0); its switch is drawn under Experimental Features only. A
-    # garment it does not take runs the usual Live (core/prepare_plan.resolve). The legacy fast_live property is
+        description="Research solver for Simulate: 2 substeps with a correction. Static body only; may be slower and does not guarantee more realistic drape. Off restores your Native setting. Phase and Local Sim are unchanged")
+    # Native 3 is the default Live (user 2026-11-12, 0.2.0); no switch on the screen since 2026-11-22 (always on, a file
+    # saved with it off opens with it on: _fast_live_off). A garment it does not take runs the usual Live
+    # (core/prepare_plan.resolve). The legacy fast_live property is
     # kept for old files; accurate_research is the explicit opt-in now (core/presets.resolve).
     native_three: BoolProperty(name="Native 3", default=True, update=_native_three_choice,
-        description="The faster Live Sim (on by default). Keeps the fabric and time step settings; the body does not move, and Live starts again from the shape on screen. A garment with a piece on a Layer above 0 runs the usual Live")
+        description="The faster solver for Simulate (on by default). Keeps the fabric and time step settings; the body does not move, and Simulate starts again from the shape on screen. A garment with a piece on a Layer above 0 runs the usual solver")
     # a floor at Z = 0 for every run (user 2026-11-10, DECISIONS cloth-sim-place-beyond-garments-2026-11-10): a
     # static box under Z = 0 added to the obstacles, no object in the scene. A box, not a plane: a one-sided plane
     # let all the cloth through when its normal faced down, a 20 mm box let none through (experiments/
@@ -521,17 +628,25 @@ class AC9ClothSimProps(PropertyGroup):
     floor: BoolProperty(name="Floor", default=False,
                         description="A floor at Z = 0 the cloth lands on, in every run (nothing is added to the "
                                     "scene). For bags and other items without an avatar")
+    # a piece placed again on a garment already sewn (a collar, a band): the garment is held still while the piece
+    # is sewn on, so the stitches bring the piece to it instead of lifting it; let go once the piece is sewn (or when
+    # its stitches stop closing). Off: both sides pull and the garment rises toward the piece. Read when a run starts
+    # (solver/newton_vbd.py sew_first 'hold', core/recipe.py LIVE_SEW_FIRST)
+    hold_while_sewing: BoolProperty(name="Freeze Garment While Sewing", default=True,
+                                    description="When a piece is placed again on a garment already sewn, the garment "
+                                                "stays still until the piece is sewn on. Off: the garment is pulled "
+                                                "toward the piece and rises")
     live_gravity: BoolProperty(name="Gravity", default=True,
-                               description="Live Sim pulls the cloth down by gravity (can be switched while it runs)")
+                               description="Simulate pulls the cloth down by gravity (can be switched while it runs)")
     # the stroke brush in Live / Local Sim (Ctrl+Shift+drag, user 2026-11-02, DECISIONS cloth-sim-live-stroke-2026-11-02):
     # read when a stroke starts and as it moves, so they can be changed while it runs
     stroke_radius: FloatProperty(name="Smooth Radius (mm)", default=40.0, min=5.0, max=150.0,
-                                 description="Radius of the smooth brush (Ctrl+Shift+drag while Live Sim runs)")
+                                 description="Radius of the smooth brush (Ctrl+Shift+drag while Simulate runs)")
     # the same in the scene's length unit (a length field over stroke_radius, which stays mm in the file)
     stroke_radius_len: FloatProperty(name="Smooth Radius", min=0.005, max=0.15, precision=1, step=LEN_STEP, subtype='DISTANCE',
                                      unit='LENGTH', get=lambda s: s.stroke_radius / 1000.0,
                                      set=lambda s, v: setattr(s, 'stroke_radius', v * 1000.0), options=set(),
-                                     description="Radius of the smooth brush (Ctrl+Shift+drag while Live Sim runs)")
+                                     description="Radius of the smooth brush (Ctrl+Shift+drag while Simulate runs)")
     stroke_strength: FloatProperty(name="Smooth Strength", default=1.0, min=0.05, max=1.0,
                                    description="How hard the smooth brush presses the cloth down and carries it "
                                                "along (the cloth's physics stays on)")
@@ -539,14 +654,14 @@ class AC9ClothSimProps(PropertyGroup):
     local_gravity: BoolProperty(name="Gravity", default=False,
                                 description="Local Sim pulls the selected pieces down by gravity (can be switched "
                                             "while it runs)")
-    # a pattern edit carried to the dressed garment and the placed shapes at once (on), or left until Update 3D, the
+    # a pattern edit carried to the dressed garment and the adjusted shapes at once (on), or left until Update 3D, the
     # switch back on or the next Phase / Live / Local Sim (off: the pattern edits return in 0.1 s instead of up to
     # 1.8 s). User 2026-10-27, DECISIONS cloth-sim-work-screen-layout-2026-10-27 (TASKS 85)
     # off by default (user 2026-11-13): a carry took 1-2 s per pattern edit and a small edit is hardly seen in the
     # 3D before a run anyway; the edits wait for Update 3D or the next run
     follow_edits: BoolProperty(name="3D Follows Edits", default=False,
                                update=lambda self, context: _follow_edits_on(context) if self.follow_edits else None,
-                               description="Each pattern edit changes the dressed garment and the placed shapes at "
+                               description="Each pattern edit changes the dressed garment and the adjusted shapes at "
                                            "once. Off: they wait until Update 3D or the next simulation, and the "
                                            "pattern can be edited without waiting")
     sync_pending: BoolProperty(name="3D Not Updated", default=False,
@@ -598,34 +713,36 @@ class AC9ClothSimProps(PropertyGroup):
                                           "guide through their center, in degrees: 90 lays the top flat out, 180 "
                                           "turns them upside down (a collar's outer edge next to the neck). The part "
                                           "tilted out is stretched round. Their pairs follow")
-    piece_ring: FloatProperty(name="Ring Size", translation_context=CTX, min=0.5, max=3.0, precision=2, step=1,
+    piece_ends: EnumProperty(name="Ends", translation_context=CTX, get=_get_ends, set=_set_ends, options=set(),
+                             items=[(k, _CL.ENDS_NAMES[k], _CL.ENDS_TIPS[k], i) for i, k in enumerate(_CL.ENDS)],
+                             description="How the selected placed pieces go round their guide: open, or closed "
+                                         "with their two ends meeting or one end over the other. Left and right "
+                                         "along the pattern's width. Their pairs follow, left and right swapped")
+    piece_overlap: FloatProperty(name="Overlap", translation_context=CTX, min=0.0, precision=1, step=LEN_STEP,
+                                 subtype='DISTANCE', unit='LENGTH', get=_get_overlap, set=_set_overlap,
+                                 options=set(),
+                                 description="How far the selected lapped pieces' two ends go over each other (0: "
+                                             "they meet). Longer than once round wraps it twice at most. Auto takes "
+                                             "it from the seam or the button joining its ends")
+    piece_overlap_auto: BoolProperty(name="Auto", translation_context=CTX, get=_get_overlap_auto,
+                                     set=_set_overlap_auto, options=set(),
+                                     description="Take the overlap from the seam or the button joining the "
+                                                 "selected pieces' two ends (none: 0, the ends meet)")
+    piece_ring: FloatProperty(name="Stretch", translation_context=CTX, min=0.5, max=3.0, precision=2, step=1,
                               get=_get_ring, set=_set_ring, options=set(),
-                              description="The selected pieces' ring as a share of their own length's (1.00: their "
-                                          "own length, not stretched). Set by hand it is kept, what is in the body "
-                                          "red; Auto widens it until it clears the body where it is now")
-    closure_over: EnumProperty(name="Front Over", translation_context=CTX, get=_get_closure_over,
-                               set=_set_closure_over, options=set(),
-                               items=[('NONE', "None", "Not set: from the buttonholes, else a band's closure is placed as before"),
-                                      ('LEFT', "Left", "The wearer's left front on top: a band's end on the left goes "
-                                                       "over the other on its placed ring"),
-                                      ('RIGHT', "Right", "The wearer's right front on top: a band's end on the right "
-                                                         "goes over the other on its placed ring")],
-                               description="Which front is on top where the garment closes: a band closed over itself "
-                                           "(a collar stand) is placed with that side's end over the other")
-    piece_ring_auto: BoolProperty(name="Auto", translation_context=CTX, get=_get_ring_auto, set=_set_ring_auto,
-                                  options=set(),
-                                  description="Widen the selected bands until they clear the body where they are now "
-                                              "(measured again when turned on and when placed)")
+                              description="How far the selected closed pieces are stretched round (1.00: their own "
+                                          "length, not stretched). They are never stretched by themselves: what "
+                                          "is in the body is red")
     piece_height: FloatProperty(name="Height", translation_context=CTX, precision=1, step=LEN_STEP, subtype='DISTANCE', unit='LENGTH',
                                 get=_get_height, set=_set_height, options=set(),
                                 description="How high the selected placed pieces are along their guide (their "
                                             "angle kept). Several selected move by as much. Their pairs follow")
     piece_strengthen: BoolProperty(name="Strengthen", translation_context=CTX,
         get=_get_strengthen, set=_set_strengthen,
-        description="Multiply the piece's stretch, shear, and bending stiffness until switched off")
+        description="Make the piece stiffer until switched off. On a piece already hanging, it keeps the shape it has then instead of going back to the flat pattern")
     piece_strengthen_factor: FloatProperty(name="Strength Factor", translation_context=CTX,
         min=1.0, max=100.0, get=_get_strengthen_factor, set=_set_strengthen_factor,
-        description="Stiffness multiplier; mass and rest shape stay the same")
+        description="Stiffness multiplier; mass stays the same")
     piece_layer: IntProperty(name="Layer", translation_context=CTX, min=0, max=9, get=_get_layer, set=_set_layer,
                              options=set(),
                              description="The selected pieces' layer (and their pairs'): while pieces have different "
@@ -692,12 +809,17 @@ CLASSES = (AC9ClothSimSeamItem, AC9ClothSimProps)
 
 @bpy.app.handlers.persistent
 def _fast_live_off(*_args):
-    """Fast Live is hidden everywhere (user 2026-11-12): a file saved with it on opens with it off and with Native 3
-    on (the two were one or the other: the faster Live asked for). Not used by a run either way (core/presets)."""
+    """Fast Live is hidden everywhere (user 2026-11-12): a file saved with it on opens with it off. Native 3 has no
+    switch on the screen any more (user 2026-11-22, DECISIONS cloth-sim-fast-start-2026-11-22): a file saved with it
+    off (it was under Experimental Features) opens with it on, so a run never takes a path nobody can see. A
+    development script may still set it off after the file is open."""
     for sc in bpy.data.scenes:
         p = getattr(sc, 'ac9_cloth_sim', None)
-        if p is not None and p.fast_live:
+        if p is None:
+            continue
+        if p.fast_live:
             p.fast_live = False
+        if not p.native_three:
             p.native_three = True
 
 

@@ -9,6 +9,225 @@ The version number is the one in `blender_manifest.toml`; each release is tagged
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-25
+
+Alpha release. Features and workflows are still in development.
+
+### Terminology
+
+- 「ガイドに戻す」（Back to Guide）→「配置した形に戻す」（Back to Placed Shape）。
+- 「置いた形に戻す」（Back to Placed）→「調整した形に戻す」（Back to Adjusted Shape）。
+- The terms distinguish the shape made by Place from the adjusted preparation shape. Operator IDs, saved data, and reset behavior are unchanged.
+
+### Added
+
+- **Simulate keeps its sewing frames on the timeline.** With Keep Cache on, a Live run keeps the frames from its start
+  until shortly after gravity comes on, so the moment the pieces are sewn can be played back. A new switch, Keep All
+  Simulate Frames (Preferences and the run settings, off by default), keeps every frame up to 1500.
+- **Every run names the add-on build that made it.** The run log's first line ends with the version and the commit
+  (for example `add-on 0.4.0 (1a2b3c4)`), and the run folder's `job.json` has them under `addon`. A run folder or
+  .blend sent with a problem report is then read against the code that made it.
+- A start carried from the last result onto a new mesh (another Particle Distance) that has triangles squashed flat
+  is refused with its own way out: set Particle Distance back, or Reset the piece. It said to place the piece again,
+  which does not change a carried start.
+- **Space starts and stops Simulate in the work screen.** In the AC9 Cloth Sim workspace the key that plays the
+  animation starts Simulate and stops it, wherever the mouse is (Shift+Space for those whose Space opens the tools
+  or the search). Elsewhere it plays as before. The add-on's preferences have a Hotkeys section where the key is
+  switched off or changed in place (Simulate (Start / Stop)).
+- **A seam's fold can change while Simulate runs.** For a seam that was folded when the run began, its Fold Angle
+  and Mountain / Valley take effect at once (eased over 30 frames), as on internal lines. Folding a seam that started
+  at 0, and Turns, still take effect at the next run; those fields stay grayed while Live runs.
+- **The .blend holds the whole result.** A dressed garment keeps its last run's settings and the pattern it was
+  dressed with in the .blend itself. If the run folder (`AC9_ClothSim_jobs`) is deleted or the .blend is copied
+  alone, Simulate and Continue still go on with the previous settings; only the frames on the timeline are lost.
+- **Old runs are cleaned up.** Each garment keeps only its latest run folder; older ones are deleted after a run, a
+  pattern edit carried to the 3D, and a save. Only folders this .blend wrote are deleted, never one another object
+  or another .blend still uses. **Keep Old Runs** in Preferences (off by default) keeps them all.
+  **AC9 Run > Settings** shows how much disk the run folders take, with a **Clean Up** button.
+- **Fast Simulation Start** in Preferences, on by default: one switch for everything that makes a run start sooner.
+  The solver is started ahead and waits, keeps the garment of the last Simulate, and after a pattern or
+  particle-distance edit on a dressed garment, once the drafting has been still for a moment, builds the next Live
+  Sim's model in the background, so the press starts much sooner. Nothing is written into the scene; while it builds
+  the interface pauses briefly. It uses more GPU memory: turn it off when the GPU runs short (every run then starts
+  the solver anew). It replaces **Keep the Solver Ready**, **Keep the Live Model** and **Build Ahead**, which each
+  needed the one before; a choice made in those three is not carried over.
+- **Accurate (Research)** is available in **AC9 Run** with **Experimental Features** enabled, for Simulate.
+  It is hidden in the normal UI and off by default; switching it
+  off restores the previous Native setting. This restores the research solver, without changing its physics or
+  promising better drape or speed. Static bodies only; Phase and Local Sim keep their existing solver.
+
+### Changed
+
+- Show the internal fold's Layers controls and one-layer notes only with Experimental Features enabled; retain saved layer settings.
+- Diagnose now checks displayed placed and dressed pieces together, including mixed states,
+  without preparing or changing their shapes. Results include intrusion, cloth crossings and
+  their partners, principal stretch, and start-shape warnings. Changed inputs invalidate old marks.
+- Diagnosis has its own panel. Its display selector is shared with Overlays and chooses None,
+  Problem Areas, Stretch, or Face Side. Placement no longer adds automatic quality warnings or red marks.
+- **The garment stays still while a re-placed piece is sewn on.** When one piece (a collar, a band) is placed again on a
+  garment already simulated and Simulate runs, the sewn pieces are frozen until the piece is sewn on, then let go; they
+  are tinted like Freeze meanwhile and a line under Run says so. If the piece cannot reach its partner, they are let go
+  once its stitches stop closing. The new switch Freeze Garment While Sewing (run settings, on by default) turns it off.
+  Before, the sewn pieces were made heavier instead, and the garment still rose and wrinkled.
+- **Live Sim is now called Simulate** (Japanese: シミュレート), on the Run button, in the messages, the play key's
+  row in the preferences and the manuals. It works as before. Phase Sim keeps its name (Experimental Features).
+- **Strengthen keeps the shape a hanging piece has.** Strengthen put on a piece that is already sewn and hanging
+  (during Simulate, for example) makes it stiffer around the shape it has at that moment: it no longer pulls the piece
+  back to the flat pattern's size or opens its folds, and the seams around it are not pulled. On a test T-shirt with
+  both sleeves strengthened x20 the sleeves changed by p90 0.03 / 1.1 mm (was 5.4 mm) and the body next to them by
+  p90 2 mm (was 10 mm); the rest of that movement comes from the Native 3 solver path (0.2 mm without it).
+  A changed factor keeps the same shape; switching Strengthen off gives the pattern back. A piece strengthened from the
+  start keeps the shape it has once sewn. An angle you set still wins: a folded seam keeps its angle, a fold line
+  changed during Simulate follows the new angle, and an elastic's shrink acts as before.
+- **Placed pieces stay where they are placed**: wrapping a piece round its guide no longer pushes it out of the body,
+  bands included. Vertices that start inside the body are marked red with one line in the report; move them out by hand.
+  **Stretch** on AC9 Piece no longer has an Auto switch: unset is x1.00 (the band's own length).
+- **A seam's fold** is now an angle and a direction, **Mountain** or **Valley**, seen from the face of the piece that
+  turns (**Turns**), the same as an internal line's fold; it is held as firmly as a fold line. A seam fold set in an
+  older file may have been measured from the other piece and fold the other way: check its direction.
+- **Ends** in **AC9 Piece** says how a placed piece goes round its guide: **Open**, **Closed** (its two ends meet,
+  stretched round if it has to be) or **Left on Top** / **Right on Top** (that end, along the pattern's width, laps
+  over the other). **Overlap** under it comes from the seam or the button joining the ends (**Auto**: two lines,
+  or one end sewn onto a line across the other end, as a waistband over its button stand) or is typed;
+  longer than once round wraps it twice at most. **Ring Size** is now **Stretch (x)**, shown for a closed piece only.
+  A mirrored pair follows with left and right swapped. The garment's **Front Over** and a seam's **Over** are
+  removed: a file that used them, or a role, is placed as before until you choose its Ends.
+- Simulate, and Simulate after a pattern edit, start sooner: the solver's compute programs were built again after
+  every pattern edit, and now come from the cache. Building the solver's model also does less repeated work
+  (copies and checks that were made on every build). The computation is the same.
+- Simulate after a pattern edit starts sooner again: the model build skips a coloring step the solver replaces anyway,
+  makes its collision programs once per session and plans its three batches faster, with the same results. With
+  **Fast Simulation Start** on, the interface pauses for a shorter moment while it prepares (only the pieces you changed are
+  triangulated again), and a press drops a build that was about to be sent.
+- **Fast Simulation Start** now also keeps garments with fold lines and End Taper (before, they were built from scratch
+  on every Simulate). On a 9-fold-line shirt the fold angles and crossings stay within the run-to-run spread of a fresh
+  build; options that read the start shape to set their folds are still built from scratch. Changing a fold angle
+  builds anew.
+- After a pattern edit or a new particle distance, the changed pieces' mesh is made in the background while you keep drafting, so pressing Simulate or Phase Sim afterwards no longer waits for it. A press that still has work to do shows "Preparing the garment..." at once.
+- The pieces' mesh cache stays between Blender sessions when no working folder is set in the Preferences (it was kept in Blender's temporary folder and lost on closing).
+- **Simulate keeps its working files on a local folder** (the add-on preferences, or Blender's temporary folder when
+  left empty) and copies the finished job next to the .blend afterwards, so a slow drive no longer holds up Start
+  and Stop. A test option can keep the built garment between runs so that pressing Start again after moving a piece
+  or changing a fabric value starts sooner (off by default).
+- **Faster start on Windows CPUs with fast and efficient cores**: the solver process no longer gets throttled as
+  background work and prefers the fast cores (only when the CPU has at least 8 of them, or they are half the CPU).
+  Simulate starts noticeably sooner on the one CPU measured so far (16 fast + 12 efficient logical processors);
+  other CPUs are not measured yet.
+- **Simulate** from placed pieces sews them without gravity first: once the seams are closed (the widest gap under
+  3 mm, or no longer closing), the garment is held still for a moment and then the gravity comes on; the fabric's
+  bending hysteresis waits until the garment is quiet. A long garment no longer swings up after the sewing, and the
+  result is the same from run to run. A Live going on from a result whose seams are closed starts with the gravity at
+  once; one whose seams stay a few millimeters open counts them as closed after half a second. Accurate (Research)
+  is unchanged.
+- **Simulate** with a piece put back to placed on a garment already sewn (a collar, a pocket): only that piece is sewn
+  without gravity; the rest of the garment keeps its gravity and, while the piece is being sewn on, weighs more, so the
+  seams bring the piece to the garment instead of lifting the garment toward it (a jacket's front rose 27 mm with a
+  collar put back; now 1 mm). The garment is not held still, so a neckline that had gone wrong can still follow the
+  piece. Pieces placed apart are sewn as before.
+
+### Removed
+
+- **Local Sim** is gone from the screen (the Run button, its Gravity, the right-click row and the button under a
+  Fold field). The selected pieces alone, without gravity, drifted. To run part of a garment, switch the other
+  pieces **Off** or **Freeze** them and press **Simulate**.
+- **Piece roles** (**Role**, **Start Shape**, the **Piece Roles** panel) are shown only with **Experimental
+  Features**. Simulate does not read them; what it does is set by the fields of **AC9 Piece** such as **Ends**.
+  Roles already set are kept in the file.
+- The **Native 3** switch (under **Experimental Features**): the faster Simulate is always used, and a garment it
+  does not take runs the usual Live and says so in one line, as before. A file saved with the switch off opens with it
+  on. The messages that named it now say "the usual calculation".
+
+### Fixed
+
+- Give Add Seam and Add Seam (M:N) shared One Edge / Two Points controls in the Tool Header. Keep Ctrl for temporary snap inversion, preserve authored internal corners through mirrors, and store closed internal seam intervals consistently across selection, editing, and meshing.
+- Recover legacy garment ownership only from a unique saved pattern and matching mesh layout. Preserve ambiguous results and show an ownership warning with an explicit recheck action.
+- Restore duplicate and missing flat-pattern displays through the existing Restore Pieces action, keeping retired objects in a hidden recovery collection and supporting Undo/Redo.
+- Keep 3D seams, notches and internal lines on the displayed cloth after moving or rotating its 2D pattern, before running simulation again. Refresh edited sewing targets and interpolation when triangle connections change.
+- Detect duplicate, missing, invalid and foreign flat-pattern objects before edits. Refuse ambiguous updates without deleting user copies, preserve inspection selection and explicit JSON reload, and recheck after load, undo and redo.
+- Update the bundled avatar's neutral body shape while preserving its rig, vertex count and pose controls.
+- Synchronize new mirror-paired internal lines and persist their authored correspondence for movement, curve editing, deletion, folds and elastic settings; keep placement unlink separate from pattern symmetry.
+- Remove preparation-only missing fold synthesis. Preserve authored asymmetry with separate meshes, and refuse unmatched folds on old shared shapes instead of folding an invisible counterpart.
+- Apply placed internal folds from either side of a shared mirror pair even when the other pattern has no matching line, without changing the authored pattern.
+- Fold floor placements using the fabric face and current crease, including tilted and inverted planes.
+- Apply and reset self-mirrored crease pairs in a consistent order from either selected line.
+- Keep private rollback copies out of generated-object readers; release each copy once and preserve foreign document auxiliaries.
+- Numeric Input reaches the requested outline/line distance during symmetric editing and shows fractional distances in the selected length unit.
+- Clicking empty space in an AC9 tool clears the synchronized red dots in both 2D and 3D.
+- Garments with the same label keep separate meshes, placed shapes and eye states by document.
+- A partial Back to Placed selects and edits the same shape that is displayed.
+- Place uses visible pattern faces to keep pieces off the pattern, so distant or hidden patterns no longer block
+  empty ground. Coplanar floors keep the same tolerance, and guide hover and placement share visibility checks.
+- Starting a simulation from placed pieces keeps the garment mesh visible while it runs.
+  The display mask is reconciled when the placed objects are released, preserving Off and hidden pieces.
+- 3D movement follows the editing basis of each piece: linked placements move and rotate as a mirrored pair;
+  accepted simulation results can be corrected on one side. Local Sim results follow the same rule.
+- Place draws and commits the same final mesh candidate. Replacing a piece on a cylinder clears free movement
+  and rotation while keeping its placement tilt and fold settings. Transform gizmos appear with Whole Pieces.
+- Back to Guide clears free placement offsets. Back to Placed restores pre-simulation placement adjustments.
+  Saved shapes whose origin cannot be identified require one of these explicit resets before free transforms.
+- **Undo after a refused or canceled operation no longer crashes.** Part to Seam when it refused, and Band on
+  Edge, Clear Placement and Move Outside when they were canceled, put the placed pieces back without an undo step;
+  the next Ctrl+Z could crash Blender, and after a refused Part to Seam the pieces set back to placed also showed
+  twice. Such an operation now leaves one step in the undo history ("AC9 Cloth Sim: canceled") when it changed
+  something; one that touched nothing leaves none.
+- Ctrl+Z and Ctrl+Shift+Z are not taken while Simulate runs: stop it with Esc first (a line says so).
+- Deleting a seam, an internal line or a measurement with X / Del is its own undo step; one Ctrl+Z went back past
+  it and the deleted thing stayed deleted.
+- From Mesh refuses a pattern piece, a placed piece or the garment as its source (with the Mesh field empty and one
+  of them active it failed half way, the pattern's objects gone).
+- **A run starts from the garment as shown.** A .blend saved while a run was going could keep a garment whose saved
+  run described another shape: the next Simulate then started some pieces from the placement rule instead of where
+  they were shown (a collar jumped from the back of the neck to the front), and the 3D internal lines and notches were
+  drawn through other pieces (long blue lines that went away after a stop and a restart). The run now goes on from the
+  garment as shown and says so; AC9 Run shows a red box with **Use the Shown Garment** before the press.
+- A piece whose shape on screen could not be compared with its start is now said and shown red, instead of passing
+  in silence. **Diagnose** on the Placement panel lists what may make the next run start other than as shown,
+  with what to do for each.
+- The first Simulate after installing or updating the add-on no longer says the preparation has not moved for 30
+  seconds while it builds its GPU parts (it can take a while the first time); a stop pressed meanwhile ends the run
+  when that step is done instead of ending the waiting solver.
+- A Simulate interrupted while it wrote its grab or settings file no longer leaves its working folder behind: the
+  leftover file made the folder look foreign, so it was neither cleaned up nor copied next to the .blend.
+- **Fewer solver crashes, and clearer ones.** A seam hinge whose points are not all different (it could come from a
+  piece switched off next to a seam) is no longer made: it could crash the solver process before the first frame. The
+  cloth is checked before it reaches the solver (invalid positions, triangles, hinges or stitches), and the run stops
+  with a reason instead of crashing. When the solver process still ends abnormally, the message says so with its code
+  and suggests pressing again; a stage that stops for a reason shows that reason. The run folder keeps where it
+  stopped, for the developers.
+- **Simulate** on a garment with more points than it can take (120,000) stops before running and asks for a larger
+  Particle Distance; before, it failed at stage 1 every time. A garment whose seams got no stitch point runs the usual
+  Live instead of failing.
+- A run that fails because the GPU ran out of memory says so, and what to turn off (**Fast Simulation Start**) or to make Particle Distance larger. Before, it said only that stage 1 failed.
+- A run that stops moving before its first frame is shown as possibly stuck, and **Stop** ends it after 30 seconds
+  without any change instead of waiting a full minute. A first run that is still building its compute programs is
+  not mistaken for a stuck one.
+- **Place** works before **Detect Guides** has been run: a piece laid flat on a face no longer stops with an error
+  about missing guides.
+- The first placement of a piece no longer pauses for over a second while the seam marks are carried onto it.
+- A pair meshed differently (shown as two objects, one following the other) no longer opens up on one side: centering
+  the leader's origin moved the follower off its shape by the mirrored amount (about 66 mm on a test pair of
+  trousers), and the follower then counted as moved by hand, so placing again kept it there. A file saved like this
+  is put right by placing the shifted piece again.
+- Seams on soft fabrics close as fast as on any other fabric. While sewing without gravity (the start of Simulate,
+  the no-gravity stages) each stitch's pull is capped, and the cap came from the garment's default fabric: a tenth of
+  the usual for Cotton Jersey (a new garment's default) and far less for Rib Knit, even when the pieces had fabrics of
+  their own. Far seams such as the shoulders then closed very slowly or not before the gravity came on, and the
+  garment lost its shape. The cap is now the same for every fabric (the value the woven fabrics had, so their
+  garments run as before). On a test coat in jersey: shoulder still 31 mm open after 600 frames -> closed in 65
+  frames, cloth crossings 16 -> 0.
+- A piece placed round the torso is no longer pushed out past the arms when no piece is round an arm yet. The arms
+  are left out of the body while the body is sewn, but the placement kept clear of them in that case, so a back side
+  panel placed between the torso and a hanging arm started outside the forearm (and moved back once a sleeve was
+  placed). Garments with sleeves start as before.
+- Continue and Live after many pattern edits carried to the 3D in a row (more than ten without simulating) take
+  over the last run's settings again; they had started with the default ones, and a model built ahead was not
+  used.
+- With the solver kept ready, a later Simulate could stop with "stage 1 failed" (seen after turning a piece Off).
+- A piece moved by hand and then made larger in the pattern started with the added cloth pressed onto the edge of
+  its old shape, and the run stopped with "stage 1 failed". The added cloth now carries on from the placed shape, as
+  the placed piece on screen shows it. A start with triangles squashed flat is refused before the run, naming the
+  pieces (it stopped with "stage 1 failed").
+
 ## [0.3.0] - 2026-11-20
 
 Alpha release. Features and workflows are still in development.
@@ -250,7 +469,8 @@ this version may not open in the next one. Windows and an NVIDIA GPU, Blender 5.
 The ZIP bundles the simulation's Python packages unmodified from PyPI: newton 1.6.0, warp-lang 1.17.0 and
 scipy 1.18.1 (Windows x64). Their licenses are in `THIRD_PARTY_NOTICES.txt` and `licenses/`.
 
-[Unreleased]: https://github.com/openfashion-labs/ac9_cloth_sim/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/openfashion-labs/ac9_cloth_sim/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/openfashion-labs/ac9_cloth_sim/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/openfashion-labs/ac9_cloth_sim/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/openfashion-labs/ac9_cloth_sim/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/openfashion-labs/ac9_cloth_sim/compare/v0.1.0...v0.1.1

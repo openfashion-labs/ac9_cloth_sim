@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Resident Live (DECISIONS cloth-sim-hstar-resident-2026-11-16; Preferences > Keep the Live Model, off by default):
+"""Resident Live (DECISIONS cloth-sim-hstar-resident-2026-11-16; part of Preferences > Fast Simulation Start):
 the session worker runs newton_vbd.py statement by statement and keeps the last job's model. The next job of the same
 structure (same mesh, seams, body and settings; another start shape or other fabric numbers) is begun on it instead of
 built again (T-shirt 6 mm, GUI: press after a piece move 3.4 -> 1.5 s to the first drawn frame).
@@ -26,13 +26,17 @@ SHAPE_ARRAYS = ('particle_q', 'particle_mass', 'particle_inv_mass', 'tri_poses',
                 'edge_rest_length', 'edge_bending_properties', 'spring_rest_length')
 HEAVY = ('solver = newton.solvers.SolverVBD(', 'pipe = newton.CollisionPipeline(',
          'if NATIVE_THREE:' + chr(10) + '    if not solver.device.is_cuda')     # the Native 3 block, not the checkpoint branch
+FILTER_OUTPUTS = ('tri_of', 'ring', 'R', 'R_int', 'vfilter', 'GATE_ROWS', 'efilter', 'SEAM_TRI')
 # 1-D (review 2026-11-16): shapes a begin was never checked on -> not kept (built as today)
 NOT_KEPT = (('BOUND_COUPLING', lambda g: bool(g.get('BOUND_COUPLING')), 'one layer (bound coupling)'),
             ('WELD', lambda g: g.get('WELD') is not None, 'weld'),
             ('anchor_ke', lambda g: bool(g['cfg'].get('anchor_ke')), 'particles outside the cloth (anchor)'),
             ('seam_paths', lambda g: bool(g['cfg'].get('seam_paths')), 'particles outside the cloth (Pull Round)'),
             ('sym_color', lambda g: bool(g['cfg'].get('sym_color') and g['cfg'].get('mirror_map')), 'mirror coloring'),
-            ('ghost_pieces', lambda g: bool(g['cfg'].get('ghost_pieces')), 'two worlds (ghost pieces)'))
+            ('ghost_pieces', lambda g: bool(g['cfg'].get('ghost_pieces')), 'two worlds (ghost pieces)'),
+            # fold options that read the start shape to set their hinges (test switches): the start shape is not in the key
+            ('fold_shape', lambda g: any(g['cfg'].get(k) for k in ('fold_ramp', 'fold_turn', 'fold_profile', 'iron', 'fold_from_drape')),
+             'a fold option that reads the start shape'))
 
 
 def _digest(path, skip=()):
@@ -44,9 +48,12 @@ def _digest(path, skip=()):
 
 
 def structure_key(idx, avatar, cfg):
+    try:from .prepared_live import literal_config_field
+    except ImportError:from prepared_live import literal_config_field
     c = {k: v for k, v in cfg.items() if k not in PATH_KEYS and k not in VALUE_KEYS}
+    c.pop('live_keep', None)            # which frames frames.npy keeps: the output only, never the model
     for k, v in list(c.items()):          # a file the job folder holds (pattern.npz): its contents, not where it is
-        if isinstance(v, str) and len(v) < 1024 and os.path.isfile(v):
+        if isinstance(v, str) and not literal_config_field((k,)) and len(v) < 1024 and os.path.isfile(v):
             c[k] = 'file:' + (_digest(v) if v.endswith('.npz') else hashlib.sha256(open(v, 'rb').read()).hexdigest())
     sb = dict(c.get('seam_bend') or {}); sb.pop('ke', None); c['seam_bend'] = sb
     # a fabric's numbers act after finalize (newton_vbd 'fabric_pieces' / 'mi' blocks, re-run by begin); only which
@@ -69,6 +76,8 @@ class Resident:
         self.i_builder = next(i for i, x in enumerate(h) if x.startswith('builder = newton.ModelBuilder('))
         self.i_final = next(i for i, x in enumerate(h) if x == 'model = builder.finalize()')
         self.i_heavy = {i for i, x in enumerate(h) if x.startswith(HEAVY) and i > self.i_final}
+        self.i_filters = h.index('tri_of = None')
+        self.i_filters_end = next(i for i in range(self.i_filters, len(h)) if h[i].startswith("if cfg.get('layer_order'):"))
         self.used_after = {n.id for s in body[self.i_final + 1:] for n in ast.walk(s) if isinstance(n, ast.Name)}
         self.g = None; self.key = None; self.last = None; self.runtime = None
 
@@ -98,6 +107,7 @@ class Resident:
 
     def _mods(self):
         return [m for n, m in list(sys.modules.items()) if m is not None and n != '__main__' and
+                n.rsplit('.',1)[-1] not in ('job_cancel','lifecycle_trace') and
                 os.path.abspath(getattr(m, '__file__', '') or '').startswith(self.source)]
 
     def _hstar_structure(self, g):
@@ -108,24 +118,43 @@ class Resident:
                     key = (frozenset((k, l)), bk)
                     if frozenset((bk, bl)) in bnd:
                         oB = bnd[frozenset((bk, bl))][2]
-                        out_.append(('F', key, IDX[(frozenset((k, l)), bk, oB)], (oA, oB, k, l)))
+                        # None: a hinge newton_vbd never made (hinge_ok: not four different points)
+                        out_.append(('F', key, IDX.get((frozenset((k, l)), bk, oB)), (oA, oB, k, l)))
                     else:
                         cand = bnd_at.get(bk, [])
                         if not cand: continue
-                        rows = [(y_, IDX[(frozenset((k, l)), bk, oB_)], (oA, oB_, k, l)) for y_, oB_ in cand]
+                        rows = [(y_, IDX.get((frozenset((k, l)), bk, oB_)), (oA, oB_, k, l)) for y_, oB_ in cand]
                         out_.append(('N', key, bk, bl, rows))
         return out_
 
     @staticmethod
     def _hstar_switch(S, X0m, Xc, dih):
-        on = {}; seen = set(); added = skipped = 0
-        ok_ = lambda q: bool(dih(q[0], q[1], q[2], q[3], Xc) <= 120)
+        on = {}; seen = set(); added = skipped = dropped = 0
+        # Batch the geometric test, retaining the exact scalar predicate at
+        # its decision boundary. Row selection and duplicate precedence below
+        # stay in their original order.
+        hinges = list(dict.fromkeys(tuple(q) for s in S
+                      for q in ([s[3]] if s[0] == 'F' and s[2] is not None else
+                                [r[2] for r in s[4] if r[1] is not None] if s[0] != 'F' else [])))
+        accepted = {}
+        if hinges:
+            H = np.asarray(hinges, np.int64)
+            a, b, k, l = (Xc[H[:, i]] for i in range(4))
+            n1 = np.cross(k-a, l-a); n2 = np.cross(l-b, k-b)
+            cosine = (n1*n2).sum(1)/(np.linalg.norm(n1,axis=1)*np.linalg.norm(n2,axis=1)+1e-18)
+            angles = np.degrees(np.arccos(np.clip(cosine,-1,1)))
+            for hinge, angle in zip(hinges, angles):
+                if not np.isfinite(angle) or abs(angle-120) <= 1e-7:
+                    angle = dih(*hinge, Xc)
+                accepted[hinge] = bool(angle <= 120)
+        ok_ = lambda q: accepted[tuple(q)]
         for s in S:
             if s[0] == 'F':
                 _, key, row, ok = s
                 if key not in seen:
                     seen.add(key)
-                    if ok_(ok): on[row] = True; added += 1
+                    if row is None: dropped += 1       # never made (newton_vbd counts it as dropped)
+                    elif ok_(ok): on[row] = True; added += 1
                     else: skipped += 1
             else:
                 _, key, bk, bl, rows = s
@@ -133,53 +162,76 @@ class Resident:
                 j = min(range(len(rows)), key=lambda q: dist[q])
                 if key not in seen and not (dist[j] > np.linalg.norm(X0m[bk] - X0m[bl])):
                     seen.add(key)
-                    if ok_(rows[j][2]): on[rows[j][1]] = True; added += 1
+                    if rows[j][1] is None: dropped += 1  # never made (newton_vbd counts it as dropped)
+                    elif ok_(rows[j][2]): on[rows[j][1]] = True; added += 1
                     else: skipped += 1
-        return on, seen, added, skipped
+        return on, seen, added, skipped, dropped
 
     def _fixed_structure(self, g, model):
+        import newton
+        from resident_values import builder_identity,verified_warp_lengths
         cfg = g['cfg']
         st = dict(tri=model.tri_indices.numpy().copy(), edges=model.edge_indices.numpy().copy(),
                   springs=model.spring_indices.numpy().reshape(-1, 2).copy(), e0=int(g['_hstar_e0']),
                   n_particles=int(model.particle_count), rest_s=float(g['rest_s']))
         st['hstar'] = self._hstar_structure(g); st['dihedral'] = g['dihedral']
+        st['array_values'],st['builder_identity']=builder_identity(newton.ModelBuilder)
+        st['warp_lengths_verified']=st['array_values'] and verified_warp_lengths(self.wp)
         return st
 
     def _finalize_values(self, X0, Xc, st, cfg):
         import newton
         wp = self.wp; X0 = np.asarray(X0)
         if st['n_particles'] != len(X0): raise RuntimeError('particles outside the cloth')
-        P32 = X0.astype(np.float32); sc = newton.ModelBuilder(); sc.particle_q = P32.astype(np.float64)
+        P32 = X0.astype(np.float32)
         T = st['tri']; nt = len(T)
+        E = st['edges']; e0 = st['e0']
         kw = dict(density=cfg.get('density', 0.14), tri_ke=cfg['tri_ke'], tri_ka=cfg['tri_ka'], tri_kd=cfg['tri_kd'])
-        areas = sc.add_triangles(T[:, 0], T[:, 1], T[:, 2], tri_ke=[kw['tri_ke']] * nt, tri_ka=[kw['tri_ka']] * nt,
+        if st.get('array_values'):
+            from resident_values import geometry_values
+            areas,poses,base_angles,base_lengths=geometry_values(P32,T,E[:e0])
+            model_areas=areas
+            materials=np.tile(np.array([kw['tri_ke'],kw['tri_ka'],kw['tri_kd'],0.,0.]),(nt,1))
+        else:
+            sc = newton.ModelBuilder(); sc.particle_q = P32.astype(np.float64)
+            areas = sc.add_triangles(T[:, 0], T[:, 1], T[:, 2], tri_ke=[kw['tri_ke']] * nt, tri_ka=[kw['tri_ka']] * nt,
                                  tri_kd=[kw['tri_kd']] * nt, tri_drag=[0.0] * nt, tri_lift=[0.0] * nt)
-        if len(sc.tri_areas) != nt: raise RuntimeError('a degenerate triangle at this start shape')
+            if len(sc.tri_areas) != nt: raise RuntimeError('a degenerate triangle at this start shape')
+            sc.add_edges(E[:e0, 0], E[:e0, 1], E[:e0, 2], E[:e0, 3])
+            poses=sc.tri_poses;materials=sc.tri_materials;model_areas=sc.tri_areas
+            base_angles=np.asarray(sc.edge_rest_angle);base_lengths=np.asarray(sc.edge_rest_length)
+        spring_positions=P32 if st.get('array_values') else np.asarray(sc.particle_q,dtype=np.float32)
         m = np.zeros(len(X0))
         np.add.at(m, T.reshape(-1), np.repeat(kw['density'] * np.asarray(areas, dtype=np.float64) / 3.0, 3))
-        E = st['edges']; e0 = st['e0']
-        sc.add_edges(E[:e0, 0], E[:e0, 1], E[:e0, 2], E[:e0, 3])
-        rest_ang = np.array(sc.edge_rest_angle + [st['rest_s']] * (len(E) - e0), dtype=np.float32)
-        rl = list(sc.edge_rest_length)
-        for i, j, k, l in E[e0:]: rl.append(wp.length(wp.vec3(*P32[l]) - wp.vec3(*P32[k])))
+        rest_ang = np.concatenate((base_angles,np.full(len(E)-e0,st['rest_s']))).astype(np.float32)
+        rl = base_lengths.tolist()
+        # Match Warp's float32 length arithmetic and its addition order. A
+        # generic dot/norm can contract/reorder operations and differ by a bit.
+        extra=E[e0:]
+        if st.get('array_values') and st.get('warp_lengths_verified'):
+            dd=P32[extra[:,3]]-P32[extra[:,2]]
+            lengths=np.sqrt((dd[:,0]*dd[:,0]+dd[:,1]*dd[:,1])+dd[:,2]*dd[:,2])
+            rl.extend(lengths.tolist())
+        else:
+            for i,j,k,l in extra:rl.append(wp.length(wp.vec3(*P32[l])-wp.vec3(*P32[k])))
         sl = []
         for a, b in st['springs']:
-            p = np.asarray(sc.particle_q[a], dtype=np.float32); q = np.asarray(sc.particle_q[b], dtype=np.float32)
+            p = spring_positions[a]; q = spring_positions[b]
             dd = np.subtract(p, q); sl.append(np.sqrt(np.dot(dd, dd)))
-        on, seen, added, skipped = self._hstar_switch(st['hstar'], X0, Xc, st['dihedral'])
+        on, seen, added, skipped, dropped = self._hstar_switch(st['hstar'], X0, Xc, st['dihedral'])
         sb = cfg.get('seam_bend') or {}
         bp = np.zeros((len(E), 2)); bp[:e0] = (cfg['edge_ke'], cfg['edge_kd'])
         for r in on: bp[r] = (float(sb.get('ke', cfg['edge_ke'])), cfg['edge_kd'])
         ms = m.astype(np.float32)
         vals = dict(particle_q=P32, particle_mass=ms, particle_inv_mass=np.divide(1.0, ms, out=np.zeros_like(ms), where=ms != 0.0),
-                    tri_poses=np.array(sc.tri_poses, dtype=np.float32), tri_areas=np.array(sc.tri_areas, dtype=np.float32),
+                    tri_poses=np.array(poses, dtype=np.float32), tri_areas=np.array(model_areas, dtype=np.float32),
                     edge_rest_angle=rest_ang, edge_rest_length=np.array(rl, dtype=np.float32),
                     edge_bending_properties=bp.astype(np.float32), spring_rest_length=np.array(sl, dtype=np.float32))
         if st.get('tri_uniform'):          # 1-A: the stretch (tri_ke / ka / kd) of this job, not the kept one's
-            vals['tri_materials'] = np.array(sc.tri_materials, dtype=np.float32)
+            vals['tri_materials'] = np.array(materials, dtype=np.float32)
         elif tuple(cfg[k] for k in ('tri_ke', 'tri_ka', 'tri_kd')) != st.get('tri_cfg'):
             raise RuntimeError('the stretch changed and the build wrote per-triangle values')
-        return vals, dict(seen=seen, added=added, skipped=skipped)
+        return vals, dict(seen=seen, added=added, skipped=skipped, dropped=dropped)
 
     # ------------------------------------------------------------------ the two paths
     def vram(self):
@@ -194,11 +246,35 @@ class Resident:
 
     def drop(self):
         # the job's Native runtime outlives the namespace: the worker marks it done on a cancel before frame 1 (1-C)
-        if self.g is not None: self.runtime = self.g.get('_NATIVE_RUNTIME'); self.g.clear()
+        if self.g is not None:
+            self.runtime = self.g.get('_NATIVE_RUNTIME')
+            self._close_inputs(self.g)
+            self.g.clear()
         self.g = None; self.key = None; self.snap = None
 
-    def run(self, idx, avatar, cfg, init_globals, mark=lambda *a, **k: None):
-        """-> dict(mode='fresh'|'begin', setup_s, ...). Runs the whole script (setup + loop + writing)."""
+    @staticmethod
+    def _close_inputs(g):
+        # Kept arrays do not need the NPZ zip handles after a completed job.
+        # Keeping those open also keeps a consumed prepared job's folder locked
+        # on Windows. The next begin reloads its own inputs before the builder.
+        for value in list(g.values()):
+            if isinstance(value, np.lib.npyio.NpzFile):
+                value.close()
+
+    def run(self, idx, avatar, cfg, init_globals, mark=lambda *a, **k: None, build_only=False):
+        try:
+            return self._run(idx,avatar,cfg,init_globals,mark,build_only)
+        except BaseException:
+            self.drop()
+            raise
+
+    def _run(self, idx, avatar, cfg, init_globals, mark=lambda *a, **k: None, build_only=False):
+        """-> dict(mode='fresh'|'begin', setup_s, ...). Runs the whole script (setup + loop + writing).
+
+        build_only (REVIEW_fable_edit_time_begin_2026-11-21, step 2): a job sent while the user edits. It builds the
+        model up to the loop (the same statements a fresh job runs), keeps it under its key and returns: no frame, no
+        result files. The press is an ordinary job; its key decides begin or fresh. A model of the same key is already
+        kept -> nothing to do ('kept')."""
         key = None; self.runtime = None
         if os.environ.get('AC9_TEST_RESIDENT_KEEP_MAIN_MODULE') != '1':
             # warp's '__main__' module keeps every kernel the earlier jobs defined, so its hash depended on the history
@@ -216,6 +292,18 @@ class Resident:
             self.why = [k for k in ('idx', 'avatar') if a[k] != b[k]] + sorted(
                 k for k in set(a['cfg']) | set(b['cfg']) if a['cfg'].get(k) != b['cfg'].get(k))
         elif self.g is None: self.why = 'nothing kept' if self.last is None else ('not keepable: ' + str((self.last or {}).get('why_not')))
+        if build_only:
+            if self.g is not None and key is not None and key == self.key:
+                info = dict(mode='kept', setup_s=0.0, keepable=True, why_not=None)
+            else:
+                self.drop(); info = self._fresh(init_globals, mark)
+                self.key = key if (key is not None and info.get('keepable')) else None
+                info['mode'] = 'build'
+            if self.g is not None: self._close_inputs(self.g)
+            info.update(why_fresh=self.why, vram=self.vram())
+            if self.key is None: self.drop()
+            self.last = info
+            return info
         if self.g is not None and key is not None and key == self.key:
             try:
                 ff = os.environ.get('AC9_TEST_RESIDENT_FAIL_FILE')       # tests: make this one begin fail
@@ -223,8 +311,10 @@ class Resident:
                     os.remove(ff); raise RuntimeError('injected begin failure')
                 info = self._begin(init_globals, mark); mode = 'begin'
             except BaseException as exc:
+                runtime=self.g.get('_NATIVE_RUNTIME') if self.g is not None else None
+                claimed=runtime is not None and getattr(runtime,'claimed',False) and not getattr(runtime,'closed',False)
                 # 1-C: a cancel (job_cancel.CanceledJob) or an exit is not a failed begin: nothing kept, passed on
-                if type(exc).__name__ == 'CanceledJob' or not isinstance(exc, Exception):
+                if claimed or type(exc).__name__ == 'CanceledJob' or not isinstance(exc, Exception):
                     self.drop(); raise
                 # a failed begin never ends the job: drop what is kept and build this job from scratch
                 err = repr(exc)[:300]; self.drop()
@@ -240,6 +330,8 @@ class Resident:
             for c in self.codes[self.loop_i:]: exec(c, g)
         except BaseException:
             self.drop(); raise
+        finally:
+            self._close_inputs(g)
         info.update(mode=mode, run_s=round(time.perf_counter() - t, 3), why_fresh=self.why, vram=self.vram())
         if self.key is None: self.drop()
         self.last = info
@@ -247,6 +339,7 @@ class Resident:
 
     def _fresh(self, init_globals, mark):
         wp = self.wp; g = dict(__name__='__main__', __file__=self.path, **init_globals); self.g = g
+        g['_AC9_TOPOLOGY_CACHE'] = {}
         S = dict(heavy_snap={}, heavy_solver={}, heavy_globals={}, heavy_log={})
         t0 = time.perf_counter(); keepable = True
         for i in range(self.loop_i):
@@ -257,12 +350,26 @@ class Resident:
             pre_g = dict(g) if heavy else None
             pre_hlog = dict(g['log']) if heavy and 'log' in g else None
             exec(self.codes[i], g)
+            if i == self.i_filters_end - 1:
+                # S: only mesh/seam/config topology, before shape-dependent
+                # contact state. Clone on every begin: later stages may add
+                # layer exclusions to these maps.
+                # The maps are read only after this point except vfilter / efilter, which the layer blocks
+                # extend (the same rule _restore_stitch_filters relies on): those two get their own sets, the
+                # rest (tri_of, ring, GATE_ROWS, SEAM_TRI ...) is kept by reference: a later statement of newton_vbd
+                # that writes into one of those would change this kept copy too. A deepcopy of the whole Python graph took 0.4 s per fresh build
+                # (6-piece T-shirt, 2026-11-21).
+                S['stitch_filters'] = {k: g[k] for k in FILTER_OUTPUTS}
+                for key in ('vfilter', 'efilter'):
+                    S['stitch_filters'][key] = {k: set(v) for k, v in g[key].items()}
+                S['stitch_filter_log'] = copy.deepcopy(g['log'].get('stitch_edge_filter'))
             if pre_sd is not None: S['heavy_solver'][i] = {k: v for k, v in vars(g['solver']).items() if k not in pre_sd or pre_sd[k] is not v}
             if pre_hlog is not None: S['heavy_log'][i] = {k: copy.deepcopy(v) for k, v in g['log'].items() if k not in pre_hlog or pre_hlog[k] is not v}
             if pre_g is not None: S['heavy_globals'][i] = {k: v for k, v in g.items() if k not in pre_g or pre_g[k] is not v}
             if i == self.i_final:
                 try:
-                    if not g.get('HSTAR_ROWS'): raise RuntimeError('H* rows off')
+                    if not g.get('HSTAR_ROWS'):
+                        raise RuntimeError('H* rows off: ' + (g['log'].get('hstar_rows_off') or ('no hstar_rows in the settings' if 'HSTAR_ROWS' in g else 'no seam bending')))
                     S['final'] = self._model_arrays(g['model'])
                     S['model_plain'] = {a: copy.deepcopy(v) for a, v in vars(g['model']).items() if isinstance(v, (int, float, bool, str, type(None)))}
                     names = [k for k, v in g.items() if not k.startswith('__') and (k not in pre_ids or pre_ids[k] != id(v))
@@ -310,7 +417,7 @@ class Resident:
         g['X0m'] = g['X0']; g['Xc'] = g['d']['Xclo'] / 1000.0
         g['seen'] = sw['seen']; g['added'] = sw['added']; g['skipped'] = sw['skipped']
         for k, v in S['seg_log'].items(): g['log'][k] = copy.deepcopy(v)
-        if 'seam_bend' in g['log']: g['log']['seam_bend'].update(active=sw['added'], skipped_opposite=sw['skipped'])
+        if 'seam_bend' in g['log']: g['log']['seam_bend'].update(active=sw['added'], skipped_opposite=sw['skipped'], dropped_degenerate=sw['dropped'])
         mdl = g['model']
         for p, h in S['final'].items():
             if p.startswith('particle_color') or p == 'shape_source_ptr': continue
@@ -326,10 +433,23 @@ class Resident:
         T['values'] = time.perf_counter() - t; t = time.perf_counter()
         prof = os.environ.get('AC9_RESIDENT_PROFILE') == '1'; slow = []
         for i in range(self.i_final + 1, self.loop_i):
+            if self.i_filters <= i < self.i_filters_end:
+                if i == self.i_filters:
+                    tf = time.perf_counter()
+                    self._restore_stitch_filters(g, S)
+                    T['stitch_filters'] = time.perf_counter() - tf
+                continue
             if i in self.i_heavy:
                 g.update(S['heavy_globals'].get(i, {}))
                 if i in S['heavy_solver']: vars(g['solver']).update(S['heavy_solver'][i])
                 for k, v in S['heavy_log'].get(i, {}).items(): g['log'][k] = copy.deepcopy(v)
+                if self.heads[i].startswith('solver = '):
+                    # The solver built its self-contact trees on the kept job's start shape; a refit keeps that
+                    # tree's layout, so the contacts came in another order (a fresh job differed by 7 um after one
+                    # frame, build-only begins 10/10, kept begins 4/10; RESULT edit-time-begin 2026-11-21). Build
+                    # them on this job's shape, as the constructor did (its vertex_positions: model.particle_q).
+                    det = getattr(g['solver'], 'trimesh_collision_detector', None)
+                    if det is not None: det.rebuild(g['model'].particle_q)
                 continue
             t1 = time.perf_counter()
             exec(self.codes[i], g)
@@ -341,3 +461,17 @@ class Resident:
         T['after_finalize'] = time.perf_counter() - t; T['total'] = time.perf_counter() - t0
         g['log']['resident'] = dict(begin_s={k: (round(v, 4) if isinstance(v, float) else v) for k, v in T.items()}, hstar_active=sw['added'])
         return dict(begin=T)
+
+    @staticmethod
+    def _restore_stitch_filters(g, snapshot):
+        """Restore structure-only exclusions; never carry a frame's filter state."""
+        # All consumers only read adjacency, gate rows and seam membership.
+        # Only the layer blocks below this stage extend vfilter/efilter; give
+        # those blocks their own maps. Copying the full Python graph per begin
+        # costs more than building it.
+        g.update(snapshot['stitch_filters'])
+        if g['cfg'].get('layer_order') or len(g['OL_KIN']):
+            for key in ('vfilter', 'efilter'):
+                g[key] = {k: set(v) for k, v in snapshot['stitch_filters'][key].items()}
+        if snapshot['stitch_filter_log'] is not None:
+            g['log']['stitch_edge_filter'] = copy.deepcopy(snapshot['stitch_filter_log'])

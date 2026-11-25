@@ -363,7 +363,7 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
     bl_label = "Draw Shape"
     bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
 
-    shape: EnumProperty(items=[('RECT', "Rectangle", ""), ('ELLIPSE', "Ellipse", "")])
+    shape: EnumProperty(items=[('RECT', "Rectangle", ""), ('ELLIPSE', "Ellipse", "")], options={'HIDDEN'})
     internal: BoolProperty(name="Internal", default=False, translation_context=CTX,
                            description="Draw inside a piece: a closed internal shape, not a new piece")
 
@@ -398,8 +398,8 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
                 rx, ry = (hi - lo) / 2
                 h = ((rx - ry) / max(rx + ry, 1e-9)) ** 2              # Ramanujan's perimeter
                 txt += tx("  round {0}", fmt(context, np.pi * (rx + ry) * (1 + 3 * h / (10 + np.sqrt(4 - 3 * h)))))
-        txt += ("   drag, or click two corners   Shift: square   Alt: from the center"
-                "   Ctrl: no snap   Esc / right click: cancel")
+        txt += tx("   drag, or click two corners   Shift: square   Alt: from the center"
+                  "   Ctrl: no snap   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
     def _draw(self, context):
@@ -481,7 +481,7 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
             Q = D.ellipse_quarters((lo + hi) / 2, (hi[0] - lo[0]) / 2, (hi[1] - lo[1]) / 2)
             lid = IL.add_shape(spec, self.on, [x[0] for x in Q], [np.array([x[1], x[2]]) for x in Q])
         else:
-            lid = D.add_internal(spec, self.on, shape_points(self.shape, lo, hi), kind='shape', closed=True)
+            lid = D.add_internal(spec, self.on, shape_points(self.shape, lo, hi), kind='shape', closed=True, authored=True)
         bad = D.internal_problems(spec, self.on, [lid])
         if bad:
             self.report({'WARNING'}, bad[0] + rpt(": keep the shape inside the piece"))

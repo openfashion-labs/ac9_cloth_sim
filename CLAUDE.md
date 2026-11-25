@@ -14,6 +14,59 @@
 - 英語はアメリカ英語（color・center・gray・neighbor・meter）。
 - .blend に残る名前（プロパティ名・列挙の識別子・オブジェクト名・JSON のキー・bl_idname）を変えるときは、古いファイルが開けることを確かめる。
 
+## 画面に出る名前
+- 同じ機能・状態・設定の名前（ボタン・メニュー・一覧・説明書・`i18n_ja.py`）は、1 つの表（定数）から読む。同じ文字列を別の場所にもう一度書かない。ピースの状態は `core/spec.py` の `STATE_NAMES`。
+- 日本語は、このアドオン専用の翻訳の文脈（`i18n.CTX`）で引く。Blender の翻訳辞書は全アドオンで共有で、既定の文脈では Blender 本体と先に登録した別のアドオンの訳が勝つ（別のアドオンが「Setup」を英語のまま登録していて、パネルが英語になった）。パネル・メニュー・オペレーター・プロパティは登録の前に `i18n.own_context()` が付ける。英語を直接書く `layout.label / menu / popover` には `text_ctxt=CTX` を渡し、実行時に組む文は `tx()` を通す。`tests/test_i18n_context.py` が、先に登録した別の辞書に負けないことを確かめる。
+- **日本語の訳は、次の版を公開する準備のときに一度にやる。開発中は英語のままでよい（ボタンの名前だけは開発中も日本語にする）。**
+  訳の無い英語はエラーにならず英語のまま出るので、`tests/test_i18n_coverage.py` が全部を拾う（登録したラベル・ツールチップ・
+  項目名、ソースの表示用の文字列、見本の状態で描いたパネルの全部の文字、`tx()`/`rpt()` の取りこぼし）。
+  - 開発中（取り込み前に回す）: ボタンの名前が英語なら落ちる。ほかは落とさず `docs/translation_ledger.md` に書き出す
+    （英語・見つけた日・場所・英語を書き換えたときの前の訳。「メモ」の欄は人が書いてよく、作り直しても残る）。
+    台帳は手で行を足さない。試験を回すと作り直される。
+  - 公開の準備: 台帳の英語を訳して `i18n_ja.py` に入れ、台帳を空にする。配布前の関門（check_zip）は `--release` で回し、
+    英語が 1 つでも残れば不合格。
+  そのために書き方を次にそろえる:
+  - 部品の関数（`section`・`field`・説明の行など）は、受け取った英語を自分で `tx()` に通す。呼ぶ側に任せない。
+  - 名前・数値などのデータだけの行は `translate=False`。表示する文を f-string で組まない（`tx("... {0}", x)` にする）。
+  - `poll_message_set`・ヘッダー行・`report`・例外の文も `tx()`／`rpt()` を通す。文を `+` でつなぐときは部品ごとに通す。
+  - 画面に出さないプロパティ（内部の受け渡し用）は `options={'HIDDEN'}`。出さないつもりでも Redo パネルとダイアログに出る。
+  - 実行ログ（`log()`）と問題の記録（`mark()`）は英語のまま（不具合の報告と AI が読む）。それ以外で英語のまま残す行は
+    `# i18n-skip: <理由>` を付け、10 件まで。
+  - 複数行の docstring はツールチップでは 1 行にまとめて引く（`i18n.own_context()`）。辞書の英語は 1 行で書く。
+- 名前を変えるときは、旧い名前をコード・翻訳・`docs/`・`LLM/` で検索して 0 件にする。表と表示が一致することを確かめる試験を、同じ変更で足す（状態は `tests/test_state_names.py`）。
+
+## 着た服の形と結果フォルダ
+- **画面に見えている着た服のメッシュが正。結果フォルダ（`ac9_job`）はその作り方の控え。** 2 つは別々に書かれる
+  （走行は始めに服のメッシュを差し替え、終わりに `ac9_job` を付け替える）ので、間で保存すると食い違う。
+- 結果フォルダを服のメッシュと突き合わせて読むときは、先に `garment_view.fits(g, job)` を聞く。食い違えば
+  メッシュから続ける（`garment_view.ensure_fits`、押したときに `job_or_from_mesh` が呼ぶ）。描画で範囲と型紙の座標を
+  使うときは、同じ 1 つの索引から両方を読む（overlay の `_jobseg`・`_result_rng`）。別々の場所から読み合わせない。
+- 開始の形を比べられなかったピースは黙って通さず、赤と 1 行で知らせる（`core/start_check.ON_SCREEN`）。
+- `tests/test_shape_source_guard.py`（Blender なし）が、`ac9_job` を書く場所・結果の索引を手で読む場所の数を数える。
+  増やすときは窓口（`result_reference`・`garment_view`）を通すか、同じ変更で数を上げて理由を書く。
+  結果フォルダのファイル名は `core/result_names.py` だけに書く（`tests/test_result_contract.py`）。
+
+## Undo と操作の終わり方
+- **操作が Blender に戻るとき、Blender の undo の段が書かれないなら、メモリは最後の段と同じ物でなければならない。**
+  Blender の undo は、2 つの段で同じデータブロックをメモリに残し、段が知らないものを解放する。段なしで古い物の下に
+  新しい物を入れる（`ob.data = 写し`、新しいオブジェクトを既存のコレクションへ、親・コンストレイントの相手）と、
+  次の undo で古い物が解放済みの物を指して落ちる。Blender が段を書くのは「UNDO 付きで FINISHED、Python から呼ばれて
+  いない」ときだけ（CANCELLED・例外・UNDO なし・Python からの `bpy.ops` は書かれない）。
+- `undo_guard.py` が全オペレーターの execute / invoke / modal を登録の前に包み、段なしで終わってデータブロックの
+  構成が変わっていたら 1 段書く（何も変えていなければ書かない）。自前の段は `undo_guard.push()` で書く。
+- 守られないもの: ハンドラ・タイマーからの書き込み、タイマーやスクリプトから undo の指定なしで呼んだオペレーター。
+  ここでデータブロックを作らない・付け替えない・解放しない。
+- 未対応: 指紋に入っていない物（マテリアル・画像・アクション）の入れ替えと、タイマーから UNDO 付きで呼ぶ操作は見張りの外。
+- ほかのオペレーターを Python から呼ぶ側は、自分が UNDO 付きで FINISHED を返すか、`('EXEC_DEFAULT', True)` で段を頼む。
+- `tests/test_undo_sites_guard.py`（Blender なし）が、差し替え・解放・Python からのオペレーター呼び出しの数を数える。
+  `tests/test_undo_safety.py`（Blender）が、断られた・キャンセルした・途中で失敗した操作のあとの undo / redo を歩く。
+
+## 定義していない名前
+- 関数を分ける・移すときは、元の関数に残る行が使う名前を全部確かめる。Python はその行を通るまで NameError を出さない
+  （関数を 2 つに分けたとき、元に残った行が使う 4 つの名前が新しい関数の中に入り、全部の Simulate と Live が始まってすぐ止まった）。
+- `tests/test_undefined_names.py`（Blender なし、約 1 秒）が、どこにも定義の無い名前を探す。開発元の手元の clone ではコミットの前に git のフック（`.git/hooks/pre-commit`、.py を含むコミットだけ）が自動で回し、見つかればコミットを止める。配布前の関門（check_zip）も回す。
+  実行時に外から入る名前は、試験の `RUNTIME_NAMES` に理由を書いて足す。
+
 ## 公開に向けて守ること
 - **絶対パス・個人名・顧客名や商品名を、コード・コメント・コミットメッセージ・PR 文面に書かない。** このリポジトリは一般公開されている。
 - **作業データの固有名も書かない。** .blend のファイル名、オブジェクト名、コレクション名、シェイプキー名、マテリアル名は、
@@ -33,10 +86,6 @@
 - `maintainer` 欄とログの接頭辞は `AC9` で統一する（`blender_manifest.toml`）。
 
 ## 配布
-- 配布 ZIP に入らないもの: `docs/`・`website/`・`.github/`・`CLAUDE.md`・`CHANGELOG.md`（`blender_manifest.toml` の `paths_exclude_pattern`）。`wheels/`（`release.yml` が PyPI から落とす）・`THIRD_PARTY_NOTICES.txt`・`licenses/`・`BUILD_INFO.txt`（`release.yml` が書く）は ZIP に入る。`LLM/` と `tests/` は ZIP に入る（LLM/ は AICompanion が読む説明書で、その封印がアドオンの .py 全部の一覧を見るため）。
+- 配布 ZIP に入らないもの: `docs/`・`.github/`・`CLAUDE.md`・`CHANGELOG.md`（`blender_manifest.toml` の `paths_exclude_pattern`）。`LLM/` と `tests/` は ZIP に入る（LLM/ は AICompanion が読む説明書で、その封印がアドオンの .py 全部の一覧を見るため）。
 - 秘密情報の検査（gitleaks）は `.github/workflows/gitleaks.yml` が PR と main への push で回す。コミットに社内の名前が入っていないかは機械では検査しないので、上の「公開に向けて守ること」を自分で確かめる。
-- 公開の流れ: 手元のブランチは push せず細かくコミットしてよい。版を出すときに main へ 1 コミットにまとめて入れ、変更点は `CHANGELOG.md` に書く（`## [X.Y.Z] - 日付` の節。`[Unreleased]` に溜めて版を出すときに付け替える）。
-- 版の番号: 機能を足した版ごとに 2 桁目を上げる（0.2.0 → 0.3.0。0.10.0 の次は 0.11.0）。直しだけの版は 3 桁目（0.2.1）。1.0.0 が正式版。段階（α・β）は Release と CHANGELOG に書く。
-- リリース: `blender_manifest.toml` の `version` と `CHANGELOG.md` の節を更新した PR をマージしたあと、admin が `vX.Y.Z` タグを push する。`.github/workflows/release.yml` が Blender を落として ZIP をビルドし、draft の Release に添付する（本文は CHANGELOG の該当節）。本文を確かめて Release を公開する。
-- 計算に使う wheel（newton・warp-lang の Windows 用）はリポジトリに置かない（warp-lang が約 150 MB）。`release.yml` が PyPI から `blender_manifest.toml` の `wheels` と同じ版を落とし、sha256 を確かめてから ZIP に入れる。版を変えるときは manifest・`release.yml` の sha256・`THIRD_PARTY_NOTICES.txt`・`licenses/` を一緒に直す。newton を上げるときは `solver/newton_patch/` と `solver/newton_vbd.py` の `NEWTON_BASE_SHA256` も。
-- 版のコミットには、`LLM/` の封印（`LLM/manifest.toml` の `build_id` と `__init__.py` の `AC9_GUIDANCE_BUILD`）を開発元が入れておく。封印はアドオンの .py 全部のハッシュを持つので、.py を変えたコミットでは古くなる（AI アシスタントがその説明書を使わなくなるだけで、アドオンの動きには関係しない）。
+- 公開の流れ: 手元のブランチは push せず細かくコミットしてよい。版を出すときに main へ 1 コミットにまとめて入れ、変更点は `CHANGELOG.md` に書く。

@@ -29,6 +29,32 @@ def cache_root(environ=None):
     return os.path.join(env.get('XDG_CACHE_HOME') or os.path.join(os.path.expanduser('~'), '.cache'), 'warp')
 
 
+def latest_since(since, root=None):
+    """The newest change in the cache at or after `since` (a time.time()): its version folders and their module
+    folders. 0.0 when nothing changed or the cache cannot be read. Read while a run prepares, to tell a long first build
+    from a solver that stopped moving."""
+    root = cache_root() if root is None else root
+    latest = 0.0
+    try:
+        versions = [e for e in os.scandir(root) if e.is_dir()]
+    except OSError:
+        return 0.0
+    for v in versions:
+        try:
+            t = v.stat().st_mtime
+            if t < since:
+                continue
+            latest = max(latest, t)
+            for e in os.scandir(v.path):
+                if e.name.startswith('wp_'):
+                    t = e.stat().st_mtime
+                    if t >= since:
+                        latest = max(latest, t)
+        except OSError:
+            continue
+    return latest
+
+
 def built_since(since, root=None):
     """The kernel modules written into the cache at or after `since` (a time.time()): warp makes one 'wp_<module>_
     <hash>' folder per module it builds. 0 when nothing was built or the cache cannot be read."""

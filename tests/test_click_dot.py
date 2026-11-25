@@ -8,6 +8,8 @@ Run: blender -b --factory-startup --python tests/test_click_dot.py -- <parent of
 import json
 import sys
 import unittest
+from types import SimpleNamespace as NS
+from unittest.mock import patch, Mock
 from pathlib import Path
 
 ARGS = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
@@ -78,6 +80,79 @@ class ClickDot(unittest.TestCase):
         self.assertTrue(GM.mark_flat(bpy.context, "B", (1050.0, 1050.0)))
         self.assertEqual(GM._mark['piece'], "B")
         self.assertLess(np.linalg.norm(self.cloth() - np.array([3.1, 0.0, 0.1])), 1e-5)
+
+
+class DeselectDot(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.g = ClickDot.g
+        cls.old_shown = GM._shown
+        GM._shown = lambda context, ob: True
+
+    @classmethod
+    def tearDownClass(cls):
+        GM._shown = cls.old_shown
+
+    """Input-only synthetic sheets: positive-area finite geometry, no solver quality claim."""
+    def setUp(self):
+        self.assertTrue(all(p.area > 0 for p in self.g.data.polygons))
+        self.assertTrue(all(np.isfinite(v.co[:]).all() for v in self.g.data.vertices))
+        self.seed()
+        from ac9_cloth_sim import draft_tool, toolbar, seam_edit_tool
+        self.DT, self.TB, self.SE = draft_tool, toolbar, seam_edit_tool
+        self.ctx = NS(screen=bpy.context.screen, area=NS(type='VIEW_3D', tag_redraw=lambda: None))
+
+    def seed(self):
+        self.assertTrue(GM.mark_flat(bpy.context, 'A', (300., 300.)))
+
+    def test_whole_and_edit_blank_click(self):
+        for mode in ('TRANSFORM', 'EDIT'):
+            for bm in ('SET', 'ADD'):
+                self.seed()
+                op = NS(box=[(20,20),(20,20)], box_mode=bm, box_piece=None, _box_h=None, mode=mode)
+                with patch.object(bpy.types.SpaceView3D, 'draw_handler_remove'), patch.object(self.DT.SEL, 'deselect_all'), patch.object(self.DT.SEL, '_drop_seam'):
+                    r = self.DT.AC9_OT_SimPatternDrag._box_modal(op, self.ctx, NS(type='LEFTMOUSE', value='RELEASE'))
+                self.assertEqual(r, {'CANCELLED'})
+                self.assertEqual(bool(GM._mark), bm == 'ADD', (mode,bm))
+
+    def test_place_blank_click(self):
+        for kind in ('NONE','PLANE'):
+            for shift in (False, True):
+                self.seed()
+                op = NS(p=dict(event=NS(shift=shift),kind=kind,idx=-1), _ob=lambda:None)
+                with patch.object(self.TB.SEL,'deselect_all'), patch.object(self.TB.SEL,'_drop_seam'):
+                    self.TB.AC9_OT_SimPlacePress._click(op,self.ctx)
+                self.assertEqual(bool(GM._mark),shift,(kind,shift))
+
+    def test_seam_blank_click(self):
+        for kind in ('NONE','PLANE'):
+            for shift in (False, True):
+                self.seed()
+                op = NS(_pick3d=lambda *args:False)
+                ev = NS(mouse_region_x=20,mouse_region_y=20,shift=shift)
+                with patch.object(self.SE.store,'get',return_value=({},{})), patch.object(self.SE.PV,'layout_matrix',return_value=None), patch.object(self.TB,'under',return_value=(kind,None,-1)), patch.object(self.SE,'mouse_mm',return_value=None), patch.object(self.SE,'unselect_seam'):
+                    self.SE.AC9_OT_SimSeamClick.invoke(op,self.ctx,ev)
+                self.assertEqual(bool(GM._mark),shift,(kind,shift))
+
+    def test_other_tool_blank_even_when_hint_rejects(self):
+        op = NS(tool='TAPE_ALONG')
+        ev = NS(mouse_region_x=20,mouse_region_y=20,shift=False,value='PRESS')
+        with patch.object(self.TB,'under',return_value=('NONE',None,-1)), patch.object(self.TB,'hint',return_value=False):
+            self.TB.AC9_OT_SimToolClick.invoke(op,self.ctx,ev)
+        self.assertFalse(GM._mark)
+
+    def test_box_drag_does_not_clear(self):
+        op = NS(box=[(20,20),(120,120)],box_mode='SET',box_piece=None,_box_h=None,mode='EDIT')
+        with patch.object(bpy.types.SpaceView3D,'draw_handler_remove'), patch.object(self.DT,'box_points'):
+            self.DT.AC9_OT_SimPatternDrag._box_modal(op,self.ctx,NS(type='LEFTMOUSE',value='RELEASE'))
+        self.assertTrue(GM._mark)
+
+    def test_clear_redraws_all_views(self):
+        a,b = Mock(type='VIEW_3D'),Mock(type='VIEW_3D')
+        GM.clear(NS(screen=NS(areas=[a,b])))
+        self.assertIsNone(GM.points(bpy.context))
+        a.tag_redraw.assert_called_once()
+        b.tag_redraw.assert_called_once()
 
 
 if __name__ == '__main__':

@@ -58,13 +58,7 @@ def resolve(g, display=False):
 # from the garment of a .blend opened without its folder, From Mesh, a pattern edit carried to the 3D). Whichever
 # wrote it, a reader finds the same things through open_result(); the file names live in this module only (the run's
 # own writer and its stages, and the solver, are the exceptions: tests/test_result_contract.py counts them).
-JOB = 'job.json'
-INDEX = 'scene.idx.npz'
-PATTERN = 'pattern.npz'
-AVATAR = 'avatar.npz'
-SPEC = 'ac9_spec.json'
-FINAL = 'final.npy'
-FRAMES = 'frames.npy'
+from .core.result_names import JOB, INDEX, PATTERN, AVATAR, SPEC, FINAL, FRAMES  # noqa: F401
 
 # what every result folder holds, by whoever wrote it: (file, keys). A run's folder holds more (avatar.npz, the
 # stages' config, Xclo, ...), which a reader asks for as optional (open_result: avatar() None, stitches() None).
@@ -86,7 +80,7 @@ class ResultUnreadable(ValueError):
 
 
 def _unreadable(job, what):
-    return ResultUnreadable(f"the garment's result folder cannot be read ({what}): Back to Placed with nothing "
+    return ResultUnreadable(f"the garment's result folder cannot be read ({what}): Back to Adjusted Shape with nothing "
                             "selected, then Phase Sim")
 
 

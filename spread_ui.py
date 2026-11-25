@@ -153,7 +153,7 @@ class AC9_OT_SimCutLine(bpy.types.Operator):
         ident = (np.eye(2), np.zeros(2))                  # nothing moved: each half hangs where it was
         msg = T.commit(context, sp, names, old_spec=old, rigid={n: ident for n in names}, sources=sources)
         from . import dress as DR
-        g = bpy.data.objects.get(DR.garment_name(sp))
+        g = DR.garment(sp)
         rs = set(DR.reset_pieces(g)) if DR.has_result(g) else set()
         redo = sorted(n for n in names if n in rs)
         if redo:                                           # shown as placed objects: those made again, cut

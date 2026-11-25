@@ -111,11 +111,15 @@ def _replace_bom(context, spec):
         peer_texts = {text for text, _, _ in peers}
         if any(sc != context.scene and sc.ac9_cloth_sim.spec_text in peer_texts for sc in bpy.data.scenes):
             raise ValueError(tx('A BOM version is used by another scene; no data was changed'))
-        g = context.scene.objects.get(D.garment_name(old))
+        g = D.garment(old)
         if g:
             names = json.loads(g.get('ac9_piece_names', '[]'))
-            if (g.type != 'MESH' or not names or not set(names) <= set(ident) or
-                    g.data.attributes.get('ac9_piece') is None):
+            # The result points at the Text it was dressed from. Pieces deleted from that pattern since the
+            # last run (all of them, before reading a fresh BOM) leave names the pattern no longer has, yet the
+            # result is still this pattern's. Without that link, the names must match the pattern.
+            owned = g.get('ac9_garment_spec') in peer_texts
+            if (g.type != 'MESH' or g.data.attributes.get('ac9_piece') is None or
+                    (not owned and (not names or not set(names) <= set(ident)))):
                 raise ValueError(tx('The current 3D result has ambiguous owners; no data was changed'))
             targets.add(g)
             for name in (BV.points_name(old['name']), ZV.points_name(old['name'])):
@@ -129,7 +133,7 @@ def _replace_bom(context, spec):
             for prop in (PLV.KEEP_PROP, PLV.BEFORE_SEAM_PROP):
                 if me.get(prop) and json.loads(me[prop]).get('garment') == old['name']:
                     if me.users > int(me.use_fake_user):
-                        raise ValueError(tx('A saved placed shape is shared; no data was changed'))
+                        raise ValueError(tx('A saved adjusted shape is shared; no data was changed'))
                     kept.append(me)
     for ob in targets:
         if any(ob.name in sc.objects and sc != context.scene for sc in bpy.data.scenes):
@@ -145,8 +149,9 @@ def _replace_bom(context, spec):
     # Same active BOM may reuse its result name; unrelated existing specs never share a new result.
     if old and base == old['name']:
         used.discard(base)
-    while spec['name'] in used or (bpy.data.objects.get(D.garment_name(spec)) not in targets
-                                  and bpy.data.objects.get(D.garment_name(spec)) is not None):
+    # Allocate a creation label, rather than finding the current document's mesh.
+    while spec['name'] in used or ((collision := bpy.data.objects.get(D.garment_name(spec))) is not None
+                                  and collision not in targets):
         spec['name'] = f'{base}_{k}'
         k += 1
     selected = SEL.objects(context)
@@ -164,7 +169,7 @@ def _replace_bom(context, spec):
                 coll.objects.unlink(ob)
         t = store.new_text(context, spec['name'])
         store.put(context, spec)
-        PV.rebuild(context, spec, store.get(context)[1])
+        PV.rebuild(context, spec, store.get(context)[1], switch_document=True)
         for text, raw, prior in peers:
             prior['name'] = f"{prior['name']} (previous: {text.name})"
             prior['placement'], prior['guides'] = {}, {}
@@ -228,8 +233,8 @@ class AC9_OT_SimImportBOM(bpy.types.Operator, ImportHelper):
         return AC9_OT_SimDress.running() is None and context.mode == 'OBJECT'
 
     def draw(self, context):
-        self.layout.label(text='Discards the current 3D and placement', icon='ERROR')
-        self.layout.label(text='Keep the drape: use Update BOM Seams')
+        self.layout.label(text_ctxt=CTX, text='Discards the current 3D and placement', icon='ERROR')
+        self.layout.label(text_ctxt=CTX, text='Keep the drape: use Update BOM Seams')
         self.layout.prop(self, "drape_fbx")
 
     def execute(self, context):
@@ -380,8 +385,8 @@ class AC9_OT_SimSelectGarment(bpy.types.Operator):
     bl_label = "Select Garment"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    garment: StringProperty(options={'SKIP_SAVE'})
-    extend: bpy.props.BoolProperty(default=False, options={'SKIP_SAVE'})
+    garment: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    extend: bpy.props.BoolProperty(default=False, options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -409,7 +414,7 @@ class AC9_OT_SimRenameGarment(bpy.types.Operator):
     bl_label = "Rename Garment"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    garment: StringProperty(options={'SKIP_SAVE'})
+    garment: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     name: StringProperty(name="Name")
 
     @classmethod
@@ -498,7 +503,7 @@ class AC9_OT_SimSeamEdit(bpy.types.Operator):
                                 ('FLIP_B', "Flip B", "Run side B the other way (its start becomes its end)"),
                                 ('CONFIRM', "Confirm", "Mark the seam as checked"),
                                 ('TOGGLE', "On/Off", "Sew this seam or not"),
-                                ('DELETE', "Delete", "Remove the seam")])
+                                ('DELETE', "Delete", "Remove the seam")], options={'HIDDEN'})
 
     @classmethod
     def description(cls, context, props):
@@ -525,9 +530,8 @@ class AC9_OT_SimSeamEdit(bpy.types.Operator):
         mirror = ST.partners(spec, picked)
         if self.action in ('FLIP_A', 'FLIP_B'):
             sd = act['a' if self.action == 'FLIP_A' else 'b']
-            sd['from'], sd['to'] = sd['to'], sd['from']
-            if 'dir' in sd:
-                sd['dir'] = -sd['dir']
+            from .core.line_track import reverse_side
+            reverse_side(sd)
             if act.get('source') == 'bom':
                 act['source'] = 'user'           # a person changed it: keep it on "Seams from BOM"
         elif self.action == 'CONFIRM':
@@ -751,12 +755,12 @@ class AC9_OT_SimSetFold(bpy.types.Operator):
 
 
 class AC9_OT_SimPiecesOnOff(bpy.types.Operator):
-    """Switch the selected pattern pieces on or off, leaving the others as they are (an off piece is not sewn: add an accessory later and Live Sim)"""
+    """Switch the selected pattern pieces on or off, leaving the others as they are (an off piece is not sewn: add an accessory later and Simulate)"""
     bl_idname = "ac9_cloth_sim.pieces_on_off"
     bl_label = "Pieces On / Off"
     bl_options = {'REGISTER', 'UNDO'}
 
-    on: bpy.props.BoolProperty(default=True, options={'SKIP_SAVE'})
+    on: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -781,7 +785,7 @@ class AC9_OT_SimFreeze(bpy.types.Operator):
     bl_label = "Freeze"
     bl_options = {'REGISTER', 'UNDO'}
 
-    freeze: bpy.props.BoolProperty(default=True, options={'SKIP_SAVE'})
+    freeze: bpy.props.BoolProperty(default=True, options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -809,9 +813,9 @@ class AC9_OT_SimPieceState(bpy.types.Operator):
     bl_label = "Piece State"
     bl_options = {'REGISTER', 'UNDO'}
 
-    state: bpy.props.EnumProperty(items=STATE_ITEMS, options={'SKIP_SAVE'})
+    state: bpy.props.EnumProperty(items=STATE_ITEMS, options={'HIDDEN', 'SKIP_SAVE'})
     scope: bpy.props.EnumProperty(items=[('SELECTED', "Selected", ""), ('PIECE', "Piece", ""),
-                                         ('GARMENT', "Garment", "")], default='SELECTED', options={'SKIP_SAVE'})
+                                         ('GARMENT', "Garment", "")], default='SELECTED', options={'HIDDEN', 'SKIP_SAVE'})
     piece: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     text: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})    # the garment's spec Text (empty: current)
     solo: bpy.props.BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})      # Ctrl: these pieces only, not their pairs
@@ -882,7 +886,7 @@ class AC9_OT_SimPieceState(bpy.types.Operator):
             remaining = {n for n, v in display_state.snapshot(store.get(context)[0]).items() if v['missing']}
             created = len(needed - remaining)
             if created:
-                msg += rpt("; {0} placed shape(s) created", created)
+                msg += rpt("; {0} adjusted shape(s) created", created)
         finally:
             if not current:
                 context.scene.ac9_cloth_sim.spec_text = previous_text
@@ -985,7 +989,7 @@ class AC9_OT_SimSetUnits(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     unit: bpy.props.EnumProperty(items=[('MM', "mm", ""), ('CM', "cm", ""), ('M', "m", ""), ('IN', "in", "")],
-                                 options={'SKIP_SAVE'})
+                                 options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
         from . import units
@@ -1006,6 +1010,7 @@ class AC9_OT_SimRefresh(bpy.types.Operator):
         return store.text(context) is not None
 
     def execute(self, context):
+        store.invalidate()  # Reload is explicit; do not wait for the Text editor's periodic cache check.
         spec, outlines = store.get(context)
         if spec is None:
             self.report({'ERROR'}, rpt("The spec text is not valid: {0}", store.error()))
@@ -1126,7 +1131,7 @@ def set_piece_thickness(context, sel, on):
                 pc['thickness'] = False
     store.put(context, spec)
     from . import dress as D
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     if g is not None:
         D.refresh_thickness(context, g, spec)
     from . import placed_view as PV
@@ -1289,7 +1294,7 @@ class AC9_OT_SimSetRole(bpy.types.Operator):
 
 
 class AC9_OT_SimSetStart(bpy.types.Operator):
-    """How the selected pattern pieces (and their mirrored twins) start against the pieces they are sewn to. As Placed: from where they were placed. On Edge: placed as a ring, Live Sim pulls them onto the sewn edge by their seams (Band on Edge lays them there first)"""
+    """How the selected pattern pieces (and their mirrored twins) start against the pieces they are sewn to. As Placed: from where they were placed. On Edge: placed as a ring, Simulate pulls them onto the sewn edge by their seams (Band on Edge lays them there first)"""
     bl_idname = "ac9_cloth_sim.set_start"
     bl_label = "Set Start"
     bl_options = {'REGISTER', 'UNDO'}
@@ -1356,12 +1361,13 @@ def release_enum_strings():
 
 
 def _sel_pieces(context):
-    return set(SEL.pieces(context))
+    return set(SEL.piece_selection(context)[0])
 
 
 def _active_piece(context, sel):
     # the piece the Tool tab shows (pattern_view.lead_piece): an active object left outside a box select is not it
-    return PV.lead_piece(context, sel) if sel else None
+    names, lead = SEL.piece_selection(context)
+    return lead if lead in sel else PV.lead_piece(context, set(names) & set(sel))
 
 
 def _fabric_spec(context):
@@ -1464,7 +1470,7 @@ def refresh_display(context, spec=None):
     spec = spec if spec is not None else store.get(context)[0]
     if spec is None:
         return
-    g = bpy.data.objects.get(D.garment_name(spec))
+    g = D.garment(spec)
     if D.has_result(g):
         D.refresh_thickness(context, g, spec)
     from . import placed_view as PV
@@ -1492,6 +1498,8 @@ def set_garment_look(context, mat):
     with a fake user (Fable UI review 2026-10-21)."""
     from . import look_apply as LA
     from .core import look as LK
+    from . import pattern_view as PV
+    PV.require_integrity(context)
     spec = _fabric_spec(context)
     LK.set_default(spec, LA.ref(mat))
     if mat is not None:
@@ -1590,7 +1598,7 @@ class AC9_OT_SimFabricAdd(bpy.types.Operator):
     bl_label = "Add Fabric"
     bl_options = {'REGISTER', 'UNDO'}
 
-    preset: StringProperty()
+    preset: StringProperty(options={'HIDDEN'})
 
     @classmethod
     def poll(cls, context):

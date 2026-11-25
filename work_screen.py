@@ -276,12 +276,13 @@ class AC9_OT_SimAddAvatar(bpy.types.Operator):
 CLASSES = (AC9_OT_SimWorkScreen, AC9_OT_SimAddAvatar)
 
 
-def _set_gizmo(space, scene):
+def _set_gizmo(space, scene, tool_id=None):
     """The Work Screen's views show Whole Pieces' gizmo of one kind, move or rotate (properties whole_gizmo)."""
     props = getattr(scene, 'ac9_cloth_sim', None)
     rotate = props is not None and props.whole_gizmo == 'ROTATE'
-    space.show_gizmo_object_translate = not rotate
-    space.show_gizmo_object_rotate = rotate
+    enabled = tool_id is None or tool_id == 'ac9_cloth_sim.transform_pattern_tool'
+    space.show_gizmo_object_translate = enabled and not rotate
+    space.show_gizmo_object_rotate = enabled and rotate
     space.show_gizmo_object_scale = False
 
 
@@ -291,9 +292,11 @@ def apply_gizmo(context):
     for win in wm.windows if wm else []:
         if win.workspace is None or win.workspace.name != NAME:
             continue
+        tool = win.workspace.tools.from_space_view3d_mode('OBJECT', create=False)
+        tool_id = tool.idname if tool else ''
         for a in win.screen.areas:
             if a.type == 'VIEW_3D':
-                _set_gizmo(a.spaces.active, win.scene)
+                _set_gizmo(a.spaces.active, win.scene, tool_id)
                 a.tag_redraw()
 
 

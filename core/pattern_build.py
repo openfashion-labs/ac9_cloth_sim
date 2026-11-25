@@ -20,6 +20,7 @@ import collections
 import hashlib
 import json
 import os
+import threading
 
 import numpy as np
 
@@ -50,6 +51,8 @@ CORNER_DEG = 20.0     # an internal line turning more than this at a point: a co
 CACHE_DIR = None
 _INTERIOR = collections.OrderedDict()
 _INTERIOR_MAX = 512
+# build may run on a background thread (dress.prewarm_build) while the main thread builds too: the dict is shared
+_INTERIOR_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------- 2D geometry (numpy)
@@ -505,27 +508,33 @@ def _interior_cached(Vb, Vi_a, ca, sides, h, holes=()):
         hs.update(str(a.shape).encode())
         hs.update(a.tobytes())
     key = hs.hexdigest()
-    if key in _INTERIOR:
-        _INTERIOR.move_to_end(key)
-        Vg, cnt = _INTERIOR[key]
+    with _INTERIOR_LOCK:
+        hit = _INTERIOR.get(key)
+        if hit is not None:
+            _INTERIOR.move_to_end(key)
+    if hit is not None:
+        Vg, cnt = hit
         return Vg.copy(), cnt, True
-    fn = os.path.join(CACHE_DIR, key[:2], key + '.npz') if CACHE_DIR else None
+    cache_dir = CACHE_DIR
+    fn = os.path.join(cache_dir, key[:2], key + '.npz') if cache_dir else None
     if fn and os.path.exists(fn):
         try:
-            z = np.load(fn)
-            Vg, cnt = z['Vg'], (int(z['cnt'][0]), int(z['cnt'][1]))
-            _INTERIOR[key] = (Vg, cnt)
+            with np.load(fn) as z:
+                Vg, cnt = z['Vg'], (int(z['cnt'][0]), int(z['cnt'][1]))
+            with _INTERIOR_LOCK:
+                _INTERIOR[key] = (Vg, cnt)
             return Vg.copy(), cnt, True
         except (OSError, ValueError, KeyError):
             pass
     Vg, cnt = _interior(Vb, Vi_a, ca, sides, h, holes)
-    _INTERIOR[key] = (Vg.copy(), cnt)
-    while len(_INTERIOR) > _INTERIOR_MAX:
-        _INTERIOR.popitem(last=False)
+    with _INTERIOR_LOCK:
+        _INTERIOR[key] = (Vg.copy(), cnt)
+        while len(_INTERIOR) > _INTERIOR_MAX:
+            _INTERIOR.popitem(last=False)
     if fn:
         try:
             os.makedirs(os.path.dirname(fn), exist_ok=True)
-            tmp = fn + '.tmp.npz'
+            tmp = fn + f'.{threading.get_ident()}.tmp.npz'
             np.savez(tmp, Vg=Vg, cnt=np.asarray(cnt, np.int64))
             os.replace(tmp, fn)
         except OSError:
@@ -554,7 +563,7 @@ def build(spec, h=6.0):
     # ---- 1. seams sampled on both sides
     seams = []
     # a seam switched off is meshed and stitched as well (its stitches kept apart: pat 'stitch_off'), so switching it
-    # on or off does not change the mesh and a Live Sim can sew it while it runs (user 2026-10-23, DECISIONS
+    # on or off does not change the mesh and a Simulate run can sew it while it runs (user 2026-10-23, DECISIONS
     # cloth-sim-phase-live-local-sim-2026-10-23); it is not eased
     for sm in spec['seams']:
         if sm['a']['piece'] not in on or sm['b']['piece'] not in on:
@@ -565,7 +574,7 @@ def build(spec, h=6.0):
             if 'line' in sd:
                 P = S.side_polyline(spec, sd, OL, step=0.5)
                 sides.append({'piece': sd['piece'], 'kind': 'internal', 'line': sd['line'], 'poly': P,
-                              'len': S.polyline_len(P), 't': (float(sd['from']), float(sd['to']))})
+                              'len': S.polyline_len(P), 't': sd})
             else:
                 o = OL[sd['piece']]
                 sides.append({'piece': sd['piece'], 'kind': 'boundary', 's0': o.s_of(*sd['from']),
@@ -731,7 +740,8 @@ def build(spec, h=6.0):
         sewn_vids = collections.defaultdict(list)       # line -> the inner vertices of its seam sides
         for si, ks, pts, inner, line, t in internal_sides:
             sewn_lines.add(line)
-            sewn_t[line].append(tuple(sorted(t)))
+            from .line_track import covered_intervals
+            sewn_t[line].extend(covered_intervals(t))
             idx = []
             for k, q in enumerate(pts):
                 if not inner[k]:
@@ -900,6 +910,10 @@ def build(spec, h=6.0):
         one half onto the other every frame (FINDINGS 4j-8: two separately meshed halves copied through a fit still
         crossed at their seams, 17 pairs; one-to-one, 0). False (built on its own) when the outline or a seam sample
         does not land on the mirrored mesh."""
+        from . import internal_sync as IS
+        if not IS.compatible(spec, prim, p['name']):
+            rep.append(f"  {p['name']} not mirror-meshed: authored internal lines or settings differ")
+            return False
         h = H[p['name']]
         name = p['name']
         A, oa, ob = built[prim], OL[prim], OL[name]
@@ -939,16 +953,12 @@ def build(spec, h=6.0):
         ints = {x['id']: np.asarray(x['pts'], float) for x in p.get('internals', [])}
         for fid in sorted({int(f) for f in A['Lf'] if f >= 0}):
             pn, lid, _ = fold_meta[fid].split('|')
-            Pm = M(INT[prim][lid]['pts'])
-            best = None
-            for tid, Q in ints.items():
-                d = float(np.median(dist_to_polyline(Pm, Q)))
-                if d < 3.0 and (best is None or d < best[0]):
-                    best = (d, tid)
-            if best is None:
+            peer = IS.match(spec, prim, lid)
+            if peer is None or peer[0] != name:
                 continue
+            tid = peer[1]
             nf = len(fold_meta)
-            fold_meta.append(f"{name}|{best[1]}|{S.polyline_len(ints[best[1]]):.1f}")
+            fold_meta.append(f"{name}|{tid}|{S.polyline_len(ints[tid]):.1f}")
             Lf[A['Lf'] == fid] = nf
         seam_vid.update(new_vid)
         built[name] = {'name': name, 'fabric': p.get('fabric', ''), 'V': M(Va), 'nb': A['nb'], 'cons': A['cons'].copy(),

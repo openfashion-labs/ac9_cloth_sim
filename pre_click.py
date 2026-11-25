@@ -77,14 +77,15 @@ def seam_point(context, event):
     hit = idx.nearest(q)
     if hit is None or hit[3] > ST.SNAP_PX * mmpx:
         return _set(context)
-    pc, s, _, _ = hit
-    s, corner = idx.snap_corner(pc, s, ST.CORNER_PX * mmpx)
+    from .shape_tool import snap_settings
+    (pc, s, corner), edge = ST.pick_start(idx, hit, context.window_manager.ac9_seam_pick_mode,
+                                        snap_settings(context)[0] != bool(event.ctrl), ST.CORNER_PX * mmpx)
     tr = idx.tracks[pc]
-    wh = None if corner or event.ctrl else ST.whole_edge(tr, s)
-    if wh is not None:                     # mid-edge: the click takes the whole edge, from its nearer end
-        s0, s1, d = wh
-        span = (((s1 - s0) % tr.L) if d > 0 else -((s0 - s1) % tr.L)) if ST.is_closed(tr) else s1 - s0
-        P = tr.at(s0 + np.linspace(0.0, span, max(2, int(abs(span) / 2.0) + 1)))
+    if context.window_manager.ac9_seam_pick_mode == 'EDGE' and edge is None:
+        return _set(context)
+    if edge is not None:
+        _, s0, s1, d = edge
+        P = ST.track_poly(tr, s0, s1, d)
         W = [tuple(M @ Vector((float(x) * PV.MM, float(y) * PV.MM, 0.0))) for x, y in P]
         p0 = W[0]
         return _set(context, dots=[(p0, YELLOW)], lines=[([p for u, v in zip(W[:-1], W[1:]) for p in (u, v)], YELLOW)])
@@ -138,21 +139,18 @@ def place_guide(context, event):
     from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
     spec = store.get(context)[0]
     to_place = SEL.any_pieces(context)
-    body = getattr(context.scene.ac9_cloth_sim, 'body', None)
-    if not VV.allows_world(context, spec) or (body is not None and not VV.object_allowed(context, body)):
-        clear(context)
-        return to_place
-    if not spec or not spec.get('guides') or context.region_data is None:
+    guides = TB.placement_guides(context, spec)
+    if not guides or context.region_data is None:
         _set(context)
         return to_place
     xy = (event.mouse_region_x, event.mouse_region_y)
     o = np.array(region_2d_to_origin_3d(context.region, context.region_data, xy)) * 1000.0
     d = np.array(region_2d_to_vector_3d(context.region, context.region_data, xy))
-    h = BA.ray_hit(spec['guides'], o, d)
+    h = BA.ray_hit(guides, o, d)
     if h is None or not to_place:
         _set(context)
         return to_place
-    segs = _cached(('guide', h[0]), lambda: [tuple(p) for p in overlay.guide_lines(spec['guides'][h[0]])])
+    segs = _cached(('guide', h[0]), lambda: [tuple(p) for p in overlay.guide_lines(guides[h[0]])])
     _set(context, lines=[(segs, YELLOW)])
     return to_place
 
