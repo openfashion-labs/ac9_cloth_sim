@@ -19,6 +19,7 @@ import ac9_cloth_sim
 from ac9_cloth_sim import control_basis as CB, dress as D, place_candidate as PC, place_fold as PF
 from ac9_cloth_sim import placed_view as PV, placement as PL, store, selection as SEL
 from ac9_cloth_sim.core import draft, spec as S
+from ac9_cloth_sim import pattern_view as PATTERN
 
 
 class PlacementCandidate(unittest.TestCase):
@@ -26,8 +27,14 @@ class PlacementCandidate(unittest.TestCase):
 
     def setUp(self):
         self.ctx = bpy.context
-        bpy.ops.mesh.primitive_cube_add(size=.1, location=(10., 0., 0.))
-        self.ctx.scene.ac9_cloth_sim.body = self.ctx.object
+        mesh = bpy.data.meshes.new('PlacementTestBody')
+        mesh.from_pydata([(x*.05,y*.05,z*.05) for x,y,z in
+                          [(-1,-1,-1),(-1,-1,1),(-1,1,-1),(-1,1,1),
+                           (1,-1,-1),(1,-1,1),(1,1,-1),(1,1,1)]], [],
+                         [(0,4,6,2),(1,3,7,5),(0,1,5,4),(2,6,7,3),(0,2,3,1),(4,5,7,6)])
+        self.body = bpy.data.objects.new('PlacementTestBody',mesh)
+        self.ctx.scene.collection.objects.link(self.body)
+        self.body.location = (10.,0.,0.)
         self.ctx.scene.ac9_cloth_sim.mesh_size = 12.
         self.sp = S.new_spec(self._testMethodName)
         draft.add_polygon(self.sp, [[0, 0], [300, 0], [300, 200], [0, 200]], name='A')
@@ -35,6 +42,13 @@ class PlacementCandidate(unittest.TestCase):
         self.sp['placement'] = {'A': dict(guide='torso', theta=90., h=0., anchor=[150, 100])}
         store.new_text(self.ctx, self.sp['name'])
         store.write(self.ctx, self.sp, keep=True)
+        self.flat_patterns(self.sp)
+        self.ctx.scene.ac9_cloth_sim.body = self.body
+        self.assertIsNotNone(self.ctx.scene.ac9_cloth_sim.body)
+
+    def flat_patterns(self, sp):
+        PATTERN.rebuild(self.ctx,sp,{p['name']:S.Outline(p) for p in sp['pieces']},switch_document=True)
+        self.assertTrue(PATTERN.integrity(self.ctx,sp)['ok'])
 
     def install_mixed_garment(self):
         sp = self.sp
@@ -43,6 +57,7 @@ class PlacementCandidate(unittest.TestCase):
         sp['pairs'] = [['A', 'B']]
         sp['placement']['B'] = dict(guide='torso', theta=113., h=21., anchor=[650, 100])
         sp['placement']['C'] = dict(guide='torso', theta=190., h=11., anchor=[55, 370])
+        self.flat_patterns(sp)
         store.put(self.ctx, sp)
         x = np.array([[1, 0, 0], [20, 0, 0], [3, 0, 20],
                       [40, 0, 0], [60, 0, 0], [40, 7, 20],
@@ -77,6 +92,7 @@ class PlacementCandidate(unittest.TestCase):
         axis = draft.add_internal(sp, 'A', [[150, 0], [150, 200]], mirror=False)
         sp['folds'] = [dict(piece='A', line=axis, deg=45., side='A')]
         sp['placement']['A']['pose'] = dict(loc=[11, 9, 0], rot=[26, 15, 34])
+        self.flat_patterns(sp)
         store.put(self.ctx, sp)
         res = D.prepare(self.ctx, 12., shapes_only=True, placed_only=True)
         PV.build(self.ctx, sp, res['pat'], res['tris'], res['X'], res['pairs'])
@@ -106,6 +122,7 @@ class PlacementCandidate(unittest.TestCase):
             for name, x in [('A', 150), ('B', 650)]:
                 axes[name] = draft.add_internal(sp, name, [[x, 0], [x, 200]], mirror=False)
             sp['folds'] = [dict(piece=n, line=line, deg=45., side='A') for n, line in axes.items()]
+        self.flat_patterns(sp)
         store.put(self.ctx, sp)
         return axes
 
@@ -141,6 +158,7 @@ class PlacementCandidate(unittest.TestCase):
                 pose = dict(loc=[30, 20, 11], rot=[26, 15, 34])
                 sp['placement']['A']['pose'] = pose
                 sp['placement']['B']['pose'] = S.mirror_pose(pose)
+                self.flat_patterns(sp)
                 store.put(self.ctx, sp)
                 p = sp['placement'][lead]
                 op = SimpleNamespace(spec=sp, rel={lead: p}, press=(p['guide'], p['theta'], p['h']),
@@ -160,6 +178,7 @@ class PlacementCandidate(unittest.TestCase):
         for posed in ('A', 'B'):
             sp = copy.deepcopy(self.sp)
             sp['placement'][posed]['pose'] = dict(loc=[11, 9, 0], rot=[26, 15, 34])
+            self.flat_patterns(sp)
             store.put(self.ctx, sp)
             c = PC.build(self.ctx, sp, ['A', 'B'])
             worst = max(worst, self.assert_candidate(c))
@@ -239,6 +258,7 @@ class PlacementCandidate(unittest.TestCase):
         draft.mirror_copy(self.sp,'A')
         self.sp['pieces'][-1]['name']='B'
         self.sp['placement'],_=S.mirror_twins(self.sp)
+        self.flat_patterns(self.sp)
         store.put(self.ctx,self.sp)
         PC.commit(self.ctx,PC.build(self.ctx,self.sp,['A','B']))
         obs=PV.objects(self.sp)

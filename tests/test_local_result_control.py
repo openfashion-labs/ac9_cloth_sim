@@ -16,6 +16,7 @@ sys.path.insert(0, args[0])
 import ac9_cloth_sim
 from ac9_cloth_sim import control_basis as CB, display_state, dress, placement, placed_view as PV, selection, store
 from ac9_cloth_sim.core import draft, spec as S
+from ac9_cloth_sim import pattern_view as PATTERN
 
 
 class LocalResultControl(unittest.TestCase):
@@ -40,6 +41,8 @@ class LocalResultControl(unittest.TestCase):
         sp['placement'], _ = S.mirror_twins(sp, sources={'A'})
         store.new_text(ctx, sp['name'])
         store.write(ctx, sp, keep=True)
+        PATTERN.rebuild(ctx,sp,{p['name']:S.Outline(p) for p in sp['pieces']},switch_document=True)
+        self.assertTrue(PATTERN.integrity(ctx,sp)['ok'])
         res = dress.prepare(ctx, 20., shapes_only=True, placed_only=True)
         PV.build(ctx, sp, res['pat'], res['tris'], res['X'], res['pairs'])
         self.assertEqual(PV.objects(sp)['A'] is PV.objects(sp)[other], shared)
@@ -129,6 +132,8 @@ class LocalResultControl(unittest.TestCase):
             PV.remove(list(PV.objects(sp)), sp)
         t = store.text(bpy.context)
         if t:
+            for ob in list(PATTERN.piece_objects().values()):
+                if ob.get('ac9_pattern_spec') == t:bpy.data.objects.remove(ob,do_unlink=True)
             bpy.data.texts.remove(t)
         store.invalidate()
 
@@ -151,6 +156,8 @@ class LocalResultControl(unittest.TestCase):
         ctx.scene.ac9_cloth_sim.body = ctx.object
         store.new_text(ctx, sp['name'])
         store.write(ctx, sp, keep=True)
+        PATTERN.rebuild(ctx,sp,{p['name']:S.Outline(p) for p in sp['pieces']},switch_document=True)
+        self.assertTrue(PATTERN.integrity(ctx,sp)['ok'])
         res = dress.prepare(ctx, 20., shapes_only=True, placed_only=True)
         PV.build(ctx, sp, res['pat'], res['tris'], res['X'], res['pairs'])
         obs = PV.objects(sp)

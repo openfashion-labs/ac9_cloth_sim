@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.4.0"
-build_id = "2bf95219f4aeb8e339cf7874760e73364102c044ed417bf4823582a57a3fd036"
+build_id = "36f42774c32ffbb547a39db59780c02c1104c82eb1b1dc076af8f25ff571c48c"
 
 [[documents]]
 id = "guide_blender"
@@ -1257,7 +1257,7 @@ sha256 = "a4a5caa38e976d8015235a7a2721fb2e9807fdc4b727c81a63fceb96f3b770e5"
 
 [[sources]]
 path = "tests/test_control_basis.py"
-sha256 = "fb225bb0f7f8cd5c4a88ec8257c9619468948368d8642f462cb2b67bdd011bc6"
+sha256 = "efc9edad870ff4078b59e4aeaa66b34fd3a0d5979c8da6c5c7f32fed11296d75"
 
 [[sources]]
 path = "tests/test_copy_names.py"
@@ -1473,7 +1473,7 @@ sha256 = "5838b4afe1ba846a9a49a4bd5520423259a42bda65e13f0ae255fa41e2a36e08"
 
 [[sources]]
 path = "tests/test_local_result_control.py"
-sha256 = "19709ee0fd495a503e34e221a920719b6810f8806f63010f8e4309bf6980fc73"
+sha256 = "411250fd0ee669ae4015b96bbfffdf54a0c50196feac610be9f3c5933b96b314"
 
 [[sources]]
 path = "tests/test_look_reference.py"
@@ -1605,7 +1605,7 @@ sha256 = "1de986f449d642784186d62e8c16c7e6930880ca9c1cac185d0583213828b819"
 
 [[sources]]
 path = "tests/test_place_candidate.py"
-sha256 = "00e617f7b84692316dbe16aba5f5304a38b8f6db47db520deb62aac16a1bf112"
+sha256 = "4e740c6e625589cc0bf27d956a5753548d5962269fcfff0ec6627eb6fff83303"
 
 [[sources]]
 path = "tests/test_place_check.py"

@@ -10,6 +10,7 @@ sys.path.insert(0,ARGS[0])
 import ac9_cloth_sim as A
 from ac9_cloth_sim import control_basis as CB,store as ST,dress as D,piece_move as PM,selection as SEL,placement as PL,placed_view as PV,display_state as DS,work_screen as WS
 from ac9_cloth_sim.core import spec as S,draft as DR
+from ac9_cloth_sim import pattern_view as PATTERN
 A.register()
 OUT=Path(ARGS[1]);OUT.parent.mkdir(parents=True,exist_ok=True)
 
@@ -23,6 +24,8 @@ class ControlBasis(unittest.TestCase):
         self.sp['guides']={'torso':{'o':[0,0,0],'R':np.eye(3).tolist(),'r':100,'h0':0,'h1':100}}
         self.sp['placement']={n:{'guide':'torso','anchor':[0,0],'theta':40. if n=='A' else 140.,'h':0.} for n in ['A','B']}
         ST.new_text(bpy.context,self.sp['name']);ST.write(bpy.context,self.sp,keep=True)
+        PATTERN.rebuild(bpy.context,self.sp,{p['name']:S.Outline(p) for p in self.sp['pieces']},switch_document=True)
+        self.assertTrue(PATTERN.integrity(bpy.context,self.sp)['ok'])
         body=bpy.data.objects.get('ControlBasisBody')
         if body is None:
             me=bpy.data.meshes.new('ControlBasisBody');me.from_pydata([(10,0,0),(10.1,0,0),(10,.1,0),(10,0,.1)],[],[(0,2,1),(0,1,3),(0,3,2),(1,2,3)])
@@ -37,7 +40,10 @@ class ControlBasis(unittest.TestCase):
         g=bpy.data.objects.get('AC9_Garment_ControlBasis')
         if g:bpy.data.objects.remove(g,do_unlink=True)
         t=ST.text(bpy.context)
-        if t:bpy.data.texts.remove(t)
+        if t:
+            for ob in list(PATTERN.piece_objects().values()):
+                if ob.get('ac9_pattern_spec') == t:bpy.data.objects.remove(ob,do_unlink=True)
+            bpy.data.texts.remove(t)
         ST.invalidate();PM._busy[0]=False
     def co(self):
         c=np.empty((len(self.g.data.vertices),3));self.g.data.vertices.foreach_get('co',c.ravel());return c*1000
