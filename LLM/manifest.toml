@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.4.1"
-build_id = "9ccd0bb1482c818b4ea0552c46646266fff6608d234ee8f1773a7ec7212f6bb7"
+build_id = "8abfe3d3214da7bd7e9670eed4902d812150a0295c540450e1eb6079b1f0632a"
 
 [[documents]]
 id = "guide_blender"
@@ -1301,7 +1301,7 @@ sha256 = "22ff1aade1388db0c4f2764a6bf45a7e3d8bb3344df5dfe9ade545ca589e0575"
 
 [[sources]]
 path = "tests/test_distribution_publication.py"
-sha256 = "fec0f1553a449d79e0cfb74de9e8e60aa87342cd6c6a63cb53a4f2ad2ab21865"
+sha256 = "15fa7fbbc7ac963c261ea9715958a9f46aa5e71e97f9d13c9922b07c918841ea"
 
 [[sources]]
 path = "tests/test_distribution_repository_index.py"
@@ -1937,7 +1937,7 @@ sha256 = "618a50330856783b1961e0752e260491f3a0fecc3ca6f667ea49ee0860df2eac"
 
 [[sources]]
 path = "tools/publish_distribution.py"
-sha256 = "8004fbf2731c98426ff35b07debfada9d70583c444deaa38c637a8fc51b8c0a7"
+sha256 = "cd545c9e8cf40b015a61025f1d6d788e17690c071ceb4c2ae564ea96e530e975"
 
 [[sources]]
 path = "tools/split_distribution.py"

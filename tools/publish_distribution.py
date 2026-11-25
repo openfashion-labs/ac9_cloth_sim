@@ -57,7 +57,16 @@ def validate_run(run, sha, repo):
 def require_merged_approval(pulls, reviews, sha, repo):
     candidates = [p for p in pulls if p.get('merged_at') and p['head']['sha'] == sha
                   and p['head']['repo']['full_name'] == repo and p['base']['ref'] == 'main']
-    if len(candidates) != 1 or not any(r.get('state') == 'APPROVED' and r.get('commit_id') == sha for r in reviews):
+    latest = {}
+    for review in reviews:
+        if review.get('state') not in {'APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'}:
+            continue
+        user = review.get('user') or {}
+        if type(user.get('id')) is not int:
+            raise ValueError('Review author must be identifiable')
+        latest[user['id']] = review
+    if (len(candidates) != 1 or any(r['state'] == 'CHANGES_REQUESTED' for r in latest.values())
+            or not any(r['state'] == 'APPROVED' and r.get('commit_id') == sha for r in latest.values())):
         raise ValueError('A merged PR and approval of this exact source are required')
     return candidates[0]
 
@@ -127,6 +136,10 @@ class Publisher:
     def api(self, endpoint):
         return json.loads(command('gh', 'api', f'repos/{self.repo}/{endpoint}'))
 
+    def api_list(self, endpoint):
+        pages = json.loads(command('gh', 'api', '--paginate', '--slurp', f'repos/{self.repo}/{endpoint}'))
+        return [item for page in pages for item in page]
+
     def current_head(self):
         return command('git', 'ls-remote', 'origin', 'refs/heads/main', cwd=self.root).split()[0]
 
@@ -189,11 +202,11 @@ class Publisher:
         head = command('git', 'rev-parse', 'HEAD', cwd=self.root)
         if self.current_head() != head or command('git', 'diff', '--name-only', sha, head, cwd=self.root):
             raise ValueError('Reviewed CI tree must exactly match current main')
-        pulls = self.api(f'commits/{sha}/pulls')
+        pulls = self.api_list(f'commits/{sha}/pulls?per_page=100')
         matching = [p for p in pulls if p.get('merged_at') and p['head']['sha'] == sha]
         if len(matching) != 1:
             raise ValueError('Expected one merged PR for the tested head')
-        reviews = self.api(f'pulls/{matching[0]["number"]}/reviews?per_page=100')
+        reviews = self.api_list(f'pulls/{matching[0]["number"]}/reviews?per_page=100')
         require_merged_approval(pulls, reviews, sha, self.repo)
         artifact = work / 'tested'
         command('gh', 'run', 'download', run_id, '--repo', self.repo, '--name', 'split-distribution-preview', '--dir', str(artifact))

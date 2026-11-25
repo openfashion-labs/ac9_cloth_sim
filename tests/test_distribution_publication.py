@@ -44,10 +44,10 @@ class Publication(unittest.TestCase):
     def test_approval_of_an_old_head_does_not_pass(self):
         pulls = [{'merged_at': '2026-11-25', 'head': {'sha': SHA, 'repo': {'full_name': REPO}}, 'base': {'ref': 'main'}}]
         with self.assertRaises(ValueError):
-            publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': 'b' * 40}], SHA, REPO)
-        publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': SHA}], SHA, REPO)
+            publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': 'b' * 40, 'user': {'id': 1}}], SHA, REPO)
+        publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}}], SHA, REPO)
         pulls[0]['merged_at'] = None
-        with self.assertRaises(ValueError):publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': SHA}], SHA, REPO)
+        with self.assertRaises(ValueError):publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}}], SHA, REPO)
 
     def test_existing_asset_is_reused_but_never_overwritten(self):
         expected = {'bytes': 7, 'sha256': SHA + 'b' * 24}
@@ -55,6 +55,16 @@ class Publication(unittest.TestCase):
         self.assertEqual(publication.asset_action({'size': 7, 'digest': 'sha256:' + expected['sha256']}, expected), 'verify-and-reuse')
         for existing in ({'size': 8}, {'size': 7, 'digest': 'sha256:' + 'c' * 64}):
             with self.assertRaises(ValueError):publication.asset_action(existing, expected)
+
+    def test_old_approval_does_not_override_later_changes_or_dismissal(self):
+        pulls = [{'merged_at': '2026-11-25', 'head': {'sha': SHA, 'repo': {'full_name': REPO}}, 'base': {'ref': 'main'}}]
+        approval = {'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}}
+        for state in ('CHANGES_REQUESTED', 'DISMISSED'):
+            later = {**approval, 'state': state}
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                publication.require_merged_approval(pulls, [approval, later], SHA, REPO)
+        publication.require_merged_approval(pulls, [{**approval, 'state': 'CHANGES_REQUESTED'}, approval], SHA, REPO)
+        with self.assertRaises(ValueError):publication.require_merged_approval(pulls, [{**approval, 'user': None}], SHA, REPO)
 
     def test_partial_upload_failure_never_publishes_a_release(self):
         publisher = publication.Publisher('.', REPO)
