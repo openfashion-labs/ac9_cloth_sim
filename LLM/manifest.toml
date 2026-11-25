@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
-addon_version = "0.4.0"
-build_id = "2acf62e78bc57a78529231bdb48d0688596d3505e15a5c5f3df802907be5ac9c"
+addon_version = "0.4.1"
+build_id = "b4ac17bd834dcacc2bcc25ed16ed87779521172f1067ad0bcd37e263e89050c3"
 
 [[documents]]
 id = "guide_blender"
@@ -1692,6 +1692,10 @@ path = "tests/test_release_assets.py"
 sha256 = "6fb1c019d3eba30f28429ff84bb241670e442c8c9a9dce0a4c2cf384fba56252"
 
 [[sources]]
+path = "tests/test_release_scope.py"
+sha256 = "3abf810d80cd3a54096e93e6e3b7a26fcaf59197c0ee3db92c489dcfdab66fc4"
+
+[[sources]]
 path = "tests/test_resident_runner.py"
 sha256 = "d7924b5fa764d0784f5f20b2683af81282670f7dad66e2c4633e9ab89a255e7a"
 
@@ -1894,6 +1898,10 @@ sha256 = "9b4894324aa199a1643cea1aba1233d4495d5aed8d9df78a26297512e17ed536"
 [[sources]]
 path = "tools/build_distribution.py"
 sha256 = "53def416b1056e899ecbf232f1f764a90ec8471faeb2298aa9ea84be9cf89fd6"
+
+[[sources]]
+path = "tools/check_release_scope.py"
+sha256 = "2c475c1fa81f8c0b49fd8695e8b82e9782140788ae3cc9ab5d56dad30ef9bfe4"
 
 [[sources]]
 path = "tools/distribution_spec.py"

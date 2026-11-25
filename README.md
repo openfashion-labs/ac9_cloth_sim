@@ -1,6 +1,8 @@
 # AC9 Cloth Sim
 
-[English](README.en.md)
+> 0.4.1の分離配布を準備するブランチです。分離版の導入経路はまだ公開していません。現在の公開版は0.4.0の全部入りZIPです。
+
+[English](README.en.md) · [0.4.1の準備状況](RELEASE_STATUS.md)
 
 Blender の中で服の型紙を読み込み、縫い合わせ、アバターに着せて、布の落ち着き方を物理シミュレーションで確かめるアドオンです。
 型紙を直して、もう一度着せて確かめる、という往復を Blender の中だけで行えます。
@@ -17,7 +19,7 @@ Blender の中で服の型紙を読み込み、縫い合わせ、アバターに
 
 ## ご利用にあたって
 
-現在の版は **0.4.0** です。開発段階と版ごとの変更は [CHANGELOG](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) と [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) をご覧ください。
+この候補の版は **0.4.1（準備中）** です。開発段階と版ごとの変更は [CHANGELOG](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) と [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) をご覧ください。
 次のことを承知のうえでお使いください。
 
 - 機能はまだ足りません。

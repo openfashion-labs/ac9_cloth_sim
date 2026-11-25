@@ -1,5 +1,7 @@
 # AC9 Cloth Sim
 
+> This branch prepares split distributions for 0.4.1. The split installation path is not published yet. The current public release is the all-in-one 0.4.0 ZIP.
+
 [日本語](README.md)
 
 A Blender add-on that imports garment patterns, sews them together, dresses an avatar with them and lets you check how the cloth settles with a physics simulation.
@@ -17,7 +19,7 @@ Free to use, commercial use included (GPL-3.0-or-later).
 
 ## Before you start
 
-The current version is **0.4.0**. See the [changelog](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) and [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) for the development stage and changes in each version.
+This candidate is **0.4.1 (in preparation)**. See the [changelog](https://github.com/openfashion-labs/ac9_cloth_sim/blob/main/CHANGELOG.md) and [Releases](https://github.com/openfashion-labs/ac9_cloth_sim/releases) for the development stage and changes in each version.
 Please keep in mind that:
 
 - Features are still missing.

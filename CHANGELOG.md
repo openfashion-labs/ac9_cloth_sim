@@ -9,6 +9,16 @@ The version number is the one in `blender_manifest.toml`; each release is tagged
 
 ## [Unreleased]
 
+## [0.4.1] - Unreleased
+
+Release repair in preparation. Split distribution is not published yet.
+
+### Fixed
+
+- Restore the prepared distribution CPU checks and split-package CI artifacts omitted during 0.4.0 public export.
+- Check required release steps and all three package roles; block publication while distribution connection and review requirements remain incomplete.
+
+
 ## [0.4.0] - 2026-11-25
 
 Alpha release. Features and workflows are still in development.

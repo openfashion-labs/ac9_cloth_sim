@@ -29,6 +29,26 @@ on:
       - dress.py
       - solver/**
       - tests/test_solver_math.py
+      - tools/**
+      - _addon.py
+      - core/live_session.py
+      - core/prepared_candidate.py
+      - place_lay.py
+      - i18n_ja.py
+      - distribution.py
+      - runtime_repair.py
+      - runtime_repair_worker.py
+      - tests/test_runtime_repair.py
+      - tests/test_distribution_repository_index.py
+      - tests/test_runtime_release_inputs.py
+      - tests/test_release_assets.py
+      - .github/release_scope.json
+      - draft_tool.py
+      - dart_ui.py
+      - spread_ui.py
+      - place_targets.py
+      - core/**
+      - tests/**
 
 permissions:
   contents: read
@@ -97,7 +117,25 @@ jobs:
                       raise SystemExit(f'{path}:{node.lineno}: SciPy is not a bundled dependency')
           EOF
 
-      - name: Download the pinned wheels
+      - name: Check release scope contract
+        run: python3 tools/check_release_scope.py --root . --phase plan
+
+      - name: Check distribution CPU safety
+        if: hashFiles('tools/download_distribution_wheels.py') != ''
+        run: |
+          python3 -m unittest discover -s tests -p test_distribution_repository_index.py
+          python3 -m unittest discover -s tests -p test_runtime_repair.py
+          python3 -m unittest discover -s tests -p test_runtime_release_inputs.py
+          python3 -m unittest discover -s tests -p test_release_assets.py
+
+      - name: Download and verify the pinned wheels
+        if: hashFiles('tools/download_distribution_wheels.py') != ''
+        run: |
+          python3 tools/download_distribution_wheels.py --out wheels --source . --prepare-manifest
+
+      # Preserve the pre-tools stable-tag rebuild contract, including its original pins.
+      - name: Download the legacy stable-tag wheels
+        if: env.TAG != '' && hashFiles('tools/download_distribution_wheels.py') == ''
         run: |
           mkdir wheels
           python3 -m pip download --no-deps --only-binary :all: \
@@ -155,7 +193,24 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
-            libxi6 libxrender1 libxkbcommon0 libsm6 libice6 libgl1 libegl1 libxxf86vm1 libxfixes3 libgomp1
+            libxi6 libxrender1 libxkbcommon0 libsm6 libice6 libgl1 libegl1 libxxf86vm1 libxfixes3 libgomp1 xvfb xauth
+
+      - name: Check every context command, mirror regression, 3D carry and actual undo before packaging
+        run: |
+          blender="$RUNNER_TEMP/blender/blender"
+          mkdir -p "$RUNNER_TEMP/command-package" "$RUNNER_TEMP/command-checks" "$RUNNER_TEMP/command-extensions"
+          ln -s "$GITHUB_WORKSPACE" "$RUNNER_TEMP/command-package/ac9_cloth_sim"
+          export BLENDER_USER_EXTENSIONS="$RUNNER_TEMP/command-extensions"
+          for test in test_command_symmetry test_context_contracts test_command_scene test_numeric_size test_numeric_gap_symmetry; do
+            "$blender" -b --factory-startup --python-exit-code 1 --python "tests/$test.py" -- \
+              "$RUNNER_TEMP/command-package" "$RUNNER_TEMP/command-checks/$test.json"
+          done
+          xvfb-run -a "$blender" --factory-startup --enable-event-simulate --python-exit-code 1 \
+            --python tests/test_command_modal.py -- "$RUNNER_TEMP/command-package" "$RUNNER_TEMP/command-checks/modal.json"
+          python3 -c 'import json,os; from pathlib import Path; p=Path(os.environ["RUNNER_TEMP"])/"command-checks/modal.json"; assert json.loads(p.read_text())["ok"]'
+          xvfb-run -a "$blender" --factory-startup --enable-event-simulate --python-exit-code 1 \
+            --python tests/test_clone_modal.py -- "$RUNNER_TEMP/command-package" "$RUNNER_TEMP/command-checks/clone-modal.json"
+          python3 -c 'import json,os; from pathlib import Path; p=Path(os.environ["RUNNER_TEMP"])/"command-checks/clone-modal.json"; assert json.loads(p.read_text())["ok"]'
 
       - name: Validate and build the extension
         run: |
@@ -201,6 +256,27 @@ jobs:
             exit 1
           fi
 
+      # PR artifacts only. The canonical full ZIP remains the sole release attachment.
+      - name: Derive split distribution preview from the canonical full ZIP
+        if: github.event_name == 'pull_request'
+        run: |
+          full=$(find "$RUNNER_TEMP/dist" -maxdepth 1 -type f -name '*.zip' -print -quit)
+          python3 tools/split_distribution.py --full "$full" --out "$RUNNER_TEMP/split-preview"
+          blender="$RUNNER_TEMP/blender/blender"
+          for package in "$RUNNER_TEMP/split-preview/repository/"*.zip; do
+            "$blender" --command extension validate "$package"
+          done
+          "$blender" --command extension server-generate --repo-dir "$RUNNER_TEMP/split-preview/repository" --html
+          python3 tools/check_release_scope.py --root . --phase packages --build "$RUNNER_TEMP/split-preview/build.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          name: split-distribution-preview
+          path: ${{ runner.temp }}/split-preview/
+          if-no-files-found: error
+          retention-days: 5
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: extension-zip
@@ -219,13 +295,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
-          sparse-checkout: CHANGELOG.md
+          sparse-checkout: |
+            CHANGELOG.md
+            blender_manifest.toml
+            .github/release_scope.json
+            .github/workflows/release.yml
+            tools/check_release_scope.py
           sparse-checkout-cone-mode: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: extension-zip
           path: dist
+
+      - name: Verify publication completion
+        run: python3 tools/check_release_scope.py --root . --phase publish
 
       - name: Attach the ZIP to the release
         env:
