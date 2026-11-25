@@ -4,6 +4,8 @@
 
 [日本語](README.md)
 
+See the [candidate repository guide](tools/CANDIDATE_REPOSITORY.md) to prepare a local installation page. This rehearsal is separate from the public installation site.
+
 A Blender add-on that imports garment patterns, sews them together, dresses an avatar with them and lets you check how the cloth settles with a physics simulation.
 Fixing a pattern and dressing the avatar again to check it all happens inside Blender.
 

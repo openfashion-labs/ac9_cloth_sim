@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.4.1"
-build_id = "ac8ee1fbd9c261c891ac5f3ee557324beff570f99619b5318177dccacf1728a3"
+build_id = "f3b92da6971234e08f3c4f08e5d82c8e1b2e09ece0db5096940993d2c7c3d83b"
 
 [[documents]]
 id = "guide_blender"
@@ -1204,6 +1204,10 @@ path = "tests/test_build_id.py"
 sha256 = "2a3ba0cc2f7fa347f18bac51a3e09334953dd6e58452428defe42e1ee557767a"
 
 [[sources]]
+path = "tests/test_candidate_repository.py"
+sha256 = "818cc26e40b28b7e3a59ec08adf8c25fa505947f8e64b72d2e56e3035f663db6"
+
+[[sources]]
 path = "tests/test_carry_by_layout.py"
 sha256 = "ca189866d3f3b9621f6ea1abd84881098907f894569f52b2871eb3c3fd3285ea"
 
@@ -1894,6 +1898,10 @@ sha256 = "bc9f009f47c61144fefe9c1b7721ae543bcf66bfbc078744670f981219e1698a"
 [[sources]]
 path = "toolbar.py"
 sha256 = "9b4894324aa199a1643cea1aba1233d4495d5aed8d9df78a26297512e17ed536"
+
+[[sources]]
+path = "tools/build_candidate_repository.py"
+sha256 = "5f928c8e50b05ee3df64cf0b6c11474994dcf6bc24893f07c4041820edb78bdc"
 
 [[sources]]
 path = "tools/build_distribution.py"

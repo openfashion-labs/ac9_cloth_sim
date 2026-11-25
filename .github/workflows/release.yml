@@ -127,6 +127,7 @@ jobs:
           python3 -m unittest discover -s tests -p test_runtime_repair.py
           python3 -m unittest discover -s tests -p test_runtime_release_inputs.py
           python3 -m unittest discover -s tests -p test_release_assets.py
+          python3 -m unittest discover -s tests -p test_candidate_repository.py
 
       - name: Download and verify the pinned wheels
         if: hashFiles('tools/download_distribution_wheels.py') != ''
@@ -268,6 +269,9 @@ jobs:
           done
           "$blender" --command extension server-generate --repo-dir "$RUNNER_TEMP/split-preview/repository" --html
           python3 tools/check_release_scope.py --root . --phase packages --build "$RUNNER_TEMP/split-preview/build.json"
+          version=$(sed -nE 's/^version = "([^"]+)".*/\1/p' blender_manifest.toml)
+          python3 tools/build_candidate_repository.py --source-repo "$RUNNER_TEMP/split-preview/repository" \
+            --out "$RUNNER_TEMP/candidate-page" --base-url http://127.0.0.1:8765/ --main-version "$version"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: github.event_name == 'pull_request'
