@@ -66,3 +66,9 @@ sidebar_position: 10
 - `Frames: on the timeline` は経過を再生できる印、「**手で直す**」（Fix by Hand）の後は `Frames: off (shape kept)`、経過を残さなかった実行や「**キャッシュを削除**」（Delete Cache）の後は `Frames: dropped (shape kept)`。
 - いちばん下はジョブのフォルダ名で、「**開く**」（Open）で開きます。見つからない（.blend だけを渡した、など）と `Result: folder gone` と `Shape stays in garment` が出ます。形は服に残っていて、そこから続けられます。
 - 状態表示の下の「**設定**」（Settings）を開くと、前回の状態表示の全文、ログの最後の数行、「**ログ**」（Log）（前回のログ全体）が出ます。おかしかったときは「**ログ**」（Log）の内容を添えてください。
+
+## Accurate（研究用）
+
+アドオン設定の **Experimental Features** をオンにすると、**AC9 Run** に **Accurate（研究用）／Accurate (Research)** が表示されます。既定はオフです。計算を止めてから切り替えてください。オフに戻すと従来方式へ戻り、選択は.blendに保存されます。
+
+静止した体のシミュレート用の研究機能です。フェーズSim・ローカルSimの方式は変わりません。現実的な形や速度向上を保証せず、遅くなる場合があります。折った二重の布の戻り・張り出しには未解決の問題があります。
