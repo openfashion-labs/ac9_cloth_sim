@@ -5,9 +5,14 @@ from pathlib import Path
 import tempfile
 from types import SimpleNamespace as NS
 import unittest
+import sys, types
 from unittest.mock import patch
 from solver import preload_config as P
 
+
+import sys, types
+_pkg=types.ModuleType('ac9_cloth_sim');_pkg.__path__=[str(Path(__file__).resolve().parents[1])]
+sys.modules.setdefault('ac9_cloth_sim',_pkg)
 
 class PreloadConfigTests(unittest.TestCase):
     def test_current_mode_overrides_previous_job_without_copying_state(self):
@@ -66,7 +71,7 @@ class PreloadConfigTests(unittest.TestCase):
         for failed,old_key,new_key,expected in [(True,'three','three',False),(False,'normal','three',False),(False,'three','three',True)]:
             calls=[];process=NS(pid=123,poll=lambda:None)
             state={'proc':process,'key':old_key}
-            scope=dict(_STANDBY=state,standby_enabled=lambda context=None:True,_PRELOAD_SESSION={'path':'status'},_preload_status=NS(read=lambda p:{'state':'failed'if failed else'ready'}),_trace=lambda *a,**k:None,_standby_key=lambda *a:new_key,standby_end=lambda:calls.append('end'),_standby_drop_log=lambda:calls.append('log'))
+            scope=dict(__package__='ac9_cloth_sim', _STANDBY=state,standby_enabled=lambda context=None:True,_PRELOAD_SESSION={'path':'status'},_preload_status=NS(read=lambda p:{'state':'failed'if failed else'ready'}),_trace=lambda *a,**k:None,_standby_key=lambda *a:new_key,standby_end=lambda:calls.append('end'),_standby_drop_log=lambda:calls.append('log'))
             exec(code,scope);actual=scope['_standby_take']('python',{},'config')
             self.assertEqual(actual is process,expected)
             self.assertEqual('end'in calls,not expected)

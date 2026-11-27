@@ -16,20 +16,20 @@ This is alpha software. Features and controls may change. Saved .blend files may
 
 ## Installation
 
-**Install through Extensions (0.4.1 — in preparation)**
+**Install through Extensions (0.5.0 — in preparation)**
 
 The Extensions installation page is not available yet.
 After publication, this section will link to that page. Drag its installation button into Blender to install the add-on.
 Add Newton, needed for simulation, from the add-on preferences.
 When the compatible Newton version stays the same, add-on updates reuse it without downloading the large components again.
 
-For candidate inspection, see the [candidate repository guide](tools/CANDIDATE_REPOSITORY.md). See [0.4.1 preparation status](RELEASE_STATUS.md) for remaining work.
+For candidate inspection, see the [candidate repository guide](tools/CANDIDATE_REPOSITORY.md). See [0.5.0 preparation status](RELEASE_STATUS.md) for remaining work.
 
 <details>
 <summary>Current public version / manual ZIP installation</summary>
 
 Currently, choose `ac9_cloth_sim-0.4.0.zip` from the Assets of the [0.4.0 Release](https://github.com/openfashion-labs/ac9_cloth_sim/releases/tag/v0.4.0) and use it without extracting it.
-An all-in-one ZIP (`ac9_cloth_sim-0.4.1-full.zip`) is also planned for 0.4.1. It is not published yet.
+An all-in-one ZIP (`ac9_cloth_sim-0.5.0-full.zip`) is also planned for 0.5.0. It is not published yet.
 See the user guide for installation steps.
 
 </details>

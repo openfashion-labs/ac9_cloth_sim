@@ -83,29 +83,26 @@ class AC9_OT_SimAddDart(bpy.types.Operator):
             self.report({'WARNING'}, "Point at an edge of the outline")
             return {'CANCELLED'}
         self.piece, self.edge, self.t = h[1], h[2], h[3]
-        # the numbers first, in a dialog with the dart drawn on the pattern (user 2026-11-17: numbers are typed in a
-        # dialog everywhere, the Redo panel is not relied on)
-        T.dialog_aside(context, event, [self.piece], spec)
-        T.ghost_open(self)
-        return context.window_manager.invoke_props_dialog(self)
+        return T.parameter_open(self,context)
 
-    def draw(self, context):
-        col = self.layout.column()
-        col.prop(self, "width")
-        col.prop(self, "length")
-        col.prop(self, "true_mouth")
-        spec, _ = store.get(context)
-        if spec is not None and self.piece:
-            why = T.ghost(self, ("dart", self.piece, self.edge, self.t, self.width, self.length, self.true_mouth),
-                          lambda: self._make(spec)[:2] + ([],))
-            T.draw_why(col, why)
-            if not why:
-                try:
-                    cut = self._make(spec)[4]
-                except (ValueError, StopIteration):
-                    cut = None
-                if cut:
-                    col.label(text_ctxt=CTX, text=rpt("Too long for the piece: {0} mm", round(cut)), icon='INFO')
+    modal=T.parameter_modal
+
+    def parameter_preview(self,context):
+        spec=store.get(context)[0]
+        return T.ghost(self,('dart',self.piece,self.edge,self.t,self.width,self.length,self.true_mouth),
+                       lambda:self._make(spec)[:2]+([],))
+
+    def draw(self,context):self.draw_fields(context,self.layout)
+
+    def draw_fields(self,context,layout):
+        col=layout.column()
+        for name in T.TP.PARAMETER_FIELDS['dart']:col.prop(self,name)
+        why=self.parameter_preview(context)
+        T.draw_why(col,why)
+        if not why:
+            try:cut=self._make(store.get(context)[0])[4]
+            except (ValueError,StopIteration):cut=None
+            if cut:col.label(text_ctxt=CTX,text=rpt('Too long for the piece: {0} mm',round(cut)),icon='INFO')
 
     def _make(self, spec):
         """(the copy with the dart, pieces changed, darts made, marks moved, the length used when it was cut down
@@ -132,9 +129,8 @@ class AC9_OT_SimAddDart(bpy.types.Operator):
         type(self)._memo = (k, r)
         return r
 
-    def cancel(self, context):
-        T.clear_ghost()
-        T.dialog_back(context)
+    def cancel(self,context):
+        T.parameter_cancel(self,context)
 
     def execute(self, context):
         T.clear_ghost()

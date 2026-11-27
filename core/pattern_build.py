@@ -55,6 +55,21 @@ _INTERIOR_MAX = 512
 _INTERIOR_LOCK = threading.Lock()
 
 
+class Stopped(Exception):
+    """build(..., stop=) was asked to stop: a newer edit's mesh is wanted instead (dress.prewarm_build)."""
+
+
+# the stop flag of the build running on this thread, looked at inside a piece too (a piece of a fine mesh takes
+# seconds: looked at between pieces only, stopped builds piled up and slowed the one wanted)
+_STOP = threading.local()
+
+
+def _check_stop():
+    ev = getattr(_STOP, 'event', None)
+    if ev is not None and ev.is_set():
+        raise Stopped()
+
+
 # ---------------------------------------------------------------- 2D geometry (numpy)
 
 def points_in_polygon(Q, P):
@@ -374,6 +389,7 @@ def _relax(Vfix, Vg, h, feat, iters=RELAX_ITERS, dt=RELAX_DT):
     for it in range(iters):
         P = np.vstack([Vfix, Vg])
         if it % 8 == 0:
+            _check_stop()
             I, J = _pairs(P, 2.0 * h)
             Dm = feat_q(Vg)
         dv = P[I] - P[J]
@@ -473,8 +489,10 @@ def _interior(Vb, Vi_a, ca, sides, h, holes=()):
     SB = np.vstack([np.roll(Vb, -1, 0), Pall[ca[:, 1]]])
     inward = np.r_[np.full(nb, 1.0 if area > 0 else -1.0), np.zeros(len(ca))]
     cand, _ = _edge_rows(Vb, SA, SB, inward, h)
+    _check_stop()
     cand = cand[keep_of(cand)] if len(cand) else cand
     Vr = _lay(cand, Pall, ROW_GAP * h, 0.5 * h)
+    _check_stop()
     lo, hi = Vb.min(0), Vb.max(0)
     ys = np.arange(lo[1] + 0.5 * h, hi[1], h * np.sqrt(3) / 2)
     rows = []
@@ -485,6 +503,7 @@ def _interior(Vb, Vi_a, ca, sides, h, holes=()):
     keep = keep_of(grid)
     keep[keep] &= dist_near(grid[keep], SA, SB, h) >= ROW * h
     Vc = _lay(grid[keep], np.vstack([Pall, Vr]), ROW_GAP * h)
+    _check_stop()
     # where the rows meet the grid a hole up to 2 h wide can stay: fill it from the half-spaced lattice
     ys2 = np.arange(lo[1] + 0.25 * h, hi[1], h * np.sqrt(3) / 4)
     rows2 = [np.stack([xs, np.full(len(xs), y)], 1) for r, y in enumerate(ys2)
@@ -492,6 +511,7 @@ def _interior(Vb, Vi_a, ca, sides, h, holes=()):
     fine = np.vstack(rows2) if rows2 else np.zeros((0, 2))
     fine = fine[keep_of(fine)] if len(fine) else fine
     Vf = _lay(fine, np.vstack([Pall, Vr, Vc]), FILL_GAP * h)
+    _check_stop()
     FA = [SA] + [P[:-1] for P in sides] + [R for R in holes]
     FB = [SB] + [P[1:] for P in sides] + [np.roll(R, -1, 0) for R in holes]
     Vg = _relax(Pall, np.vstack([Vr, Vc, Vf]), h, (np.vstack(FA), np.vstack(FB)))
@@ -542,8 +562,19 @@ def _interior_cached(Vb, Vi_a, ca, sides, h, holes=()):
     return Vg, cnt, False
 
 
-def build(spec, h=6.0):
-    """Returns (pattern dict, report lines)."""
+def build(spec, h=6.0, stop=None):
+    """Returns (pattern dict, report lines). stop: a threading.Event looked at before each piece and inside one (the
+    relaxing, between the fill stages); once set, raises Stopped (a background build of an edit a newer edit has
+    replaced; the pieces already made stay in the cache, a piece stopped half way is not cached)."""
+    prev = getattr(_STOP, 'event', None)
+    _STOP.event = stop
+    try:
+        return _build(spec, h, stop)
+    finally:
+        _STOP.event = prev
+
+
+def _build(spec, h, stop):
     pieces = [p for p in spec['pieces'] if p.get('enabled', True)]
     on = {p['name'] for p in pieces}
     OL = {p['name']: S.Outline(p) for p in pieces}
@@ -974,12 +1005,18 @@ def build(spec, h=6.0):
     # still follows spec.mirror_twins). Default unchanged.
     if spec.get('twin_swap'):
         twin_of = {a: b for b, a in twin_of.items()}
+    def stopped():
+        if stop is not None and stop.is_set():
+            raise Stopped()
     for p in pieces:
         if p['name'] not in twin_of:
+            stopped()
             make(p)
     for p in pieces:
-        if p['name'] in twin_of and not mirror_into(p, twin_of[p['name']]):
-            make(p)
+        if p['name'] in twin_of:
+            stopped()
+            if not mirror_into(p, twin_of[p['name']]):
+                make(p)
     out_pieces = [built[p['name']] for p in pieces]
 
     # ---- 5. stitches

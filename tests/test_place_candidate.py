@@ -42,16 +42,18 @@ class PlacementCandidate(unittest.TestCase):
         self.sp['placement'] = {'A': dict(guide='torso', theta=90., h=0., anchor=[150, 100])}
         store.new_text(self.ctx, self.sp['name'])
         store.write(self.ctx, self.sp, keep=True)
-        self.flat_patterns(self.sp)
+        PATTERN.rebuild(self.ctx,self.sp,{p['name']:S.Outline(p) for p in self.sp['pieces']},switch_document=True)
+        self.assertTrue(PATTERN.integrity(self.ctx,self.sp)['ok'])
         self.ctx.scene.ac9_cloth_sim.body = self.body
         self.assertIsNotNone(self.ctx.scene.ac9_cloth_sim.body)
 
     def flat_patterns(self, sp):
+        store.put(self.ctx, sp)
         PATTERN.rebuild(self.ctx,sp,{p['name']:S.Outline(p) for p in sp['pieces']},switch_document=True)
         self.assertTrue(PATTERN.integrity(self.ctx,sp)['ok'])
 
     def install_mixed_garment(self):
-        sp = self.sp
+        sp = copy.deepcopy(self.sp)
         draft.add_polygon(sp, [[500, 0], [800, 0], [800, 200], [650, 200], [500, 200]], name='B')
         draft.add_polygon(sp, [[10, 330], [100, 330], [100, 410], [10, 410]], name='C')
         sp['pairs'] = [['A', 'B']]
@@ -59,6 +61,9 @@ class PlacementCandidate(unittest.TestCase):
         sp['placement']['C'] = dict(guide='torso', theta=190., h=11., anchor=[55, 370])
         self.flat_patterns(sp)
         store.put(self.ctx, sp)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(self.ctx,*store.get(self.ctx))
+        self.sp = sp
         x = np.array([[1, 0, 0], [20, 0, 0], [3, 0, 20],
                       [40, 0, 0], [60, 0, 0], [40, 7, 20],
                       [80, 0, 0], [90, 0, 0], [80, 0, 10]], float)
@@ -88,12 +93,15 @@ class PlacementCandidate(unittest.TestCase):
         return op._candidate
 
     def test_fold_pose_preview_commit_and_unfold(self):
-        sp = self.sp
+        sp = copy.deepcopy(self.sp)
         axis = draft.add_internal(sp, 'A', [[150, 0], [150, 200]], mirror=False)
         sp['folds'] = [dict(piece='A', line=axis, deg=45., side='A')]
         sp['placement']['A']['pose'] = dict(loc=[11, 9, 0], rot=[26, 15, 34])
         self.flat_patterns(sp)
         store.put(self.ctx, sp)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(self.ctx,*store.get(self.ctx))
+        self.sp = sp
         res = D.prepare(self.ctx, 12., shapes_only=True, placed_only=True)
         PV.build(self.ctx, sp, res['pat'], res['tris'], res['X'], res['pairs'])
         original = PV._world_co(PV.objects(sp)['A']) * 1000.
@@ -113,7 +121,7 @@ class PlacementCandidate(unittest.TestCase):
         self.assertLess(unfold_error, .00005)
 
     def separate_pair(self, folds=False):
-        sp = self.sp
+        sp = copy.deepcopy(self.sp)
         draft.add_polygon(sp, [[500, 0], [800, 0], [800, 200], [650, 200], [500, 200]], name='B')
         sp['pairs'] = [['A', 'B']]
         sp['placement'], _ = S.mirror_twins(sp)
@@ -124,6 +132,9 @@ class PlacementCandidate(unittest.TestCase):
             sp['folds'] = [dict(piece=n, line=line, deg=45., side='A') for n, line in axes.items()]
         self.flat_patterns(sp)
         store.put(self.ctx, sp)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(self.ctx,*store.get(self.ctx))
+        self.sp = sp
         return axes
 
     def assert_candidate(self, candidate):
@@ -160,6 +171,9 @@ class PlacementCandidate(unittest.TestCase):
                 sp['placement']['B']['pose'] = S.mirror_pose(pose)
                 self.flat_patterns(sp)
                 store.put(self.ctx, sp)
+                from ac9_cloth_sim import pattern_view
+                pattern_view.rebuild(self.ctx,*store.get(self.ctx))
+                self.sp = sp
                 p = sp['placement'][lead]
                 op = SimpleNamespace(spec=sp, rel={lead: p}, press=(p['guide'], p['theta'], p['h']),
                                      hit=(p['guide'], theta, p['h'], 0, None),
@@ -180,6 +194,9 @@ class PlacementCandidate(unittest.TestCase):
             sp['placement'][posed]['pose'] = dict(loc=[11, 9, 0], rot=[26, 15, 34])
             self.flat_patterns(sp)
             store.put(self.ctx, sp)
+            from ac9_cloth_sim import pattern_view
+            pattern_view.rebuild(self.ctx,*store.get(self.ctx))
+            self.sp = sp
             c = PC.build(self.ctx, sp, ['A', 'B'])
             worst = max(worst, self.assert_candidate(c))
             obs = PV.objects(sp)
@@ -255,11 +272,14 @@ class PlacementCandidate(unittest.TestCase):
         np.testing.assert_array_equal(PV._world_co(cover), before)
 
     def test_gesture_shared_mirror_unselected_half_is_a_destination(self):
+        self.sp = copy.deepcopy(self.sp)
         draft.mirror_copy(self.sp,'A')
         self.sp['pieces'][-1]['name']='B'
         self.sp['placement'],_=S.mirror_twins(self.sp)
         self.flat_patterns(self.sp)
         store.put(self.ctx,self.sp)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(self.ctx,*store.get(self.ctx))
         PC.commit(self.ctx,PC.build(self.ctx,self.sp,['A','B']))
         obs=PV.objects(self.sp)
         self.assertIs(obs['A'],obs['B'])
@@ -378,7 +398,7 @@ class PlacementCandidate(unittest.TestCase):
 
     def test_mixed_partner_and_existing_reset_survive_rehit(self):
         g = self.install_mixed_garment()
-        sp = self.sp
+        sp = copy.deepcopy(self.sp)
         b_before = np.array([v.co[:] for v in g.data.vertices])[3:6]
         PC.commit(self.ctx, PC.build(self.ctx, sp, ['C']))
         self.assertEqual(D.reset_pieces(g), ['C'])
@@ -396,7 +416,7 @@ class PlacementCandidate(unittest.TestCase):
         np.testing.assert_array_equal([v.co[:] for v in g.data.vertices[3:6]], b_before)
 
     def test_late_failure_restores_spec_and_mesh(self):
-        sp = self.sp
+        sp = copy.deepcopy(self.sp)
         PC.commit(self.ctx, PC.build(self.ctx, sp, ['A']))
         before = PV._world_co(PV.objects(sp)['A']).copy()
         body = store.text(self.ctx).as_string()

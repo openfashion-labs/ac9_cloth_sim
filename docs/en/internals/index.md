@@ -20,5 +20,6 @@ You do not need it to dress a garment. It helps when:
 | [Selection and the Gizmo](selection.md) | Where the piece selection is kept. Why a dressed piece is picked only with the AC9 tools. When the gizmo is off |
 | [Simulation and Saving](simulation.md) | From pressing the button to the garment's shape coming back. What goes into the .blend and what stays outside |
 | [For Developers](for-developers.md) | Where things are in the source, and the rules the code keeps |
+| [UI timing recorder (experimental)](ui-timing.md) | Opt-in local timing logs, their location, and attribution limits |
 
 The user's side of the same ideas is in [Concepts](../concepts.md); this chapter is what lies behind it.

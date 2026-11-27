@@ -1179,7 +1179,8 @@ def ilines_picked3d(context, spec, outlines, garment):
 
 
 _ilines3 = {'key': None}
-ILINES_3D = (0.05, 0.25, 0.85, 1.0)      # deep blue: reads on white cloth and stays apart from the orange picked lines
+from .core.tool_policy import INTERNAL_COLOR
+ILINES_3D = INTERNAL_COLOR      # deep blue: reads on white cloth and stays apart from the orange picked lines
 
 
 def ilines3d(context, spec, outlines, garment):
@@ -1619,10 +1620,13 @@ def _draw_view():
     props = getattr(context.scene, 'ac9_cloth_sim', None)
     if props is not None:
         _draw_gone_view(context)
-    if not (shows(props, 'show_overlay') or shows(props, 'show_guides') or shows(props, 'show_lengths')
-            or shows(props, 'show_internal_3d')):
+    from . import toolbar as TB
+    flat_seams = TB.pattern_seams(context) if props is not None else False
+    decorations = (shows(props, 'show_overlay') or shows(props, 'show_guides') or shows(props, 'show_lengths')
+                   or shows(props, 'show_internal_3d'))
+    if not (flat_seams or decorations):
         return
-    seams = props.show_overlay
+    seams = shows(props, 'show_overlay')
     from . import guide_edit as GE                  # (guide_edit imports this module)
     spec, outlines = store.get(context)
     if not spec or PV.layout_empty(context) is None:
@@ -1636,19 +1640,19 @@ def _draw_view():
     sh = gpu.shader.from_builtin('POLYLINE_SMOOTH_COLOR')
     sh.bind()
     sh.uniform_float('viewportSize', vs)
-    if g['pos'] and seams:
+    if g['pos'] and flat_seams:
         sh.uniform_float('lineWidth', 3.0)
         _batch(g, 'pos', sh, g['pos'], g['col']).draw(sh)
-    if g.get('center'):
+    if g.get('center') and decorations:
         sh.uniform_float('lineWidth', 1.5)
         _batch(g, 'center', sh, g['center'], [(1.0, 0.8, 0.3, 0.9)] * len(g['center'])).draw(sh)
-    if g['apos'] and seams:
+    if g['apos'] and flat_seams:
         # the selected seam: white under, its own color on top (both sides read as one seam)
         sh.uniform_float('lineWidth', 8.0)
         _batch(g, 'apos_w', sh, g['apos'], [ACTIVE] * len(g['apos'])).draw(sh)
         sh.uniform_float('lineWidth', 4.0)
         _batch(g, 'apos', sh, g['apos'], g['acol']).draw(sh)
-    if world_visible and GE.editing() and props.show_guides:
+    if world_visible and GE.editing() and shows(props, 'show_guides'):
         # Edit Guides: drawn from the objects as they are moved, brighter
         owners = {n: ob for n, ob in GE.objects().items() if VV.object_decoration_allowed(context, ob)}
         key = tuple((n, tuple(map(tuple, ob.matrix_world)), ob.get('ac9_g0')) for n, ob in sorted(owners.items()))
@@ -1660,7 +1664,7 @@ def _draw_view():
         if _gedit['lines'] is not None:
             sh.uniform_float('lineWidth', 2.0)
             _gedit['lines'].draw(sh)
-    elif g['guides']:
+    elif g['guides'] and shows(props, 'show_guides'):
         sh.uniform_float('lineWidth', 1.0)
         _batch(g, 'guides', sh, g['guides'], [(0.7, 0.8, 1.0, 0.35)] * len(g['guides'])).draw(sh)
     # the garment's result also carries the internal lines (drawn with the seams off too)
@@ -1719,7 +1723,7 @@ def _draw_view():
                 bt.draw(psh)
             gpu.state.point_size_set(1.0)
             sh.bind()
-    if world_visible and props.show_internal_3d:
+    if world_visible and shows(props, 'show_internal_3d'):
         try:
             A3 = ilines3d(context, spec, outlines, gs is not None)
         except Exception:
@@ -1737,7 +1741,7 @@ def _draw_view():
             sh.uniform_float('lineWidth', 2.0)
             _ilines3['batch'].draw(sh)
             gpu.state.depth_test_set('NONE')
-    if world_visible:
+    if world_visible and props.show_overlays:
         try:
             Ls = ilines_picked3d(context, spec, outlines, gs is not None)
         except Exception:
@@ -1752,7 +1756,7 @@ def _draw_view():
             for w, c in ((6.0, (0.0, 0.0, 0.0, 0.8)), (3.0, DT.ISEL)):
                 sh.uniform_float('lineWidth', w)
                 batch_for_shader(sh, 'LINES', {'pos': seg, 'color': [c] * len(seg)}).draw(sh)
-    if g['join'] and props.show_lengths:
+    if g['join'] and flat_seams and shows(props, 'show_lengths'):
         sh.uniform_float('lineWidth', 2.0)
         _batch(g, 'join', sh, g['join'], [(1, 1, 1, 0.85)] * len(g['join'])).draw(sh)
     gpu.state.blend_set('NONE')
@@ -1765,7 +1769,9 @@ def _draw_px():
         _draw_gone_px(context)
         _draw_hidden_px(context)
         _draw_frames_px(context)
-    if not (shows(props, 'show_lengths') or shows(props, 'show_names') or shows(props, 'show_overlay')):
+    from . import toolbar as TB
+    flat_seams = TB.pattern_seams(context) if props is not None else False
+    if not (flat_seams or shows(props, 'show_lengths') or shows(props, 'show_names') or shows(props, 'show_overlay')):
         return
     spec, outlines = store.get(context)
     if not spec:
@@ -1776,9 +1782,9 @@ def _draw_px():
     region, rv3d = context.region, context.region_data
     fid = 0
     blf.size(fid, 13)
-    labs = _geo.get('alab', [])
-    if not props.show_lengths:                      # the lengths off: the sides still read A and B
-        labs = [(p, t.split()[0]) for p, t in labs[:2]] if props.show_overlay else []
+    labs = _geo.get('alab', []) if flat_seams else []
+    if not shows(props, 'show_lengths'):             # A/B remain needed by the sewing tools
+        labs = [(p, t.split()[0]) for p, t in labs[:2]] if flat_seams else []
     from . import text_band
     items = []
     for p, txt in labs:                             # the selected seam's sides and lengths
@@ -1788,7 +1794,7 @@ def _draw_px():
         w, _h = blf.dimensions(fid, txt)
         items.append((xy[0] - w / 2, xy[1] + 6, txt, (1.0, 1.0, 1.0, 1.0)))
     text_band.draw(fid, items)
-    if props.show_overlay:
+    if TB.pattern_seams(context):
         # the seams to check: a "!" by the middle of each, in the color the check had (core/bom_to_spec.py)
         blf.size(fid, 15)
         items = []
@@ -1798,7 +1804,7 @@ def _draw_px():
                 items.append((xy[0] + 4, xy[1] + 4, "!", FLAG))
         text_band.draw(fid, items)
         blf.size(fid, 13)
-    if not props.show_names:
+    if not shows(props, 'show_names'):
         return
     blf.size(fid, 12)
     from .core import roles as RO

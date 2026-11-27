@@ -4,22 +4,22 @@ import json
 import os
 from pathlib import Path
 import time
-from ..solver.native_runtime_io import RuntimeOwner
+from ..solver.native_runtime_io import RuntimeOwner, io_path
 
 
 class FrontendRuntime:
     def __init__(self, config_path, *, temp_root=None):
         self.config_path = Path(config_path)
-        config = json.loads(self.config_path.read_text(encoding='utf8'))
+        config = json.loads(io_path(self.config_path).read_text(encoding='utf8'))
         self.owner = RuntimeOwner(self.config_path.parent, config, temp_root=temp_root)
         self.proc = None
         self.retry_since = None
         self.error = None
-        temporary = self.config_path.with_name('native_config_' + self.owner.token + '.tmp')
+        temporary = io_path(self.config_path.with_name('native_config_' + self.owner.token + '.tmp'))
         try:
             effective = dict(config, **self.owner.settings())
             temporary.write_text(json.dumps(effective, ensure_ascii=False), encoding='utf8')
-            os.replace(temporary, self.config_path)
+            os.replace(temporary, io_path(self.config_path))
         except Exception:
             self.owner.abort_before_launch()
             raise
@@ -30,12 +30,12 @@ class FrontendRuntime:
     def path(self, name):
         if name not in ('live.npy', 'progress.txt', 'grab.json', 'params.json', 'held.json'):
             raise ValueError('Unknown Native live I/O file')
-        return str(self.owner.directory / name)
+        return str(io_path(self.owner.directory / name))
 
     def console_path(self):
         """The solver's printed output while it runs (the runtime's console.txt; a stage's stdout.txt elsewhere).
         Only for a stat or a read: nothing here may write it."""
-        return str(self.owner.directory / 'console.txt')
+        return str(io_path(self.owner.directory / 'console.txt'))
 
     def launched(self, proc):
         self.proc = proc

@@ -171,6 +171,7 @@ class AC9_OT_HidePiece(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     piece: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    others: bpy.props.BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -178,8 +179,11 @@ class AC9_OT_HidePiece(bpy.types.Operator):
 
     def execute(self, context):
         spec = _spec(context)
-        if spec is None or not self.piece:
+        if spec is None or self.piece not in {p['name'] for p in spec['pieces']}:
             return {'CANCELLED'}
+        if self.others:
+            set_hidden(context, spec, hideable(spec)-{self.piece}, hide=True)
+            return {'FINISHED'}
         hidden = self.piece in names(context.scene, spec)
         set_hidden(context, spec, [self.piece], hide=not hidden)
         return {'FINISHED'}

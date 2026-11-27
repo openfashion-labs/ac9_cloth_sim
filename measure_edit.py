@@ -90,6 +90,13 @@ def pick(context, xy, items_only=False, kinds=None):
         d = float(np.linalg.norm(A + t[:, None] * AB - q, axis=1).min()) if len(A) else np.inf
         if d < bd:
             best, bd = key, d
+    s = selected(context)
+    if (context.scene.ac9_cloth_sim_measure.show
+            and not items_only and (kinds is None or 'tape' in kinds) and s is not None and s[0] == 'tape'
+            and s[2].get('method') == 'THREE_POINTS' and MT.VV.object_decoration_allowed(context, MT._body(context))):
+        points = MT._project(context, MT._to_world(MT._body(context), s[2]['pts']))
+        if np.linalg.norm(points - q, axis=1).min() < MT.PICK_PX:
+            return 'tape:' + s[1]
     return best
 
 
@@ -144,7 +151,7 @@ def hover(context, event, tool):
         prev = MT._ui['preview']
         MT._ui['preview'] = None
         MT._ui['preview_label'] = None
-        if key is None and ob is not None and ob.type == 'MESH':
+        if key is None and ob is not None and ob.type == 'MESH' and context.window_manager.ac9_tape_method == 'ONE_POINT':
             r = around_at(context, ob, event)
             if r is not None:
                 MT._ui['preview'] = (r[0][2] * 0.001, True)
@@ -194,6 +201,8 @@ class AC9_OT_TapeTilt(bpy.types.Operator):
 
     def invoke(self, context, event):
         wm = context.window_manager
+        if wm.ac9_tape_method != 'ONE_POINT':
+            return {'PASS_THROUGH'}
         wm.ac9_tape_tilt = max(-80.0, min(80.0, wm.ac9_tape_tilt + self.delta))
         _hover['xy'] = None
         hover(context, event, 'MEASURE')
@@ -216,7 +225,7 @@ class AC9_OT_MeasureTiltRing(bpy.types.Operator):
         if not key or not key.startswith('tape:'):
             return {'PASS_THROUGH'}
         t = next((t for t in MT.read(MT._body(context)).get('tapes', []) if t['name'] == key[5:]), None)
-        if t is None or t['kind'] != 'around':
+        if t is None or t['kind'] != 'around' or t.get('method') == 'THREE_POINTS':
             return {'PASS_THROUGH'}
         select(context, key)
         sc = context.scene
@@ -236,6 +245,8 @@ class AC9_OT_TapePlane(bpy.types.Operator):
 
     def invoke(self, context, event):
         wm = context.window_manager
+        if wm.ac9_tape_method != 'ONE_POINT':
+            return {'PASS_THROUGH'}
         ids = [p[0] for p in MT.PLANES]
         wm.ac9_tape_plane = ids[(ids.index(wm.ac9_tape_plane) + 1) % len(ids)]
         _hover['xy'] = None
@@ -337,7 +348,9 @@ class AC9_OT_MeasureMirror(bpy.types.Operator):
             v[0] = -v[0]
             return np.round(MT._dir_local(ob, v), 6).tolist()
         u = {k: v for k, v in t.items() if k not in ('name', 'value', 'extra', 'anchors', 'ntri')}
-        if t['kind'] == 'around':
+        if t.get('method') == 'THREE_POINTS':
+            u['pts'] = MT._round(MT._to_local(ob, _mirror_pts(w(t['pts']), cx)), 4)
+        elif t['kind'] == 'around':
             u['p'] = MT._round(MT._to_local(ob, _mirror_pts(w([t['p']]), cx))[0], 2)
             for k in ('n', 'n0'):
                 if k in t:
@@ -348,7 +361,8 @@ class AC9_OT_MeasureMirror(bpy.types.Operator):
             u['pts'] = MT._round(MT._to_local(ob, _mirror_pts(w(t['pts']), cx)), 2)
             if 'normals' in t:
                 u['normals'] = [None if n is None else mirror_dir(n) for n in t['normals']]
-        side = " (L)" if w([u.get('p') or u['pts'][0]])[0][0] > cx else " (R)"
+        side_point = u['pts'][0] if u.get('method') == 'THREE_POINTS' else u.get('p') or u['pts'][0]
+        side = " (L)" if w([side_point])[0][0] > cx else " (R)"
         base = name[:-4] if name.endswith((" (L)", " (R)")) else name
         names = {x['name'] for x in data.get('tapes', [])}
         nm, k = base + side, 2
@@ -445,7 +459,7 @@ def _set_main(self, value):
 def _tilt_get(i):
     def get(self):
         s = selected(bpy.context)
-        if s is None or s[0] != 'tape' or s[2]['kind'] != 'around':
+        if s is None or s[0] != 'tape' or s[2]['kind'] != 'around' or s[2].get('method') == 'THREE_POINTS':
             return 0.0
         return float((s[2].get('tilt') or [0.0, 0.0])[i])
     return get
@@ -455,7 +469,7 @@ def _tilt_set(i):
     def set_(self, value):
         context = bpy.context
         s = selected(context)
-        if s is None or s[0] != 'tape' or s[2]['kind'] != 'around':
+        if s is None or s[0] != 'tape' or s[2]['kind'] != 'around' or s[2].get('method') == 'THREE_POINTS':
             return
         ob = MT._body(context)
         cache = MT.body_cache(context, ob)                 # first: on a reshaped body it takes everything again
@@ -517,7 +531,9 @@ def draw_tool_tab(layout, context):
             col.label(text=tx("Taut {0}  /  through {1}", MT._len(rec.get('value')), MT._len(rec.get('extra'))))
         else:
             col.label(text_ctxt=CTX, text=MT._len(rec.get('value')))
-        if rec['kind'] == 'around':
+        if rec.get('invalid'):
+            col.label(text=tx(MT.AROUND_BAD_RING), icon='ERROR')
+        if rec['kind'] == 'around' and rec.get('method') != 'THREE_POINTS':
             col.prop(mp, "ac9_msel_tilt_fb")
             col.prop(mp, "ac9_msel_tilt_side")
         held = [a for a in (spec or {}).get('attach', []) if a.get('tape') == name]
@@ -571,6 +587,7 @@ def register():
         bpy.utils.register_class(c)
     for k, v in PROPS.items():
         setattr(bpy.types.Scene, k, v)
+    bpy.types.WindowManager.ac9_tape_method = EnumProperty(name="Method", translation_context=CTX, items=MT.AROUND_METHODS, default='THREE_POINTS')
     bpy.types.WindowManager.ac9_tape_plane = EnumProperty(name="Direction", items=MT.PLANES, default='AUTO',
                                                           description="The ring's direction (Tab)")
     bpy.types.WindowManager.ac9_tape_tilt = FloatProperty(name="Tilt", default=0.0, min=-80.0, max=80.0,
@@ -582,6 +599,7 @@ def unregister():
     for k in PROPS:
         if hasattr(bpy.types.Scene, k):
             delattr(bpy.types.Scene, k)
+    del bpy.types.WindowManager.ac9_tape_method
     del bpy.types.WindowManager.ac9_tape_tilt
     del bpy.types.WindowManager.ac9_tape_plane
     for c in reversed(CLASSES):

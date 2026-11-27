@@ -321,6 +321,19 @@ def center_empty(context, spec, name=None):
     return ob
 
 
+def _protected_mesh(mesh):
+    return any(mesh in scope._shared_meshes.values() for scope in _backup_scopes)
+
+
+def writable_mesh(ob):
+    """A mesh write belongs to this placed object, never to its other Blender users."""
+    mesh = ob.data
+    if mesh.users - int(mesh.use_fake_user) > 1 or _protected_mesh(mesh):
+        ob.data = mesh.copy()
+        ob.data.use_fake_user = False
+    return ob.data
+
+
 def sync_edit(ob):
     """An object in Edit Mode: its mesh as edited so far (else the vertices read are those before Edit Mode)."""
     if ob is not None and ob.mode == 'EDIT':
@@ -380,10 +393,19 @@ def before_seam(spec, *, owner=GO.CURRENT):
     return out
 
 
+def _retire_archive(mesh, prop):
+    """Consume this archive record without deleting live users or a retained input."""
+    mesh.pop(prop, None)
+    if not _protected_mesh(mesh):
+        mesh.use_fake_user = False
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
+
+
 def forget_before_seam(spec, names, *, owner=GO.CURRENT):
     for n, me in before_seam(spec, owner=owner).items():
         if n in names:
-            bpy.data.meshes.remove(me)
+            _retire_archive(me, BEFORE_SEAM_PROP)
 
 
 def save_before_seam(ob, spec):
@@ -457,12 +479,12 @@ def restore_before_seam(spec, names, consume=True):
             put_shape(ob, restored, d)
         else:
             if n in archived:
-                bpy.data.meshes.remove(archived[n])
+                _retire_archive(archived[n], KEEP_PROP)
             restored[KEEP_PROP] = json.dumps({k: d[k] for k in ('piece', 'garment', 'matrix', 'props')})
             restored.use_fake_user = True
             restored.name = KEEP_PREFIX + garment(spec) + '_' + n
         if consume:
-            bpy.data.meshes.remove(me)
+            _retire_archive(me, BEFORE_SEAM_PROP)
         done.append(n)
     return done
 
@@ -496,6 +518,16 @@ def _mesh_unchanged(cur, kept, weights=True):
     'POSITION' when only the positions differ, '' otherwise (or for anything this cannot compare: shape keys,
     other attribute types). A copy made with Mesh.copy() compares SAME with its source."""
     if cur is None or kept is None:
+        return ''
+    def properties(data):
+        def plain(value):
+            if hasattr(value, 'to_dict'):
+                return {key: plain(item) for key, item in value.to_dict().items()}
+            if hasattr(value, 'to_list'):
+                return [plain(item) for item in value.to_list()]
+            return value
+        return {key: plain(value) for key, value in data.items()}
+    if properties(cur) != properties(kept):
         return ''
     if any(len(getattr(cur, k)) != len(getattr(kept, k)) for k in ('vertices', 'edges', 'loops', 'polygons')):
         return ''
@@ -557,8 +589,12 @@ class PreparedResetBackup:
         self.active_uid = int(active.session_uid) if active is not None else None
         for ob in set(objects(spec).values()):
             sync_edit(ob)
+            if ob.data.users - int(ob.data.use_fake_user) > 1 or _protected_mesh(ob.data):
+                self._remember_shared(ob.data)
+                self._shared_meshes[ob.name] = ob.data
             backup = self._copy_object(ob)
             backup.data = ob.data.copy()
+            backup.data.use_fake_user = False
             self.live.append((ob.name, backup, ob.hide_get()))
             self.original_objects[ob.name] = int(ob.session_uid)
             self.selected[ob.name] = ob.select_get(view_layer=context.view_layer)
@@ -590,6 +626,15 @@ class PreparedResetBackup:
         self._owned_objects[uid] = backup
         return backup
 
+    def _remember_shared(self, mesh):
+        if not any(original == mesh for original, _ in self._shared_originals):
+            self._shared_originals.append((mesh, mesh.use_fake_user))
+            mesh.use_fake_user = True
+
+    def _rollback_mesh(self, name, saved):
+        """Shared inputs are protected by write-time isolation; other inputs restore their full snapshot."""
+        return self._shared_meshes.get(name, saved)
+
     def isolate_shared_meshes(self, names=None):
         """Keep shared input meshes untouched until this operation commits.
 
@@ -604,10 +649,9 @@ class PreparedResetBackup:
         for me, obs in groups.items():
             if me.users <= 1:
                 continue
-            self._shared_originals.append((me, me.use_fake_user))
-            me.use_fake_user = True
+            self._remember_shared(me)
             for ob in obs:
-                self._shared_meshes[ob.name] = me
+                self._shared_meshes.setdefault(ob.name, me)
             targets = [ob for ob in obs if ob in affected]
             if targets:
                 private = me.copy()
@@ -668,10 +712,11 @@ class PreparedResetBackup:
                 ob.name = name
                 _collection(self.context).objects.link(ob)
                 self.live[i] = (name, None, hidden)
-                if name in self._shared_meshes:
-                    put_shape(ob, self._shared_meshes[name], shape_record(ob))
+                restored_mesh = self._rollback_mesh(name, ob.data)
+                if restored_mesh != ob.data:
+                    put_shape(ob, restored_mesh, shape_record(ob))
             else:
-                put_shape(ob, self._shared_meshes.get(name, backup.data), shape_record(backup))
+                put_shape(ob, self._rollback_mesh(name, backup.data), shape_record(backup))
                 for key in ('color', 'hide_viewport', 'hide_render', 'show_in_front', 'display_type', 'active_material_index'):
                     setattr(ob, key, getattr(backup, key))
                 for k in list(ob.keys()):
@@ -820,7 +865,7 @@ def forget(spec, names=None, *, owner=GO.CURRENT):
     """The adjusted shapes kept for these pieces (all the garment's if None) dropped: they are made from the numbers."""
     for n, me in _kept(spec, owner=owner).items():
         if names is None or n in names:
-            bpy.data.meshes.remove(me)
+            _retire_archive(me, KEEP_PROP)
 
 
 def keep(ob, spec, *, owner=GO.CURRENT):
@@ -828,9 +873,9 @@ def keep(ob, spec, *, owner=GO.CURRENT):
     of its shape, so the next build of its piece gives it back -- folded, moved to its seams, laid, edited (user
     2026-10-22: Back to Adjusted Shape after a Simulate kept the hand moves but lost a placket's Fold)."""
     forget(spec, [ob[PROP]], owner=owner)
-    me = ob.data
     if ob.mode == 'EDIT':
         ob.update_from_editmode()
+    me = writable_mesh(ob)
     me[GO.PLACED] = GO.text(owner)
     me[KEEP_PROP] = json.dumps({'piece': ob[PROP], 'garment': garment(spec),
                                 'matrix': [float(v) for row in ob.matrix_world for v in row],
@@ -856,6 +901,10 @@ def keep_shape(spec, piece, flat, tris, X_mm):
 def _give_back(ob, me):
     """A kept mesh back on the object build just made for its piece (the made mesh dropped)."""
     d = json.loads(me[KEEP_PROP])
+    if me.users - int(me.use_fake_user) > 0 or _protected_mesh(me):
+        original = me
+        me = original.copy()
+        _retire_archive(original, KEEP_PROP)
     del me[KEEP_PROP]
     me.use_fake_user = False
     made = ob.data
@@ -949,8 +998,8 @@ def write_local_result(ob, world_m):
         me[LOCAL_INPUT] = baseline
         me[LOCAL_RECORD] = json.dumps(shape_record(ob))
         ob.data = me
-    me = ob.data
     _set_world_co(ob, world_m, ob.matrix_world)
+    me = ob.data
     gen = me.attributes.get(GEN_ATTR)
     if gen is not None:
         gen.data.foreach_set('vector', world_m.astype(np.float32).ravel())
@@ -974,7 +1023,7 @@ def restore_local_inputs(spec, names):
             baseline[GO.PLACED] = GO.text()
             baseline[KEEP_PROP] = json.dumps(dict(rec, garment=garment(spec)))
             baseline.use_fake_user = True
-            bpy.data.meshes.remove(me)
+            _retire_archive(me, KEEP_PROP)
         restored.add(n)
     return restored
 
@@ -1298,7 +1347,7 @@ def _stage_control_side(context, spec, name, *, preparation=None):
             clone, q = converted(me, d)
             clone[prop] = json.dumps(q)
             clone.use_fake_user = True
-            archives.append((me, clone))
+            archives.append((prop, me, clone))
         def commit():
             put_shape(ob, live, record)
             pending.remove(live)
@@ -1306,9 +1355,9 @@ def _stage_control_side(context, spec, name, *, preparation=None):
             if ob.name.startswith(PREFIX):
                 ob.name = PREFIX + name
             ob.data.name = PREFIX + name
-            for old, clone in archives:
+            for prop, old, clone in archives:
                 clone.name = old.name.rsplit('_' + source, 1)[0] + '_' + name
-                bpy.data.meshes.remove(old)
+                _retire_archive(old, prop)
                 pending.remove(clone)
         def cleanup():
             for me in pending:
@@ -1524,7 +1573,7 @@ def center_control_origins(context, spec, obs):
                 name = old.name
                 clone[prop] = json.dumps(record)
                 clone.use_fake_user = True
-                bpy.data.meshes.remove(old)
+                _retire_archive(old, prop)
                 clone.name = name
             pending.remove(clone)
         if followers:
@@ -1902,17 +1951,18 @@ def generated_co(ob, local, *, inverse=False):
 def _set_world_co(ob, W, M, *, from_matrix=None):
     """Write world vertices under M; a frame change carries local fold history through the same transform."""
     Mi = np.array(M.inverted())
-    ob.data.vertices.foreach_set('co', (np.c_[W, np.ones(len(W))] @ Mi.T)[:, :3].astype(np.float32).ravel())
+    mesh = writable_mesh(ob)
+    mesh.vertices.foreach_set('co', (np.c_[W, np.ones(len(W))] @ Mi.T)[:, :3].astype(np.float32).ravel())
     if from_matrix is not None:
         transform = Mi @ np.asarray(from_matrix)
         ob[GEN_FRAME_PROP] = (generation_frame(ob) @ np.linalg.inv(transform)).ravel().tolist()
-        for attribute in ob.data.attributes:
+        for attribute in mesh.attributes:
             if attribute.name.startswith('ac9_fold_before_') and attribute.data_type == 'FLOAT_VECTOR':
                 values = np.empty((len(attribute.data), 3))
                 attribute.data.foreach_get('vector', values.ravel())
                 local = (np.c_[values, np.ones(len(values))] @ transform.T)[:, :3]
                 attribute.data.foreach_set('vector', local.astype(np.float32).ravel())
-    ob.data.update()
+    mesh.update()
 
 
 def set_matrix(ob, M):
@@ -2139,6 +2189,7 @@ def follow_layout(spec, rigid):
         F = np.empty(nv * 2)
         a.data.foreach_get('vector', F)
         F = F.reshape(-1, 2) @ R.T + t
+        a = writable_mesh(ob).attributes[FLAT_ATTR]
         a.data.foreach_set('vector', F.astype(np.float32).ravel())
         ob.data.update()
         _ev.pop(ob.name, None)

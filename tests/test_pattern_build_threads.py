@@ -58,6 +58,54 @@ class ThreadedBuildTests(unittest.TestCase):
         self.assertSame(ref[190.], out[190.])
         self.assertSame(ref[170.], out['again'])
 
+    def test_a_stopped_build_raises_and_the_next_one_is_whole(self):
+        ref = PB.build(spec(), 6.)[0]
+        PB._INTERIOR.clear()
+        stop = threading.Event(); stop.set()
+        with self.assertRaises(PB.Stopped):
+            PB.build(spec(), 6., stop=stop)
+        self.assertSame(ref, PB.build(spec(), 6., stop=threading.Event())[0])
+
+    def test_stopped_between_pieces(self):
+        ref = PB.build(spec(), 6.)[0]
+        PB._INTERIOR.clear()
+        stop = threading.Event()
+        made = []
+        real = PB._interior_cached
+
+        def once(*a, **kw):                         # the first piece made, then a newer edit asks to stop
+            made.append(1); stop.set()
+            return real(*a, **kw)
+        PB._interior_cached = once
+        try:
+            with self.assertRaises(PB.Stopped):
+                PB.build(spec(), 6., stop=stop)
+        finally:
+            PB._interior_cached = real
+        self.assertTrue(made)                       # the first piece was made, the second never started
+        self.assertSame(ref, PB.build(spec(), 6.)[0])
+
+    def test_stopped_inside_a_piece_is_not_cached(self):
+        # a piece of a fine mesh takes seconds: the stop is looked at while relaxing it too, and the half-made piece
+        # is not kept (the next build makes it whole)
+        ref = PB.build(spec(), 6.)[0]
+        PB._INTERIOR.clear()
+        stop = threading.Event()
+        real = PB._relax
+
+        def relax(*a, **kw):
+            stop.set()
+            return real(*a, **kw)
+        PB._relax = relax
+        try:
+            with self.assertRaises(PB.Stopped):
+                PB.build(spec(), 6., stop=stop)
+        finally:
+            PB._relax = real
+        self.assertEqual(len(PB._INTERIOR), 0)
+        self.assertIsNone(getattr(PB._STOP, 'event', None))     # the thread's stop is cleared on the way out
+        self.assertSame(ref, PB.build(spec(), 6.)[0])
+
 
 if __name__ == '__main__':
     unittest.main()

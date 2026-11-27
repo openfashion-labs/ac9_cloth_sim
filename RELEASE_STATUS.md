@@ -1,6 +1,10 @@
-# 0.4.1 release preparation
+# 0.5.0 release preparation
 
 This candidate repairs the split-distribution work omitted from 0.4.0.
+It also includes the completed feature fixes and UI/UX updates for 0.5.0.
+The distribution changes are reviewed in PR #13; this dependent feature PR is reviewed separately.
+Both PRs are intended for one 0.5.0 release. A standalone 0.4.1 release is not planned.
+Completed settings, shape restoration and diagnosis images are included in Japanese and English. Further image work was deferred by the maintainer and is outside this review scope.
 It is a draft, not a published split release. Version 0.4.0 remains available as an all-in-one ZIP.
 
 | Requirement | Candidate status |
@@ -9,12 +13,13 @@ It is a draft, not a published split release. Version 0.4.0 remains available as
 | Reject a workflow missing the split-distribution requirements | Independent release-scope CI and omission regression tests added |
 | Public repository index, Release assets and installation URL | Publication/catalog/site code connected and rehearsed offline; actual activation and public HTTPS checks remain pending |
 | Main-component third-party notices | Corrected the conflicting bundled-wheel introduction; component credits preserved |
-| Separate runtime distribution terms | Pending review |
+| Separate runtime distribution terms | Maintainer assessment recorded for the pinned, unmodified wheels and retained notices; asset authorization is prepared in this candidate. The Runtime Release uses the versioned AC9-component notice. Final approval must cover this source head. |
 | Installation and update through the public URL in Blender | Pending; local package validation is insufficient |
 
-The publication gate is deliberately closed in `.github/release_scope.json`.
-The current tag workflow must not be used to publish this candidate while these requirements remain open.
-Restoring the preview workflow alone does not complete production publishing.
+Asset authorization is enabled in this preparation candidate's `.github/release_scope.json`.
+Publication is not complete: `ready` remains false, and public-URL installation/update verification remains pending.
+The tag workflow only builds and checks packages. Actual publication still requires successful CI and approval
+of the final source, a matching merged main tree, the required tags and explicit execution of `publish-distribution`.
 
 The branch README can be viewed before merging. The documentation workflow builds PRs,
 but currently deploys the public site only from main; there is no hosted documentation PR preview.
@@ -30,4 +35,4 @@ and does not prove installation/update from the future public HTTPS repository.
 
 See [publishing instructions](tools/PUBLISHING.md) for immutable asset promotion,
 the persistent catalog branch, whole-site deployment and required approval.
-Both publication completion and asset authorization remain explicitly false.
+Publication completion remains false. Enabling asset authorization alone does not run or complete publication.

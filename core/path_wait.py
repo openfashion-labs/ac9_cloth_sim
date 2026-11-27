@@ -10,6 +10,7 @@ No Blender calls.
 """
 import os
 from pathlib import Path
+from ..solver.native_runtime_io import io_path
 
 if os.name == 'nt':
     import ctypes
@@ -30,7 +31,7 @@ if os.name == 'nt':
 
     def _final_path(path):
         """The final path of an existing file or folder (links followed), or None."""
-        handle = _create(path, 0, 7, None, 3, _BACKUP_SEMANTICS, None)   # any access, share all, OPEN_EXISTING
+        handle = _create(str(io_path(path)), 0, 7, None, 3, _BACKUP_SEMANTICS, None)   # any access, share all, OPEN_EXISTING
         if handle in (None, _INVALID):
             return None
         try:
@@ -77,5 +78,5 @@ def resolve(path):
 
 def names(folder):
     """os.listdir(folder), through os.scandir (which lets other threads run while the disk is slow)."""
-    with os.scandir(folder) as entries:
+    with os.scandir(io_path(folder)) as entries:
         return [entry.name for entry in entries]

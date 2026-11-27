@@ -9,6 +9,7 @@ import sys
 import time
 import types
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ARGS = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
@@ -110,7 +111,10 @@ class EndsPanel(unittest.TestCase):
         self.assertTrue(props.piece_overlap_auto)
         self.assertAlmostEqual(props.piece_overlap, 0.0)
 
-    def test_fields_write_the_placement(self):
+    @patch('ac9_cloth_sim.placement.rebuild_placement', return_value=[])
+    def test_fields_write_the_placement(self, rebuild):
+        # This fixture tests RNA fields/draw only; its synthetic torso has no
+        # body. Treat rebuild as an accepted service, not an accidental failure.
         props = bpy.context.scene.ac9_cloth_sim
         self.drawn('closed')
         props.piece_ring = 1.25
@@ -124,6 +128,8 @@ class EndsPanel(unittest.TestCase):
         self.assertEqual(p['ends'], 'open')
         self.assertNotIn('overlap', p)
         self.assertNotIn('ring', p)
+        self.assertGreater(rebuild.call_count, 0)
+        self.assertTrue(all(call.kwargs.get('preparation') is not None for call in rebuild.call_args_list))
 
 
 if __name__ == '__main__':

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Real selection and RNA contracts. Blender --python this.py -- package_parent output.json."""
-import sys,json,runpy,traceback,importlib
+import sys,json,runpy,traceback,importlib,inspect
 from pathlib import Path
 ARGS=sys.argv[sys.argv.index('--')+1:]
 globals().update(runpy.run_path(str(Path(__file__).with_name('fixture_tool_selection.py'))))
@@ -110,7 +110,7 @@ try:
                 delta=np.array([5.,0.]),rigid=None,ipoint=None,mode='EDIT',report=lambda *a:None)
             op._end=lambda c:DT.AC9_OT_SimPatternDrag._end(op,c)
             DT._state['drag']={'owner':owner,'preview':moved,'names':['F'],'bad':[],'grab':op.grab}
-            DT.AC9_OT_SimPatternDrag.modal.__wrapped__(op,ctx,SimpleNamespace(type='LEFTMOUSE',value='RELEASE'))
+            inspect.unwrap(DT.AC9_OT_SimPatternDrag.modal)(op,ctx,SimpleNamespace(type='LEFTMOUSE',value='RELEASE'))
             eq(TT.resolve(ctx,read()),'INTERNAL');eq(S.check(read()),[])
             return snapshot()
     check('group_drag_commit_reactivates_current_tool_detail',group_drag)

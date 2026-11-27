@@ -4,8 +4,10 @@
     "REVIEWED_AST:STATE_MENU:338630dc8def0b7183f5448fd06adeadf0c0bc821ac157f68be2b09b5665e127",
     "REVIEWED_AST:SYM_KEEP_LEFT:072ba49428492c28cafd15f8e8756bf22e754c9267ff46ba59638e139f32569c",
     "REVIEWED_AST:SYM_KEEP_RIGHT:80bc70defd87814283a74ecc2a276896e9af2b03395c667985747819cfe5b2fc",
-    "REVIEWED_AST:_MENU_ITEMS:c2dbabf380532c3ec416319470a587a3649e96ebd024ff9bb16b8cb2518953c0",
-    "REVIEWED_AST:_MENU_ITEMS_T:ba56a06f51b82671c5c9b060e552f23c3e41413d48dd0f247dd118ecbfd0b936",
+    "REVIEWED_AST:TOOL_ID:10c800e678213c00db5ee6b6757cd3f1bf5086c40b038019657b52fff21c754f",
+    "REVIEWED_AST:TRANSFORM_ID:4b9ccc0d1b8b6f9f9650fad63193ff3d497b63d33762e3a43f5f98cc5d65279e",
+    "REVIEWED_AST:_MENU_ITEMS:23ceaf90a788da27c638a52012ebffd2e7e7dd147c4224b75272a52f318bc3dc",
+    "REVIEWED_AST:_MENU_ITEMS_T:331311882df69fe9717145b416a287aa5a4a9c5ecffc69dd4ecef0016a5289cf",
     "REVIEWED_AST:_corner_rows:c1177f1627efcb9cc72978338c56422669eadb2f5201a5793b82fd6c4f9ad60f",
     "REVIEWED_AST:_csel:591327d2ebf759c7561d99eda3ea36c9a9156aab0f6105e78635378d9fca6913",
     "REVIEWED_AST:_dart_hit:fbc869b898d5007c291f10246d8c1bd14707da23d890a80040d88a05e0765579",
@@ -15,24 +17,30 @@
     "REVIEWED_AST:_ipoint_smooth_rows:a3fb6048b0c9a3912faf4995e96d582425459bcc938e2c754cbb368ed2e273a0",
     "REVIEWED_AST:_isel:42954bef994c4e43ccb449e451f7ee6d2302a688cabd3fa4780ea600717ece2a",
     "REVIEWED_AST:_psel:7f4477a454434e4a40bfe7eb1fce5009911ea51649061031408dc2deac2a466f",
+    "REVIEWED_AST:_span_sel:d93962d9ec9afe9833796958cc3025c1a6574ee942a7de9e706c111918fa89aa",
     "REVIEWED_AST:corner_eid:1edd38cf6776ea27de95f6539f22c19753d5183fe23482951b5af269842fa6c2",
-    "REVIEWED_AST:edit_item:ddfca8c7a2ccf8fde6ee88ecaa0fb34cc39fee380de5e0cf0d581afd47f10a44",
+    "REVIEWED_AST:edit_item:cfb6db94587294144220ad64f292c7d0924c320bc9158cb99da9aee9b920f19c",
+    "REVIEWED_AST:extension_row:859d3a4bd39f7f79bda57daa5867b53a65a37990691a4c0303aed511ef671846",
     "REVIEWED_AST:in_picked:581391d8acb99143ffed3bffce9a625ad172931075c44cdcaaffb5f796fdd3c9",
+    "REVIEWED_AST:internal_hit_points:febdb68d7f4821b0c40307ee8a38880013a110953a1062af50e936a60d849aad",
     "REVIEWED_AST:ipoint_index:847973b17713baca7768e2f25e7ba79400bdc0a030dfa52f6f926fe65107b060",
     "REVIEWED_AST:ipoint_key:75e2b393276074058749404296cd0c38245421f06a7ced57cf58cf100f8ad458",
     "REVIEWED_AST:ipoint_of:f08e45c484a092a6dffcc39f2981d864a77c04d7f5ccfe09da5d4965c2ed2827",
-    "REVIEWED_AST:menu_items:370ccb699f353d28dc46a8f733ff374388619e803432aa72d70c5738c6d11a08",
-    "REVIEWED_AST:numeric_row:1a1a2d13712fc404dc0e4266b39832e9f45bb8dd7dad1b81a256ab1099aa5f65",
-    "REVIEWED_AST:picked_lines:a87a52f9e76605b997ca2dffec3ee409bb88fec7583149a94cee3a0259d0116c",
+    "REVIEWED_AST:menu_items:5ed653dd3513414334b787620648959f2ea67d361b6aa590ec255966309598c6",
+    "REVIEWED_AST:numeric_row:de4787c4918481acbd85ab5cb5d0070362e2d7de9c8f102db308101e7d64a73e",
+    "REVIEWED_AST:picked_lines:114139fab5cde0642fa5b2f3598412ca30e4a9635d2da1584125dd90a1fdd39c",
     "REVIEWED_AST:selected_edges:d42592bfc1c4ad2b4f61361912bce9539eda0eb71c5516f7b55b9cf1ce488ffc",
+    "REVIEWED_AST:span_points:17aec0c8e12fe274775b0994301bba1352c38f4b0a94c545e3bd447ded0f2fd4",
+    "REVIEWED_AST:tool_mode:4b7887fba59c69393cede11d49d9fef53f11e108b0cc10da4b0381433d788b44",
+    "REVIEWED_AST:vertex_ref:64810cca0d488a61995b47deb9a1db467249cafab441a350650b937bcb84db8a",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.add_dart'), Constant(value='')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.clear_placement'), Constant(value='')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.cut_line'), Constant(value='')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.delete_piece'), Constant(value='')], ctx=Load())",
-    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.duplicate_pieces'), Constant(value='follow=True')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.duplicate_pieces'), Constant(value='')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.match_length'), Constant(value='side=a')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.match_length'), Constant(value='side=b')], ctx=Load())",
-    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.mirror_copy'), Constant(value='follow=True')], ctx=Load())",
+    "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.mirror_copy'), Constant(value='')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.mirror_pose'), Constant(value='')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.parallel_line'), Constant(value='')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_edit'), Constant(value='CURVE')], ctx=Load())",
@@ -55,7 +63,7 @@
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.symmetrize'), Constant(value='keep=LEFT')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.symmetrize'), Constant(value='keep=RIGHT')], ctx=Load())",
     "_MENU_ITEMS:Tuple(elts=[Constant(value='ac9_cloth_sim.unlink_pair'), Constant(value='')], ctx=Load())",
-    "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.delete_selected'), Constant(value='')], ctx=Load())",
+    "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.delete_internal'), Constant(value='')], ctx=Load())",
     "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=MOVE')], ctx=Load())",
     "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=ROTATE')], ctx=Load())",
     "_MENU_ITEMS_T:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_transform'), Constant(value='mode=SCALE')], ctx=Load())",
@@ -74,8 +82,10 @@
     "_ipoint_smooth_rows:OP:ac9_cloth_sim.ipoint_smooth",
     "_ipoint_smooth_rows:Tuple(elts=[Constant(value='ac9_cloth_sim.ipoint_smooth'), Constant(value=''), Dict(keys=[Constant(value='piece'), Constant(value='line'), Constant(value='vertex'), Constant(value='smooth')], values=[Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=2), ctx=Load()), Name(id='k', ctx=Load()), UnaryOp(op=Not(), operand=Name(id='on', ctx=Load()))])], ctx=Load())",
     "menu_items:CALL:Attribute(value=BoolOp(op=Or(), values=[Name(id='pc', ctx=Load()), Dict()]), attr='get', ctx=Load())",
+    "menu_items:CALL:Attribute(value=Name(id='D', ctx=Load()), attr='piece', ctx=Load())",
     "menu_items:CALL:Attribute(value=Name(id='_MENU_ITEMS', ctx=Load()), attr='get', ctx=Load())",
     "menu_items:CALL:Attribute(value=Name(id='it', ctx=Load()), attr='get', ctx=Load())",
+    "menu_items:CALL:Attribute(value=Name(id='json', ctx=Load()), attr='dumps', ctx=Load())",
     "menu_items:CALL:Attribute(value=Name(id='sm', ctx=Load()), attr='get', ctx=Load())",
     "menu_items:CALL:Attribute(value=Name(id='spec', ctx=Load()), attr='get', ctx=Load())",
     "menu_items:CALL:Attribute(value=Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), attr='startswith', ctx=Load())",
@@ -83,15 +93,23 @@
     "menu_items:CALL:Name(id='_dart_hit', ctx=Load())",
     "menu_items:CALL:Name(id='_ipoint_smooth_rows', ctx=Load())",
     "menu_items:CALL:Name(id='bool', ctx=Load())",
+    "menu_items:CALL:Name(id='dict', ctx=Load())",
+    "menu_items:CALL:Name(id='extension_row', ctx=Load())",
+    "menu_items:CALL:Name(id='len', ctx=Load())",
     "menu_items:CALL:Name(id='list', ctx=Load())",
+    "menu_items:CALL:Name(id='nearby', ctx=Load())",
     "menu_items:CALL:Name(id='next', ctx=Load())",
     "menu_items:CALL:Name(id='numeric_row', ctx=Load())",
+    "menu_items:CALL:Name(id='vertex_ref', ctx=Load())",
     "menu_items:OP:ac9_cloth_sim.clone_shape",
     "menu_items:OP:ac9_cloth_sim.cut_out",
+    "menu_items:OP:ac9_cloth_sim.delete_internal",
     "menu_items:OP:ac9_cloth_sim.hide_pieces",
     "menu_items:OP:ac9_cloth_sim.measure_delete",
     "menu_items:OP:ac9_cloth_sim.measure_mirror",
     "menu_items:OP:ac9_cloth_sim.move_dart",
+    "menu_items:OP:ac9_cloth_sim.pattern_edit",
+    "menu_items:OP:ac9_cloth_sim.separate_vertex",
     "menu_items:OP:transform.rotate",
     "menu_items:OP:transform.translate",
     "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.clone_shape'), Constant(value=''), Dict(keys=[Constant(value='piece'), Constant(value='line'), Constant(value='sew')], values=[Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=2), ctx=Load()), Constant(value=True)])], ctx=Load())",
@@ -101,18 +119,24 @@
     "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.measure_delete'), Constant(value='')], ctx=Load())",
     "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.measure_mirror'), Constant(value='')], ctx=Load())",
     "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.move_dart'), Constant(value='')], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_edit'), Constant(value='CURVE'), Dict()], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.pattern_edit'), Constant(value='SPLIT'), Dict()], ctx=Load())",
+    "menu_items:Tuple(elts=[Constant(value='ac9_cloth_sim.separate_vertex'), Constant(value=''), Call(func=Name(id='dict', ctx=Load()), keywords=[keyword(arg='piece', value=Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load())), keyword(arg='vertex', value=Call(func=Attribute(value=Name(id='json', ctx=Load()), attr='dumps', ctx=Load()), args=[Name(id='ref', ctx=Load())])), keyword(arg='_invoke', value=Constant(value=True))])], ctx=Load())",
     "menu_items:Tuple(elts=[Constant(value='transform.rotate'), Constant(value='')], ctx=Load())",
     "menu_items:Tuple(elts=[Constant(value='transform.translate'), Constant(value='')], ctx=Load())",
     "menu_items:Tuple(elts=[Name(id='STATE_MENU', ctx=Load()), Constant(value='')], ctx=Load())",
     "numeric_row:CALL:Attribute(value=Name(id='json', ctx=Load()), attr='dumps', ctx=Load())",
     "numeric_row:CALL:Attribute(value=Subscript(value=Name(id='me', ctx=Load()), slice=Constant(value=0), ctx=Load()), attr='upper', ctx=Load())",
+    "numeric_row:CALL:Name(id='all', ctx=Load())",
     "numeric_row:CALL:Name(id='edit_item', ctx=Load())",
     "numeric_row:CALL:Name(id='in_picked', ctx=Load())",
+    "numeric_row:CALL:Name(id='internal_hit_points', ctx=Load())",
     "numeric_row:CALL:Name(id='len', ctx=Load())",
     "numeric_row:CALL:Name(id='list', ctx=Load())",
     "numeric_row:CALL:Name(id='picked_lines', ctx=Load())",
     "numeric_row:OP:ac9_cloth_sim.set_gap",
     "numeric_row:Tuple(elts=[Constant(value='ac9_cloth_sim.set_gap'), Constant(value=''), Dict(keys=[Constant(value='kind'), Constant(value='items'), Constant(value='_invoke')], values=[Constant(value='MULTI'), Call(func=Attribute(value=Name(id='json', ctx=Load()), attr='dumps', ctx=Load()), args=[ListComp(elt=Call(func=Name(id='list', ctx=Load()), args=[Name(id='x', ctx=Load())]), generators=[comprehension(target=Name(id='x', ctx=Store()), iter=Name(id='sel', ctx=Load()), is_async=0)])]), Constant(value=True)])], ctx=Load())",
+    "numeric_row:Tuple(elts=[Constant(value='ac9_cloth_sim.set_gap'), Constant(value=''), Dict(keys=[Constant(value='kind'), Constant(value='items'), Constant(value='_invoke')], values=[Constant(value='MULTI'), Call(func=Attribute(value=Name(id='json', ctx=Load()), attr='dumps', ctx=Load()), args=[Name(id='items', ctx=Load())]), Constant(value=True)])], ctx=Load())",
     "numeric_row:Tuple(elts=[Constant(value='ac9_cloth_sim.set_gap'), Constant(value=''), Dict(keys=[Constant(value='kind'), Constant(value='piece'), Constant(value='_invoke')], values=[Constant(value='PIECE'), Subscript(value=Name(id='hit', ctx=Load()), slice=Constant(value=1), ctx=Load()), Constant(value=True)])], ctx=Load())",
     "numeric_row:Tuple(elts=[Constant(value='ac9_cloth_sim.set_gap'), Constant(value=''), Dict(keys=[Constant(value='kind'), Constant(value='piece'), Constant(value='thing'), Constant(value='_invoke')], values=[Call(func=Attribute(value=Subscript(value=Name(id='me', ctx=Load()), slice=Constant(value=0), ctx=Load()), attr='upper', ctx=Load())), Subscript(value=Name(id='me', ctx=Load()), slice=Constant(value=1), ctx=Load()), Subscript(value=Name(id='me', ctx=Load()), slice=Constant(value=2), ctx=Load()), Constant(value=True)])], ctx=Load())"
   ],
@@ -124,12 +148,16 @@
       ],
       "outside_symmetry": null
     },
-    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.duplicate_pieces\", \"follow=True\", {}]": {
-      "tests": [],
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.duplicate_pieces\", \"\", {}]": {
+      "tests": [
+        "test_tool_editing.py:test_copy_menu_uses_transactional_placement"
+      ],
       "outside_symmetry": "選択した物の独立複製。鏡側の新規複製を強制しない既存契約。"
     },
-    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.mirror_copy\", \"follow=True\", {}]": {
-      "tests": [],
+    "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.mirror_copy\", \"\", {}]": {
+      "tests": [
+        "test_tool_editing.py:test_copy_menu_uses_transactional_placement"
+      ],
       "outside_symmetry": "明示的な鏡の対の作成。fixture()で各面を構築して検証。"
     },
     "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.symmetrize\", \"keep=LEFT\", {}]": {
@@ -172,6 +200,13 @@
     "[\"EDIT_PATTERN\", \"piece\", \"ac9_cloth_sim.delete_piece\", \"\", {}]": {
       "tests": [],
       "outside_symmetry": "選択した型紙を削除。鏡の相手を自動削除しない既存契約。"
+    },
+    "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.extend_outline\", \"\", {\"_invoke\": true, \"ignored\": 0}]": {
+      "tests": [
+        "test_extension_menu.py:test_multi_edge_hit_and_unselected_hit",
+        "test_extension_menu.py:test_other_tools_and_targets_have_no_extension"
+      ],
+      "outside_symmetry": null
     },
     "[\"EDIT_PATTERN\", \"edge\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"EDGE\"}]": {
       "tests": [
@@ -239,30 +274,10 @@
       ],
       "outside_symmetry": null
     },
-    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"ILINE\"}]": {
+    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"MULTI\"}]": {
       "tests": [
-        "test_numeric_size.py:test_symmetric_piece",
-        "test_numeric_gap_symmetry.py:test_internal_reference_fixed_and_mirrored"
-      ],
-      "outside_symmetry": null
-    },
-    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.cut_line\", \"\", {}]": {
-      "tests": [
-        "test_command_symmetry.py:test_cut_all_four_lines_and_return_all_halves",
-        "test_command_symmetry.py:test_central_cut_uses_the_parent_reflection"
-      ],
-      "outside_symmetry": null
-    },
-    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.spread\", \"\", {}]": {
-      "tests": [
-        "test_command_symmetry.py:test_spread_keeps_both_mirrors",
-        "test_command_symmetry.py:test_reversed_resampled_spread_uses_geometric_direction"
-      ],
-      "outside_symmetry": null
-    },
-    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.parallel_line\", \"\", {}]": {
-      "tests": [
-        "test_edit_symmetry.py:test_parallel_and_whole_transforms"
+        "test_tool_editing.py:test_numeric_span_scope_does_not_depend_on_hover_context",
+        "test_tool_editing.py:test_middle_span_moves_two_nodes_only"
       ],
       "outside_symmetry": null
     },
@@ -274,13 +289,6 @@
       "outside_symmetry": null
     },
     "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.pattern_edit\", \"CURVE\", {}]": {
-      "tests": [
-        "test_edit_symmetry.py:test_outline_edits",
-        "test_edit_symmetry.py:test_internal_edits"
-      ],
-      "outside_symmetry": null
-    },
-    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.pattern_edit\", \"REMOVE\", {}]": {
       "tests": [
         "test_edit_symmetry.py:test_outline_edits",
         "test_edit_symmetry.py:test_internal_edits"
@@ -336,12 +344,16 @@
       ],
       "outside_symmetry": null
     },
-    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.duplicate_pieces\", \"follow=True\", {}]": {
-      "tests": [],
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.duplicate_pieces\", \"\", {}]": {
+      "tests": [
+        "test_tool_editing.py:test_copy_menu_uses_transactional_placement"
+      ],
       "outside_symmetry": "選択した物の独立複製。鏡側の新規複製を強制しない既存契約。"
     },
-    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.mirror_copy\", \"follow=True\", {}]": {
-      "tests": [],
+    "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.mirror_copy\", \"\", {}]": {
+      "tests": [
+        "test_tool_editing.py:test_copy_menu_uses_transactional_placement"
+      ],
       "outside_symmetry": "明示的な鏡の対の作成。fixture()で各面を構築して検証。"
     },
     "[\"TRANSFORM_PATTERN\", \"piece\", \"ac9_cloth_sim.symmetrize\", \"keep=LEFT\", {}]": {
@@ -472,11 +484,10 @@
       ],
       "outside_symmetry": null
     },
-    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.delete_selected\", \"\", {}]": {
+    "[\"TRANSFORM_PATTERN\", \"iline\", \"ac9_cloth_sim.delete_internal\", \"\", {}]": {
       "tests": [
-        "test_edit_symmetry.py:test_internal_edits"
-      ],
-      "outside_symmetry": null
+        "test_selection_ux.py:test_line_menu_explicit_id_preserves_mixed_piece_selection"
+      ]
     },
     "[\"TRANSFORM_PATTERN\", \"inode\", \"ac9_cloth_sim.set_gap\", \"\", {\"_invoke\": true, \"kind\": \"IPOINT\"}]": {
       "tests": [
@@ -558,24 +569,6 @@
       ],
       "outside_symmetry": null
     },
-    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.cut_out\", \"\", {}]": {
-      "tests": [
-        "test_edit_symmetry.py:test_internal_edits"
-      ],
-      "outside_symmetry": null
-    },
-    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.clone_shape\", \"\", {}]": {
-      "tests": [
-        "test_command_symmetry.py:test_clone_and_sew_every_counterpart"
-      ],
-      "outside_symmetry": null
-    },
-    "[\"EDIT_PATTERN\", \"iline\", \"ac9_cloth_sim.clone_shape\", \"\", {\"sew\": true}]": {
-      "tests": [
-        "test_command_symmetry.py:test_clone_and_sew_every_counterpart"
-      ],
-      "outside_symmetry": null
-    },
     "[\"EDIT_PATTERN\", \"inode\", \"ac9_cloth_sim.ipoint_smooth\", \"\", {\"smooth\": true}]": {
       "tests": [
         "test_edit_symmetry.py:test_internal_edits"
@@ -641,6 +634,18 @@
         "test_command_symmetry.py:test_move_dart_keeps_both_mirrors_and_maps"
       ],
       "outside_symmetry": null
+    },
+    "[\"EDIT_PATTERN\", \"inode\", \"ac9_cloth_sim.separate_vertex\", \"\", {\"_invoke\": true}]": {
+      "tests": [
+        "test_boundary_picker.py:test_outline_candidates_keep_exact_ids",
+        "test_tool_editing.py:test_detach_menu_is_contextual"
+      ]
+    },
+    "[\"EDIT_PATTERN\", \"corner\", \"ac9_cloth_sim.separate_vertex\", \"\", {\"_invoke\": true}]": {
+      "tests": [
+        "test_boundary_picker.py:test_outline_candidates_keep_exact_ids",
+        "test_tool_editing.py:test_detach_menu_is_contextual"
+      ]
     }
   }
 }

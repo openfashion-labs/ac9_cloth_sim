@@ -169,7 +169,7 @@ def generated(kind='single',flat=False,tilt=0.,deg=90.,lead=False):
     if kind=='pair_off':
         q=made['P'];sp['placement'][q]=dict(guide='torso',theta=140.,h=0.,anchor=np.mean(S.Outline(DR.piece(sp,q)).B,axis=0).tolist())
     sp['folds']=[dict(piece=target,line=lid,deg=deg,side='NONE')]
-    ST.new_text(ctx,sp['name']);ST.write(ctx,sp,keep=True);ctx.scene.ac9_cloth_sim.body=body;PF.sync_twin(ctx,target,lid)
+    ST.new_text(ctx,sp['name']);ST.write(ctx,sp,keep=True);ctx.scene.ac9_cloth_sim.body=body;__import__('ac9_cloth_sim.pattern_view',fromlist=['rebuild']).rebuild(ctx,*ST.get(ctx),switch_document=True);PF.sync_twin(ctx,target,lid)
     r=D.prepare(ctx,12.,shapes_only=True,placed_only=True);PV.build(ctx,ST.get(ctx)[0],r['pat'],r['tris'],r['X'],r['pairs'])
     return target,lid
 for kind in ('single','pair_existing','pair_missing','pair_missing_separate','pair_off','central_axis','central_offaxis'):

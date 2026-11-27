@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 # (file, function): why it may write object selection itself
 ALLOWED = {
+    ('piece_move.py', 'restore'): 'transaction rollback restores object flags after logical projection, not a new pick',
     ('dress.py', 'execute'): "Edit Frame: the dressed garment object itself (not a piece) made active for its mode",
     ('drape_fbx.py', 'read_meshes'): "an FBX imported only for its meshes and removed: the selection the import "
                                      "changed put back exactly as it was",
@@ -67,6 +68,7 @@ def writers():
 # read through selection (pieces, lead, pattern_pieces): read off one object it was the first piece of the garment's
 # handle only, and a Shift-click on the garment showed one piece picked (2026-11-15).
 READ_ALLOWED = {
+    ('piece_move.py', '__init__'): 'transaction snapshots the active control and view for rollback; pieces come from SEL.piece_selection',
     ('placement.py', 'active_placed'): "the active placed object itself (its pose fields), not which pieces are picked",
     ('ui.py', 'draw'): "the active placed object's pose fields (an object, not the pick)",
     ('operators.py', '_replace_bom'): "a BOM replace keeps the selection to put it back exactly on a failure",

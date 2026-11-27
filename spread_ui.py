@@ -55,23 +55,23 @@ class AC9_OT_SimSpread(bpy.types.Operator):
             self.report({'WARNING'}, "Point at an internal line drawn from outline to outline")
             return {'CANCELLED'}
         self.piece, self.line = h[1], h[2]
-        # the numbers first, in a dialog (user 2026-11-11: the Redo panel opens closed)
-        T.dialog_aside(context, event, [self.piece], spec)   # beside the piece: the dialog does not cover the ghost
-        T.ghost_open(self)
-        return context.window_manager.invoke_props_dialog(self)
+        return T.parameter_open(self,context)
 
-    def draw(self, context):
-        col = self.layout.column()
-        col.prop(self, "amount")
-        col.prop(self, "mode")
-        sub = col.column()
-        sub.enabled = self.mode == 'hinge'
-        sub.prop(self, "hinge")
-        col.prop(self, "side")
-        spec, _ = store.get(context)
-        if spec is not None and self.piece:     # the opened piece, drawn on the pattern while the values change
-            T.draw_why(col, T.ghost(self, ("spread", self.piece, self.line, self.amount, self.mode, self.hinge, self.side),
-                                    lambda: self._spread(spec)[:2] + ([],)))
+    modal=T.parameter_modal
+
+    def parameter_preview(self,context):
+        spec=store.get(context)[0]
+        return T.ghost(self,('spread',self.piece,self.line,self.amount,self.mode,self.hinge,self.side),
+                       lambda:self._spread(spec)[:2]+([],))
+
+    def draw(self,context):self.draw_fields(context,self.layout)
+
+    def draw_fields(self,context,layout):
+        col=layout.column()
+        for name in T.TP.PARAMETER_FIELDS['spread']:
+            sub=col.column();sub.enabled=name!='hinge' or self.mode=='hinge'
+            sub.prop(self,name)
+        T.draw_why(col,self.parameter_preview(context))
 
     def _spread(self, spec):
         """(the spread copy, pieces changed, what spread returned); a ValueError when it may not open so."""
@@ -82,9 +82,8 @@ class AC9_OT_SimSpread(bpy.types.Operator):
             raise ValueError(rpt("Not spread: ") + bad[0])
         return sp, list(out), out
 
-    def cancel(self, context):
-        T.clear_ghost()
-        T.dialog_back(context)
+    def cancel(self,context):
+        T.parameter_cancel(self,context)
 
     def execute(self, context):
         T.clear_ghost()

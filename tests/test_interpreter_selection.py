@@ -1,8 +1,12 @@
 """Interpreter selection must not probe remote files for an owned live worker."""
-import ast,os,sys,unittest
+import ast,os,sys,unittest,types
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import patch
+
+import sys, types
+_pkg=types.ModuleType('ac9_cloth_sim');_pkg.__path__=[str(Path(__file__).resolve().parents[1])]
+sys.modules.setdefault('ac9_cloth_sim',_pkg)
 
 class Selection(unittest.TestCase):
     def setUp(self):
@@ -12,7 +16,7 @@ class Selection(unittest.TestCase):
         self.path=os.path.abspath('owned-python.exe')
         self.prefs=NS(newton_python=self.path)
         self.session=NS(python=self.path,poisoned=False,process=NS(poll=lambda:None))
-        self.g=dict(os=os,sys=sys,__file__=str(source),addon_prefs=lambda c:self.prefs,
+        self.g=dict(__package__='ac9_cloth_sim', os=os,sys=sys,__file__=str(source),addon_prefs=lambda c:self.prefs,
                     bpy=NS(path=NS(abspath=os.path.abspath)),solver_path=lambda:None,_LIVE_SESSION=self.session)
         exec(compile(ast.Module(body=[function],type_ignores=[]),str(source),'exec'),self.g)
         self.fn=self.g['newton_python']

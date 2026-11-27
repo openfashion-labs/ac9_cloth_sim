@@ -56,7 +56,14 @@ class SavedPaths(unittest.TestCase):
         out=self.sp['seams'][0]['a']
         self.assertEqual(out['line'],self.lid)
         self.assertAlmostEqual(S.side_length(self.sp,out),41,places=3)
-        self.assertEqual(len(SE.snap_targets(self.sp,self.key,self.trk)),8)
+        targets=SE.snap_targets(self.sp,self.key,self.trk)
+        expected={round(float(v),8) for v in self.tr.vertices}
+        for side in self.sp['seams'][0].values():
+            if isinstance(side,dict) and 'piece' in side:
+                s0,s1,_=SE.span(side,self.tr)
+                expected.update(round(float(v % self.tr.L),8) for v in (s0,s1))
+        self.assertEqual(set(targets),expected)
+        self.assertEqual(len(targets),len(set(targets)))
 
     def test_opposite_arcs_not_duplicates(self):
         short=SE.make_side(self.tr,self.key,342,18,1)

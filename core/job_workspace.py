@@ -38,21 +38,80 @@ def work_root(preference, blender_temp):
 
 
 def _write(path, value):
-    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    temporary = PW.io_path(path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp'))
     try:
         with temporary.open('x', encoding='utf8') as stream:
             json.dump(value, stream, ensure_ascii=False, indent=1)
-        os.replace(temporary, path)
+        os.replace(temporary, PW.io_path(path))
     finally:
         temporary.unlink(missing_ok=True)
 
 
+def _pick_sha256():
+    """The faster of the two SHA-256 implementations Python carries; both give the same digest. Blender's bundled
+    OpenSSL hashed at about 185 MB/s against 490 MB/s for Python's own (_sha2), while a system Python's OpenSSL did
+    2400 MB/s (2026-11-25, 18 MB): the Stop of a Live that kept its frames spent most of its time here."""
+    try:
+        import _sha2
+    except ImportError:
+        return hashlib.sha256
+    import time
+    data = bytes(range(256)) * 4096
+    standard = hashlib.sha256(data).hexdigest()
+    best, best_s = hashlib.sha256, None
+    for make in (hashlib.sha256, _sha2.sha256):
+        try:
+            t = time.perf_counter()
+            same = make(data).hexdigest() == standard
+            spent = time.perf_counter() - t
+            if not same:
+                continue
+        except (TypeError, ValueError):
+            continue
+        except (TypeError, ValueError):
+            continue
+        if best_s is None or spent < best_s:
+            best, best_s = make, spent
+    return best
+
+
+_SHA256 = None
+
+
 def _sha(path):
-    with path.open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+    global _SHA256
+    if _SHA256 is None:
+        _SHA256 = _pick_sha256()
+    digest = _SHA256()
+    with PW.io_path(path).open('rb') as stream:
+        for block in iter(lambda: stream.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _names(root):
+    """The relative names _inventory would hash, without reading them."""
+    root = PW.io_path(root, force=True) # descendants may be long even when the root is short
+    out = []
+    for path in sorted(root.rglob('*')):
+        if path.is_symlink() or path.is_junction():
+            raise ValueError('A job export must not follow directory links')
+        if path.is_file() and path.name not in (LINK, RECEIPT, SEAL, PARTIAL):
+            out.append(path.relative_to(root).as_posix())
+    return sorted(out)          # string order, as the seal's and before's keys are compared (Path order differs)
+
+
+def _stamps(root, names):
+    """Size and modification time of each file: a change after it was hashed shows here without reading it again."""
+    out = {}
+    for rel in names:
+        st = PW.io_path(root / rel).stat()
+        out[rel] = (st.st_size, st.st_mtime_ns)
+    return out
 
 
 def _inventory(root):
+    root = PW.io_path(root, force=True)
     result = {}
     for path in sorted(root.rglob('*')):
         if path.is_symlink() or path.is_junction():
@@ -76,8 +135,8 @@ def seal_finished(source, lease):
     """Seal only a particular completed solver lease and its GUI consumer."""
     source = require_released(source, lease)
     files = _inventory(source)
-    if (source / SEAL).exists():
-        old = json.loads((source / SEAL).read_text(encoding='utf8'))
+    if PW.io_path(source / SEAL).exists():
+        old = json.loads(PW.io_path(source / SEAL).read_text(encoding='utf8'))
         if old.get('token') != lease['token'] or old.get('files') != files:
             raise ValueError('A sealed job was changed')
         return old['token']
@@ -102,14 +161,14 @@ def archived_path(source):
     """Return a committed copy only when its receipt matches this working job."""
     source = PW.resolve(source)
     try:
-        link = json.loads((source / LINK).read_text(encoding='utf8'))
+        link = json.loads(PW.io_path(source / LINK).read_text(encoding='utf8'))
         target = PW.resolve(link['target'])
-        receipt = json.loads((target / RECEIPT).read_text(encoding='utf8'))
+        receipt = json.loads(PW.io_path(target / RECEIPT).read_text(encoding='utf8'))
         if (link.get('version') == receipt.get('version') == 1
                 and link.get('source') == receipt.get('source') == str(source)
                 and link.get('token') == receipt.get('token')
                 and receipt.get('target') == str(target)
-                and all((target / name).is_file() for name in REQUIRED)):
+                and all(PW.io_path(target / name).is_file() for name in REQUIRED)):
             return str(target)
     except (OSError, ValueError, KeyError, TypeError):
         pass
@@ -120,8 +179,8 @@ def saved_generation(target, generation):
     """Full readback at file-open/recovery boundaries, not during panel drawing."""
     target = PW.resolve(target)
     try:
-        receipt = json.loads((target / RECEIPT).read_text(encoding='utf8'))
-        seal = json.loads((target / SEAL).read_text(encoding='utf8'))
+        receipt = json.loads(PW.io_path(target / RECEIPT).read_text(encoding='utf8'))
+        seal = json.loads(PW.io_path(target / SEAL).read_text(encoding='utf8'))
         return (bool(generation) and receipt.get('generation') == seal.get('token') == generation
                 and receipt.get('target') == str(target)
                 and _inventory(target) == receipt.get('saved_files') == seal.get('files'))
@@ -137,7 +196,7 @@ def remove_files(folder, first=(), last=()):
     """Delete a folder one file at a time, then its folders: never a rename of the whole folder (see PARTIAL).
     first are deleted before the rest and last after it (relative posix paths), so a reader that checks for a
     required file sees the folder as incomplete from the first deletion until the last."""
-    folder = Path(folder)
+    folder = PW.io_path(folder, force=True)
     files = sorted(p for p in folder.rglob('*') if p.is_file() and not p.is_symlink())
     rel = {p: p.relative_to(folder).as_posix() for p in files}
     order = ([p for p in files if rel[p] in first]
@@ -172,18 +231,26 @@ def archive_finished(source, target, cancelled=None):
         raise ValueError('Working and saved jobs must be separate directories')
     if source.name != target.name or target.parent.name != 'AC9_ClothSim_jobs':
         raise ValueError('The archive must keep the unique job id')
-    before = _inventory(source)
-    seal = json.loads((source / SEAL).read_text(encoding='utf8')) if (source / SEAL).exists() else None
-    if seal and (seal.get('version') != 1 or seal.get('files') != before):
-        raise ValueError('A sealed job was changed')
+    seal = json.loads(PW.io_path(source / SEAL).read_text(encoding='utf8')) if PW.io_path(source / SEAL).exists() else None
+    names = _names(source)
+    stamps = _stamps(source, names)
+    if seal and seal.get('version') == 1 and isinstance(seal.get('files'), dict) and sorted(seal['files']) == names:
+        # A sealed job is not hashed twice: each file's copy is hashed against the seal below, so a file that differs
+        # from it is refused there, and _stamps shows one changed after its copy was read (Stop of a Live that kept
+        # its frames: five full hashes of the job were most of its 1.2 s)
+        before = dict(seal['files'])
+    else:
+        before = _inventory(source)
+        if seal and (seal.get('version') != 1 or seal.get('files') != before):
+            raise ValueError('A sealed job was changed')
     generation = seal['token'] if seal else None
     mark = dict(version=1, source=str(source), target=str(target), generation=generation)
     token = None
-    if target.exists():
+    if PW.io_path(target).exists():
         # A crash may occur after the receipt and before the source LINK. The target receipt, not the optional
         # LINK, proves this retry.
         try:
-            receipt = json.loads((target / RECEIPT).read_text(encoding='utf8'))
+            receipt = json.loads(PW.io_path(target / RECEIPT).read_text(encoding='utf8'))
             old = receipt.get('token', '')
             if (receipt.get('version') == 1 and re.fullmatch('[0-9a-f]{32}', old)
                     and receipt.get('source') == str(source) and receipt.get('target') == str(target)
@@ -192,48 +259,76 @@ def archive_finished(source, target, cancelled=None):
                     and receipt.get('saved_files') == _inventory(target)
                     and (not seal or saved_generation(target, seal['token']))):
                 _write(source / LINK, dict(version=1, token=old, source=str(source), target=str(target)))
-                (target / PARTIAL).unlink(missing_ok=True)
+                PW.io_path(target / PARTIAL).unlink(missing_ok=True)
                 return str(target)
         except (OSError, ValueError, KeyError, TypeError):
             pass
         # Not saved yet: only a copy this same export started (its PARTIAL names this source and generation) is
         # finished; anything else under the name is never touched.
         try:
-            partial = json.loads((target / PARTIAL).read_text(encoding='utf8'))
-            if (not (target / RECEIPT).exists() and re.fullmatch('[0-9a-f]{32}', partial.get('token', ''))
+            partial = json.loads(PW.io_path(target / PARTIAL).read_text(encoding='utf8'))
+            if (not PW.io_path(target / RECEIPT).exists() and re.fullmatch('[0-9a-f]{32}', partial.get('token', ''))
                     and {key: partial.get(key) for key in mark} == mark):
                 token = partial['token']
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             pass
         if token is None:
             raise FileExistsError('The saved job already exists or changed: ' + str(target))
-        for path in [p for p in target.rglob('*') if p.is_file()]:
-            if path.relative_to(target).as_posix() not in before and path.name not in (PARTIAL, SEAL):
+        scan_root = PW.io_path(target, force=True)
+        for path in [p for p in scan_root.rglob('*') if p.is_file()]:
+            if path.relative_to(scan_root).as_posix() not in before and path.name not in (PARTIAL, SEAL):
                 path.unlink()                         # leftovers of the interrupted copy (temporary files)
     else:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        PW.io_path(target.parent).mkdir(parents=True, exist_ok=True)
         token = uuid.uuid4().hex
-        target.mkdir()                                # refuses an existing folder
+        PW.io_path(target).mkdir()                                # refuses an existing folder
         _write(target / PARTIAL, dict(mark, token=token))
+
+    def discard_own():
+        try:
+            if json.loads(PW.io_path(target / PARTIAL).read_text(encoding='utf8')).get('token') == token:
+                remove_files(target, first=REQUIRED[1:], last=(REQUIRED[0], PARTIAL))
+        except (OSError, ValueError, AttributeError):
+            pass
 
     def stop_if_cancelled():
         if cancelled is not None and cancelled():
-            try:
-                if json.loads((target / PARTIAL).read_text(encoding='utf8')).get('token') == token:
-                    remove_files(target, first=REQUIRED[1:], last=(REQUIRED[0], PARTIAL))
-            except (OSError, ValueError, AttributeError):
-                pass
+            discard_own()
             raise ExportCancelled(str(target))
+    try:
+        hashes = _copy_checked(source, target, before, stamps, stop_if_cancelled)
+    except ValueError:
+        # a working job that differs from its seal (or changed while it was read) leaves no copy of its own behind
+        discard_own()
+        raise
+    if seal:
+        if json.loads(PW.io_path(source / SEAL).read_text(encoding='utf8')) != seal:
+            raise ValueError('The job seal changed during export')
+        _write(target / SEAL, dict(seal, files=hashes))
+    stop_if_cancelled()
+    receipt = dict(version=1, token=token, source=str(source), target=str(target),
+                   generation=generation, source_files=before, saved_files=hashes)
+    _write(target / RECEIPT, receipt)                 # the moment it becomes a saved job
+    PW.io_path(target / PARTIAL).unlink(missing_ok=True)
+    _write(source / LINK, dict(version=1, token=token, source=str(source), target=str(target)))
+    return str(target)
+
+
+def _copy_checked(source, target, before, stamps, stop_if_cancelled):
+    """Copy each file through a temporary name, checked against its hash in before; returns the saved files' hashes
+    (the copy's for a plain file, read again only for the small JSON whose paths are rewritten)."""
     order = [rel for rel in before if rel not in REQUIRED] + list(REQUIRED[1:]) + [REQUIRED[0]]
+    hashes = {}
     for rel in order:
         stop_if_cancelled()
-        src, dst = source / rel, target / rel
+        src, dst = PW.io_path(source / rel), PW.io_path(target / rel)
         remap = bool(rel in (RN.JOB, 'config.json', 'resume_gate.json')
                      or re.fullmatch(r's[1-9][0-9]*/(?:config|native_runtime)\.json', rel))
         if not remap and dst.is_file() and _sha(dst) == before[rel]:
+            hashes[rel] = before[rel]
             continue                                  # already there from an interrupted copy
         dst.parent.mkdir(parents=True, exist_ok=True)
-        temporary = dst.with_name(dst.name + '.' + uuid.uuid4().hex[:12] + '.tmp')
+        temporary = PW.io_path(dst.with_name(dst.name + '.' + uuid.uuid4().hex[:12] + '.tmp'))
         try:
             shutil.copyfile(src, temporary)
             if _sha(temporary) != before[rel]:
@@ -242,25 +337,15 @@ def archive_finished(source, target, cancelled=None):
                 value = json.loads(temporary.read_text(encoding='utf8'))
                 temporary.write_text(json.dumps(_remap(value, source, target), ensure_ascii=False, indent=1),
                                      encoding='utf8')
+            hashes[rel] = _sha(temporary) if remap else before[rel]    # only the small remapped JSON is read again
             os.replace(temporary, dst)
         finally:
             temporary.unlink(missing_ok=True)
-    if _inventory(source) != before:
+    if _names(source) != sorted(before) or _stamps(source, sorted(before)) != stamps:
         raise ValueError('The working job changed during export')
-    hashes = _inventory(target)
-    if set(hashes) != set(before):
+    if _names(target) != sorted(before) or set(hashes) != set(before):
         raise ValueError("The saved job does not hold exactly the working job's files")
-    if seal:
-        if json.loads((source / SEAL).read_text(encoding='utf8')) != seal:
-            raise ValueError('The job seal changed during export')
-        _write(target / SEAL, dict(seal, files=hashes))
-    stop_if_cancelled()
-    receipt = dict(version=1, token=token, source=str(source), target=str(target),
-                   generation=generation, source_files=before, saved_files=hashes)
-    _write(target / RECEIPT, receipt)                 # the moment it becomes a saved job
-    (target / PARTIAL).unlink(missing_ok=True)
-    _write(source / LINK, dict(version=1, token=token, source=str(source), target=str(target)))
-    return str(target)
+    return hashes
 
 
 class ArchiveQueue:
@@ -339,7 +424,7 @@ class ArchiveQueue:
                 continue
             try:
                 if generation is not None:
-                    plan=json.loads((Path(source)/PLAN).read_text(encoding='utf8'))
+                    plan=json.loads(PW.io_path(Path(source)/PLAN).read_text(encoding='utf8'))
                     if (plan.get('version')!=1 or plan.get('generation')!=generation
                             or plan.get('recovery')!=source or plan.get('target')!=target
                             or not saved_generation(source,generation)):

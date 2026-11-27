@@ -90,6 +90,8 @@ def _reload_all_submodules():
 # F3 (Reload Scripts) and an install over a loaded version re-run this file: reload every submodule first, not a
 # hand-kept list (a module only imported by other modules, units.py, was missed and an upgrade stopped on its new names).
 if "_spec" in locals():
+    if '_latency_trace' in locals():
+        _latency_trace.unregister()
     if '_dress' in locals() and hasattr(_dress, 'standby_end'):  # noqa: F821
         _dress.standby_end()  # noqa: F821
     if "_place_targets" in locals():
@@ -100,6 +102,8 @@ from .core import shape_source as _shape_source
 from .core import prepare_plan as _prepare_plan
 from . import prepare_build as _prepare_build
 from . import undo_guard as _undo_guard
+from . import latency_trace as _latency_trace
+from . import build_ahead as _build_ahead
 from .core import spec as _spec                     # noqa: E402
 from .core import piece_table as _piece_table       # noqa: E402
 from .core import phase_from as _phase_from         # noqa: E402
@@ -155,6 +159,7 @@ from . import seam_tool as _seam_tool               # noqa: E402
 from .core import seam_edit as _seam_edit           # noqa: E402
 from . import seam_edit_tool as _seam_edit_tool     # noqa: E402
 from .core import draft as _draft                   # noqa: E402
+from .core import extend as _extend                 # noqa: E402
 from .core import snap as _snap                     # noqa: E402
 from .core import transfer as _transfer             # noqa: E402
 from .core import dxf_out as _dxf_out               # noqa: E402
@@ -234,6 +239,7 @@ def register():
     _i18n.own_context([sys.modules[name] for name in _loaded_submodules()])
     # memory equals the last undo step whenever an operator ends (undo_guard): wrapped before registration
     _undo_guard.install([sys.modules[name] for name in _loaded_submodules()])
+    _latency_trace.install([sys.modules[name] for name in _loaded_submodules()])
     _undo_guard.register()
     _i18n.register()
     _look_reference.register()
@@ -277,6 +283,7 @@ def register():
     _live_key.register()              # after dress: its keymap item reads the add-on preference
     _selection.register()
     _garment_mark.register()          # last: its dot is drawn over the pieces' tints and the seams
+    _latency_trace.register()
 
 
 def unregister():
@@ -325,3 +332,4 @@ def unregister():
     _i18n.unregister()
     _look_reference.unregister()
     _undo_guard.unregister()
+    _latency_trace.unregister()

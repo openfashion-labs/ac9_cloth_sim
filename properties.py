@@ -3,6 +3,7 @@ import bpy
 from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty,
                        PointerProperty, StringProperty)
 
+from .core import overlay_policy as OP
 from .i18n import CTX
 from .units import LEN_STEP
 from . import closure as _CL
@@ -161,8 +162,8 @@ def _act(context=None):
     from . import store
     ctx = context or bpy.context
     spec = store.get(ctx)[0]
-    from . import selection as SEL
-    names, lead = SEL.piece_selection(ctx, spec)
+    from . import tool_tab
+    names, lead = tool_tab.attribute_selection(ctx, spec)
     return spec, lead, names
 
 
@@ -483,6 +484,31 @@ def store_spec():
     return store.get(bpy.context)[0]
 
 
+def _get_piece_base_color(self):
+    from . import base_color
+    return base_color.get(bpy.context, piece=True)
+
+
+def _set_piece_base_color(self, value):
+    from . import base_color
+    base_color.set(bpy.context, value, piece=True)
+
+
+def _get_garment_base_color(self):
+    from . import base_color
+    return base_color.get(bpy.context)
+
+
+def _set_garment_base_color(self, value):
+    from . import base_color
+    base_color.set(bpy.context, value)
+
+
+def _watch_panel_enabled(self, *, background=None):
+    from . import dress
+    return (bpy.app.background if background is None else background) or dress.experimental(bpy.context)
+
+
 def sync_looks(context=None):
     """The Look fields from the spec: the active piece's own look, the garment's default."""
     from . import look_apply as LA
@@ -541,35 +567,36 @@ class AC9ClothSimProps(PropertyGroup):
     # what the add-on draws over the viewports (the pattern and 3D alike): the master switch and one per kind, in the
     # header's Overlays popover (ui.py, user 2026-10-14; "Sim Overlays" until 2026-11-02). show_overlay is the seams
     # (its old name kept for files)
-    show_overlays: BoolProperty(name="Overlays", default=True, update=_redraw,
+    show_overlays: BoolProperty(name=OP.MASTER, default=True, update=_redraw,
                                 description="Draw the add-on's overlays (seams, piece colors, names, ...)")
-    show_silhouette_avatar: BoolProperty(name="Avatar", default=True, translation_context=CTX, update=_redraw,
-                                         description="Show the body from the front and both sides on the flat pattern")
-    show_silhouette_collisions: BoolProperty(name="Registered Collisions", default=True, translation_context=CTX,
+    show_silhouette_avatar: BoolProperty(name=OP.label('show_silhouette_avatar'), default=True, translation_context=CTX, update=_redraw,
+                                         description=OP.note('show_silhouette_avatar'))
+    show_silhouette_collisions: BoolProperty(name=OP.label('show_silhouette_collisions'), default=True, translation_context=CTX,
                                              update=_redraw,
-                                             description="Show registered collision meshes; this switch does not change simulation collisions")
+                                             description=OP.note('show_silhouette_collisions'))
     silhouette_position: FloatVectorProperty(name="Silhouette Position", size=2, default=(0.0, 0.0), update=_redraw)
     silhouette_positioned: BoolProperty(default=False, update=_redraw)
-    show_overlay: BoolProperty(name="Seams", default=True, translation_context=CTX, update=_redraw,
-                               description="The seams, on the pattern and in 3D")
-    show_lengths: BoolProperty(name="Seam Lengths", default=True, update=_redraw,
-                               description="The selected seam's two lengths and their difference")
-    show_notches: BoolProperty(name="Notches", default=True, update=_redraw,
-                               description="The selected seam's notches, paired side to side")
-    show_piece_colors: BoolProperty(name="Piece Colors", default=True, update=_redraw,
-                                    description="The pieces tinted by their state, and the selected pieces' rims")
+    show_pattern_seams_always: BoolProperty(name=OP.label('show_pattern_seams_always'), default=False,
+        translation_context=CTX, update=_redraw,
+        description=OP.note('show_pattern_seams_always'))
+    show_overlay: BoolProperty(name=OP.label('show_overlay'), default=True, translation_context=CTX, update=_redraw,
+                               description=OP.note('show_overlay'))
+    show_lengths: BoolProperty(name=OP.label('show_lengths'), default=True, update=_redraw,
+                               description=OP.note('show_lengths'))
+    show_notches: BoolProperty(name=OP.label('show_notches'), default=True, update=_redraw,
+                               description=OP.note('show_notches'))
+    show_piece_colors: BoolProperty(name=OP.label('show_piece_colors'), default=True, update=_redraw,
+                                    description=OP.note('show_piece_colors'))
     # each piece tinted by its fabric (user 2026-10-20: as the seams have their colors; the Lists' Fabrics tab shows
     # each fabric's color). Drawn by the piece colors (piece_look.py), so under their switch
-    show_fabric_colors: BoolProperty(name="Fabric Colors", default=False, update=_redraw,
-                                     description="Tint each piece by its fabric (the colors are in Lists > "
-                                                 "Fabrics)")
-    show_names: BoolProperty(name="Piece Names", default=True, update=_redraw)
+    show_fabric_colors: BoolProperty(name=OP.label('show_fabric_colors'), default=False, update=_redraw,
+                                     description=OP.note('show_fabric_colors'))
+    show_names: BoolProperty(name=OP.label('show_names'), default=True, update=_redraw)
     # every internal line drawn on the cloth in 3D, thin; the picked ones are orange whatever this says (user 2026-11-14)
-    show_internal_3d: BoolProperty(name="Internal Lines in 3D", default=True, update=_redraw,
-                                   description="Draw every internal line on the cloth in 3D. The lines picked on the "
-                                               "pattern are drawn orange either way")
+    show_internal_3d: BoolProperty(name=OP.label('show_internal_3d'), default=True, update=_redraw,
+                                   description=OP.note('show_internal_3d'))
     # what the add-on found wrong, red on the cloth (diagnose.py; on by default, Fable review b-1, user 2026-11-02)
-    diagnosis_display: EnumProperty(name=DIAG.DISPLAY_NAME, get=_diagnosis_display_get,
+    diagnosis_display: EnumProperty(name=DIAG.DISPLAY_NAME, description=OP.note('diagnosis_display'), get=_diagnosis_display_get,
         set=_diagnosis_display_set, update=_redraw,
         items=DIAG.DISPLAY_ITEMS)
     diagnosis_details: BoolProperty(name=DIAG.RESULTS_NAME, default=False, update=_redraw)
@@ -584,8 +611,8 @@ class AC9ClothSimProps(PropertyGroup):
     show_face_side: BoolProperty(name="Face Side", default=False, update=_redraw,
                                  description="Color the cloth's face blue and its back red. The face is the side the "
                                              "pattern is seen from")
-    show_guides: BoolProperty(name="Guides", default=True, update=_redraw,
-                              description="The body's guide cylinders and placement points")
+    show_guides: BoolProperty(name=OP.label('show_guides'), default=True, update=_redraw,
+                              description=OP.note('show_guides'))
     # Edit Guides (guide_edit.py): a left / right pair follows the one moved as its mirror image (user 2026-10-14)
     guide_mirror: BoolProperty(name="Mirror", default=True,
                                description="Moving one arm or leg guide moves the other as its mirror image about "
@@ -679,9 +706,10 @@ class AC9ClothSimProps(PropertyGroup):
                                               "Below about 12 the 6 mm mesh is too coarse: use 4 mm")
     # an option, off by default (user 2026-10-07): the solver watches for a piece drifting, two closed seams pulling
     # at each other and a seam sewn turned over, records each one and marks the first red
-    watch: BoolProperty(name="Watch for Anomalies", default=False,
-                        description="While dressing, record anomalies (a piece drifting, seams pulling at each other "
-                                    "or sewn turned over) and mark the first one red")
+    watch: BoolProperty(name="Record Run Anomalies", default=False, translation_context=CTX,
+                        description="Record candidate piece drift and seam pulling or turning during simulation; see the run log")
+    watch_panel_enabled: BoolProperty(name="Run anomaly recording enabled", get=_watch_panel_enabled,
+                                     options={'HIDDEN', 'SKIP_SAVE'})
     # the settings set Dress / Continue / Live run with (core/presets.py): empty = 'default', what the screen runs.
     # Not on the panel: a test sets it (a set name, or JSON {"base": name, key: value}); the panel shows it when set
     preset: StringProperty(name="Settings", default="",
@@ -764,23 +792,28 @@ class AC9ClothSimProps(PropertyGroup):
                                  description="The fabric of every piece without one of its own (a preset is added "
                                              "to the garment's list)")
     # the look (render material) of the selected pieces and the garment's default (user 2026-10-20 / 10-21; core/look.py)
-    piece_look: PointerProperty(type=bpy.types.Material, name="Look", update=_set_piece_look, options=set(),
+    piece_look: PointerProperty(type=bpy.types.Material, name="Material", update=_set_piece_look, options=set(),
                                 description="The selected pieces' look (render material); empty: the garment's "
                                             "default look")
-    garment_look: PointerProperty(type=bpy.types.Material, name="Default Look", update=_set_garment_look,
+    garment_look: PointerProperty(type=bpy.types.Material, name="Default Material", update=_set_garment_look,
                                   options=set(),
                                   description="The look of every piece without one of its own")
+    piece_base_color: FloatVectorProperty(name="Base Color", translation_context=CTX, size=3,
+        subtype='COLOR', min=0.0, max=1.0, get=_get_piece_base_color, set=_set_piece_base_color,
+        description="Change the material's base color; all pieces sharing this material change together")
+    garment_base_color: FloatVectorProperty(name="Base Color", translation_context=CTX, size=3,
+        subtype='COLOR', min=0.0, max=1.0, get=_get_garment_base_color, set=_set_garment_base_color,
+        description="Change the material's base color; all pieces sharing this material change together")
     # the cloth drawn with its fabrics' thickness (a Solidify, display only; user 2026-10-21: one switch for the
     # scene in Overlays, inside by default as Blender's Solidify)
-    show_thickness: BoolProperty(name="Thickness", default=True, translation_context=CTX, update=_thickness_changed,
-                                 description="Draw the placed pieces and the dressed garments with their fabrics' thickness (display only, "
-                                             "the simulation does not use it; off takes it away, the values stay)")
-    thickness_side: EnumProperty(name="Side", default='INSIDE', update=_thickness_changed,
+    show_thickness: BoolProperty(name=OP.label('show_thickness'), default=True, translation_context=CTX, update=_thickness_changed,
+                                 description=OP.note('show_thickness'))
+    thickness_side: EnumProperty(name=OP.label('thickness_side'), default='INSIDE', update=_thickness_changed,
                                  items=[('INSIDE', "Inside", "The thickness goes inward from the cloth (no grooves "
                                                             "at the seams)"),
                                         ('CENTER', "Center", "Half inward, half outward"),
                                         ('OUTSIDE', "Outside", "The thickness goes outward")],
-                                 description="Which side of the cloth the thickness goes")
+                                 description=OP.note('thickness_side'))
     dress_status: StringProperty(name="Status")
     # the simulation log's last lines (dress.log, core/simlog.py), drawn under the status
     log_tail: StringProperty(name="Log")

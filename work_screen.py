@@ -265,6 +265,12 @@ class AC9_OT_SimAddAvatar(bpy.types.Operator):
                      and not o.name.startswith(AVATAR_BODY + " ")), None)
         SEL.deselect_all(context)
         if body is not None:
+            # A newly added avatar starts unmeasured. Clear only this appended
+            # body's bundled sample measurements; existing scene bodies keep theirs.
+            from .measure_tool import PROP, GEO
+            for key in (PROP, GEO):
+                if key in body:
+                    del body[key]
             body.select_set(True)
             context.view_layer.objects.active = body
             props = getattr(context.scene, 'ac9_cloth_sim', None)

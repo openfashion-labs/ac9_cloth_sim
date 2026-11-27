@@ -110,7 +110,7 @@ class PreparedInputTests(unittest.TestCase):
         source=(Path(__file__).resolve().parents[1]/'solver/prepared_worker.py').read_text(encoding='utf8')
         original=(sys.stdout,sys.stderr)
         try:
-            with patch.dict(sys.modules,{'prepared_live':NS(Gate=FakeGate,write=P.write),'process_tree':NS(join_owned_job=lambda:None)}),patch.object(sys,'argv',['worker',str(spec)]),patch.object(runpy,'run_path',fail),patch.object(P.os,'_exit',lambda code:exit_codes.append(code)):
+            with patch.dict(sys.modules,{'prepared_live':NS(Gate=FakeGate,write=P.write),'process_tree':NS(join_owned_job=lambda:None),'runtime_guard':NS(verify_actual_environment=lambda:None)}),patch.object(sys,'argv',['worker',str(spec)]),patch.object(runpy,'run_path',fail),patch.object(P.os,'_exit',lambda code:exit_codes.append(code)):
                 exec(compile(source,'<real prepared worker>','exec'),{'__file__':str(Path(__file__).resolve().parents[1]/'solver/prepared_worker.py'),'__name__':'__main__'})
         finally:sys.stdout,sys.stderr=original
         self.assertEqual(exit_codes,[1]);self.assertEqual(cleaned,[True])
@@ -152,7 +152,7 @@ class PreparedInputTests(unittest.TestCase):
         path=Path(__file__).resolve().parents[1]/'solver/prepared_worker.py'
         namespace={'__file__':str(path),'__name__':'test_entry'}
         original=(sys.stdout,sys.stderr)
-        with patch.dict(sys.modules,{'prepared_live':NS(Gate=FakeGate,write=P.write),'process_tree':NS(join_owned_job=lambda:None)}):
+        with patch.dict(sys.modules,{'prepared_live':NS(Gate=FakeGate,write=P.write),'process_tree':NS(join_owned_job=lambda:None),'runtime_guard':NS(verify_actual_environment=lambda:None)}):
             exec(compile(path.read_text(encoding='utf8'),str(path),'exec'),namespace)
         with patch.object(runpy,'run_path',fail):code=namespace['main'](str(spec))
         self.assertEqual(code,1);self.assertEqual(cleaned,['remaining'])

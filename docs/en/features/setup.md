@@ -81,11 +81,7 @@ Use this when you want to re-read the seams while keeping the dressed shape. Pre
 
 ## Add Avatar
 
-- Purpose: use the add-on's bundled avatar (CC0) when you don't have a body to dress.
-- Steps: press **Add Avatar**. The collection "AC9 Avatar" (body, rig, eyes) is added to the current scene. It does not reopen the file, so everything else in the scene stays as it is.
-- Expected result: the body is selected, and if **Body** in the **Placement** panel is empty, this body is set there. You can go on to **Detect Guides**.
-- If you press it twice, a second avatar is added (with .001 after the name).
-- The body follows its rig (AC9 Avatar Rig). To open the A pose wider or make a T pose, move the rig in Pose Mode before dressing (an avatar that moves while the garment is simulated, that is animation, is not supported yet).
+Find it at the top of **Measure**. See [adding and measuring an avatar](measure.md#add-avatar).
 
 ## New Garment
 
@@ -115,4 +111,4 @@ When seams land on another garment or another piece, first read the FBX exported
 
 ## Display
 
-- **Overlays** (the eye button and list): Toggles seam lines, lengths, notches, piece colors, fabric colors, names, guides, and measurements. **Diagnosis Display** selects one of None, Problem Areas, Stretch, and Face Side. It shares the diagnosis panel's Display setting; changing it does not run diagnosis. Problem Areas shows a current valid diagnosis, while Stretch and Face Side show the displayed shape. Stretch is clear up to 1.05, yellow at 1.2, red at 1.5, and blue when compressed. Face Side is blue on the face and red on the back, including with thickness visible. **Thickness** and its side (**Inside**, **Center**, **Outside**) affect appearance only, not simulation.
+- **Overlays** (the eye button and list): Toggles seam lines, lengths, notches, piece colors, fabric colors, names, guides, and measurements. **Diagnosis Display** selects one of None, Diagnosis Locations, Stretch, and Face Side. It shares the diagnosis panel's Diagnosis Display setting; changing it does not run diagnosis. Diagnosis Locations shows a current valid diagnosis, while Stretch and Face Side show the displayed shape. Stretch is clear up to 1.05, yellow at 1.2, red at 1.5, and blue when compressed. Face Side is blue on the face and red on the back, including with thickness visible. **Show Fabric Thickness** and its side (**Inside**, **Center**, **Outside**) affect appearance only, not simulation.

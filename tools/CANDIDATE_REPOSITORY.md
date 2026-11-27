@@ -3,7 +3,7 @@
 `build_candidate_repository.py` はBlender標準の `server-generate` が作った本体/Runtimeの目録とZIPから、**別の新規フォルダ**に候補ページを作る。正式サイト・目録・Releaseの変更やアップロードは実行しない。
 
 ```text
-python tools/build_candidate_repository.py --source-repo split/repository --out local-candidate --base-url http://127.0.0.1:8765/ --main-version 0.4.1
+python tools/build_candidate_repository.py --source-repo split/repository --out local-candidate --base-url http://127.0.0.1:8765/ --main-version 0.5.0
 python -m http.server 8765 --bind 127.0.0.1 --directory local-candidate
 ```
 

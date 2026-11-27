@@ -65,3 +65,21 @@ Press **Work Screen** in the **Setup** panel and a workspace for working (named 
 In the Work Screen's two views, Blender's Object Gizmos are turned on. When you pick a placed piece or a dressed piece with **Whole Pieces**, the gizmo appears on it (not on the flat pattern). It shows one kind at a time, move or rotate, so each is drawn whole: switch it with **Gizmo** in the tool's header (above the view), or press **W**. Views in other workspaces are left as they are; to use the gizmo there, turn on Object Gizmos' move and rotate in the gizmo menu at the top right of the 3D view.
 
 ![the whole Work Screen](../img/d_screen_plain.png)
+
+
+## Overlays
+
+The pattern view is the screen for editing flat patterns; the 3D view shows the three-dimensional garment.
+Use **Overlays** at the upper right of the pattern view to adjust both displays together.
+Settings are grouped by Seams, Pieces, Measure, Placement & Silhouettes, Diagnosis Display, and Garment.
+The text Pattern, 3D, or Pattern & 3D identifies the destination; it is not a view-selection button.
+Values are shared by all views of the same scene. Opening the menu from 3D keeps the same order.
+
+**Body & Garment Measurements** and **Measuring Tapes** are the same settings as in the Measure sidebar.
+The former controls body measurement lines/labels and matching garment lines in 3D; the latter controls manual 3D tapes and pattern measurement lines/values.
+The master switch is also named **Overlays**. It preserves individual values when switched off; selection highlighting may remain visible.
+**Show Fabric Thickness** is outside that master switch. Direction uses the existing Inside, Center, and Outside choices.
+Move Silhouettes is an operation performed on the pattern view.
+
+**Seams** controls only 3D visibility. **Show Seams with Other Tools** controls pattern reference seams independently of the 3D switch. Edit Seams, Add Seam and Add M:N always show working pattern seams and A/B, even when Overlays is off.
+Rows are aligned without child indentation. **Color by Fabric** is disabled while **Piece Colors** is off.

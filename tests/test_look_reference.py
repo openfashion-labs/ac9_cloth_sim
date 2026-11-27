@@ -105,8 +105,12 @@ class LookReferenceContracts(unittest.TestCase):
 
     def test_default_and_twin_update_only_actual_saved_source(self):
         mat=self.material();text,sp,ref=self.owner(mat,piece=True)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(bpy.context,*ST.get(bpy.context))
+        import copy
+        sp=copy.deepcopy(sp)
         twin=D.mirror_copy(sp,'A');D.piece(sp,twin).pop('look',None);ST.write(bpy.context,sp,keep=True)
-        inherited=LK.piece_look(sp,twin);self.assertIs(inherited,ref);LA.material(inherited);mat.name='TwinRenamed'
+        ref=D.piece(sp,'A')['look'];pattern_view.rebuild(bpy.context,*ST.get(bpy.context));inherited=LK.piece_look(sp,twin);self.assertIs(inherited,ref);LA.material(inherited);mat.name='TwinRenamed'
         LR.repair_observed();saved=S.loads(text.as_string())
         self.assertNotIn('look',D.piece(saved,twin));self.assertEqual(D.piece(saved,'A')['look']['material'],mat.name)
         sp['default_look']=sp['pieces'][0].pop('look');ST.write(bpy.context,sp,keep=True)

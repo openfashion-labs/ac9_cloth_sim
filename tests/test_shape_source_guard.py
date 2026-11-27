@@ -22,7 +22,9 @@ JOB_WRITE_ALLOWED = {'dress.py': 5, 'draft_tool.py': 1, 'export_retopo.py': 1, '
                      'mesh_import.py': 1, 'result_reference.py': 1}
 # who opens a result's index file by hand (np.load of RR.INDEX) instead of result_reference.open_result
 INDEX_READ = re.compile(r"RR\.INDEX")
-INDEX_READ_ALLOWED = {'build_ahead.py': 1, 'button_view.py': 2, 'dress.py': 1, 'live_resume.py': 3,
+# Build-ahead's one index reference moved into its CPU worker. It names freshly
+# produced, privately owned preparation output, never a garment's saved result.
+INDEX_READ_ALLOWED = {'ahead_prepare.py': 1, 'button_view.py': 2, 'dress.py': 1, 'live_resume.py': 3,
                       'overlay.py': 2, 'placement.py': 1, 'start_check.py': 2, 'zipper_view.py': 2}
 # the seam index the overlay verified (ranges and pattern coordinates read together): the overlay's own
 JOBSEG = re.compile(r"\b_jobseg\b")

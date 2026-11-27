@@ -57,7 +57,7 @@ class PrivateSnapshots(unittest.TestCase):
         outer.rollback();outer.close()
 
     def test_invalid_private_empty_is_released_once(self):
-        b=self.backup();ob=b.auxiliary[0][1]
+        b=self.backup();ob=b.auxiliary[0][2]
         bpy.data.objects.remove(ob,do_unlink=True)
         b.close();b.close();self.assertFalse(PI._owners)
 

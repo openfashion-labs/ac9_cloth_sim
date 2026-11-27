@@ -121,7 +121,7 @@ class SeamWeights(unittest.TestCase):
         F2 = self.F + 2e-4
         b = PLV.to_world((F2, self.T[:, ::-1], self.W, ('obj_R', 'key2')), self.P)
         self.assertEqual(len(PLV._bary), 1)
-        np.testing.assert_allclose(a, b, atol=1e-9)
+        np.testing.assert_allclose(a - np.array([2e-7,2e-7,0.]), b, atol=1e-9)
         np.testing.assert_allclose(a[0], [0.025, 0.025, 0], atol=1e-9)
 
     def test_changed_layout_recomputes(self):

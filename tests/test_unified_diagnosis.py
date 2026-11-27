@@ -12,6 +12,122 @@ def shape(Y,source='placed'):
 def links(pairs=None,unknown=()):
  return {'pairs':pairs or {},'unknown':set(unknown)}
 class UnifiedDiagnosis(unittest.TestCase):
+ def test_overview_has_separate_rows_without_changing_notice(self):
+  a=shape([[0,0,0],[16,0,0],[0,16,0]]);a['V']=np.array([[0,0],[10,0],[0,10]],float)
+  rec=dict(found=N.measure({'a':a},['a'],None,lambda n:None,links()),selected_scope=False,start=[])
+  rows=N.summary_lines(rec)
+  self.assertEqual(len(rows),4)
+  self.assertIn('Checked all',rows[0]);self.assertIn('Body/obstacles',rows[1])
+  self.assertIn('intersections',rows[2]);self.assertIn('Maximum stretch',rows[3])
+  self.assertEqual(N.summary(rec),rows[0]+': '+'; '.join(rows[1:]))
+ def test_one_display_group_has_all_four_choices(self):
+  from types import SimpleNamespace
+  events=[]
+  class Layout:
+   def label(self,**kw):pass
+   def column(self,**kw):return self
+   def row(self,**kw):events.append('row');return self
+   def prop(self,*args,**kw):raise AssertionError('duplicate dropdown')
+   def prop_enum(self,data,prop,value,**kw):events.append(value)
+  p=bpy.context.scene.ac9_cloth_sim;old=p.show_overlays
+  try:
+   p.show_overlays=True
+   N.draw_display(Layout(),bpy.context)
+   self.assertEqual(events,['row','PROBLEMS','STRETCH','row','SIDE','NONE'])
+  finally:p.show_overlays=old
+ def test_problem_hud_keeps_spots_without_repeating_the_list(self):
+  from ac9_cloth_sim import diagnose as DG,dress as D,text_band,ui
+  p=bpy.context.scene.ac9_cloth_sim;old=p.show_overlays
+  try:
+   p.show_overlays=True;p.diagnosis_display='PROBLEMS'
+   rows=[]
+   with patch.object(ui,'view_text_origin',return_value=(24,700)),patch.object(DG.store,'get',return_value=({'name':'test'},{})),patch.object(DG.PV,'layout_empty',return_value=object()),patch.object(DG,'_draw_spots') as spots,patch.object(DG,'_draw_stretch_spot') as peak,patch.object(N,'problem_lines',side_effect=AssertionError('list belongs to panel')),patch.object(D,'run_preparing',return_value=None),patch.object(text_band,'draw',side_effect=lambda fid,items:rows.extend(items)):
+    DG._draw_px()
+    self.assertEqual(spots.call_count,2);self.assertEqual(peak.call_count,1);self.assertEqual(rows,[])
+   with patch.object(ui,'view_text_origin',return_value=(24,700)),patch.object(DG.store,'get',return_value=({'name':'test'},{})),patch.object(DG.PV,'layout_empty',return_value=object()),patch.object(DG,'_draw_spots'),patch.object(DG,'_draw_stretch_spot'),patch.object(D,'run_preparing',return_value=(2.,)),patch.object(D,'run_kernels_built',return_value=False),patch.object(text_band,'draw',side_effect=lambda fid,items:rows.extend(items)):
+    DG._draw_px()
+    self.assertEqual(len(rows),1);self.assertIn('Preparing',rows[0][2])
+  finally:p.show_overlays=old
+ def test_stretch_only_is_reported_and_located_without_switching(self):
+  from mathutils import Matrix
+  from ac9_cloth_sim import pattern_view as PV
+  for ratio,marked in ((1.,False),(1.6,True)):
+   a=shape([[0,0,0],[10*ratio,0,0],[0,10*ratio,0]])
+   a['V']=np.array([[0,0],[10,0],[0,10]],float);a['owner']=object()
+   found=N.measure({'a':a},['a'],None,lambda n:None,links())
+   rec=dict(found=found,selected_scope=False,start=[],stale=False,pending=False,frame=bpy.context.scene.frame_current)
+   self.assertIn(f'x{ratio:.2f}',N.notice(rec));self.assertEqual(len(found['a']['cross_t']),0)
+   with patch.object(N,'record',return_value=rec),patch.object(PV,'layout_matrix',return_value=Matrix.Identity(4)):
+    spot=N.stretch_spot(bpy.context,{})
+    self.assertEqual(spot is not None,marked)
+    if spot:
+     np.testing.assert_allclose(spot[2],[16/3000,16/3000,0],atol=1e-9)
+     np.testing.assert_allclose(spot[3],[10/3000,10/3000,0],atol=1e-9)
+    rec['pending']=True;self.assertIsNone(N.stretch_spot(bpy.context,{}))
+    rec['pending']=False;rec['stale']=True;self.assertIsNone(N.stretch_spot(bpy.context,{}))
+ def test_maximum_uses_diagnosed_scope_and_stable_tie(self):
+  a=shape([[0,0,0],[16,0,0],[0,16,0]]);a['V']=np.array([[0,0],[10,0],[0,10]],float)
+  b=shape([[100,0,0],[130,0,0],[100,30,0]]);b['V']=a['V'].copy()
+  found=N.measure({'a':a,'b':b},['a'],None,lambda n:None,links())
+  self.assertEqual(N.stretch_peak({'found':found})[0],'a');self.assertAlmostEqual(found['a']['stretch'],1.6)
+  found['z']=dict(found['a']);self.assertEqual(N.stretch_peak({'found':{'z':found['z'],'a':found['a']}})[0],'a')
+ def test_unchecked_material_cannot_supply_a_maximum(self):
+  a=shape([[0,0,0],[16,0,0],[0,16,0]]);a['V']=np.array([[0,0],[10,0],[0,10]],float)
+  good=N.measure({'a':a},['a'],None,lambda n:None,links())['a']
+  b=dict(a,flat_checked=False)
+  bad=N.measure({'b':b},['b'],None,lambda n:None,links())['b']
+  self.assertIsNone(N.stretch_peak({'found':{'b':bad}}))
+  self.assertIn('not checked',N.stretch_summary({'found':{'b':bad}}))
+  self.assertIn('Checked pieces only',N.stretch_summary({'found':{'a':good,'b':bad}}))
+ def test_maximum_face_keeps_material_and_world_centroid(self):
+  from mathutils import Matrix
+  from ac9_cloth_sim import pattern_view as PV
+  a=shape([[0,0,0],[10,0,0],[0,10,0],[100,0,0],[120,0,0],[100,20,0]])
+  a['T']=np.array([[0,1,2],[3,4,5]]);a['V']=np.array([[0,0],[10,0],[0,10],[30,0],[40,0],[30,10]],float);a['owner']=object()
+  found=N.measure({'a':a},['a'],None,lambda n:None,links())
+  self.assertEqual(found['a']['stretch_face'],1)
+  with patch.object(N,'current',return_value={'found':found}),patch.object(PV,'layout_matrix',return_value=Matrix.Identity(4)):
+   spot=N.stretch_spot(bpy.context,{})
+   np.testing.assert_allclose(spot[2],np.mean(a['Y'][3:],axis=0)*.001,atol=1e-8)
+   np.testing.assert_allclose(spot[3],list(np.mean(a['V'][3:],axis=0)*.001)+[0],atol=1e-8)
+ def test_unchecked_material_map_has_no_fabricated_one(self):
+  from types import SimpleNamespace
+  from ac9_cloth_sim import diagnose as DG
+  c=SimpleNamespace(area=None)
+  a=shape([[0,0,0],[10,0,0],[0,10,0]])
+  shapes={'missing':(np.zeros((3,2)),a['T'],a['Y']*.001,False),
+          'valid':(a['V'],a['T'],a['Y']*.001,False)}
+  with patch.object(DG,'_d',{'key':None}),patch.object(DG,'_pieces_now',return_value=(shapes,'test')):
+   data=DG._data(c,{},None)
+   self.assertEqual(set(data['per']),{'valid'})
+   self.assertEqual([n for n,_m,_x in DG.summary(data['per'])],['valid'])
+   self.assertIn('missing',shapes) # Face Side's geometry was not removed.
+ def test_unplaced_scope_is_in_partial_stretch_notice(self):
+  a=shape([[0,0,0],[16,0,0],[0,16,0]]);a['V']=np.array([[0,0],[10,0],[0,10]],float)
+  found=N.measure({'a':a},['a'],None,lambda n:None,links())
+  self.assertIn('not checked: 1 pieces',N.stretch_summary(dict(found=found,unavailable=['unplaced'])))
+ def test_material_reader_rejects_inconsistent_shared_vertex_uv(self):
+  from ac9_cloth_sim import diagnose as DG
+  mesh=bpy.data.meshes.new('stretch_uv_contract')
+  mesh.from_pydata([(0,0,0),(1,0,0),(1,1,0),(0,1,0)],[],[(0,1,2),(0,2,3)])
+  ob=bpy.data.objects.new('stretch_uv_contract',mesh)
+  try:
+   self.assertIsNone(DG._garment_flat(ob))
+   uv=mesh.uv_layers.new(name='UVMap')
+   for loop in mesh.loops:uv.data[loop.index].uv=mesh.vertices[loop.vertex_index].co.xy*.01
+   self.assertIsNotNone(DG._garment_flat(ob))
+   uv.data[3].uv.x+=.001 # one shared vertex differs by 1 mm in material space
+   self.assertIsNone(DG._garment_flat(ob))
+   uv.data[3].uv.x-=.001
+   self.assertIsNotNone(DG._garment_flat(ob))
+  finally:
+   bpy.data.objects.remove(ob);bpy.data.meshes.remove(mesh)
+ def test_hidden_maximum_is_not_replaced_by_another_piece(self):
+  from types import SimpleNamespace
+  from ac9_cloth_sim import diagnose as DG
+  c=SimpleNamespace(region=object(),region_data=object())
+  with patch.object(N,'stretch_spot',return_value=(object(),'hidden',None,None,2.)),patch.object(DG.VV,'object_decoration_allowed',return_value=False),patch.object(DG.PV,'piece_objects',return_value={}),patch.object(DG,'_seen',side_effect=AssertionError('hidden')):
+   self.assertIsNone(DG._draw_stretch_spot(c,{}))
  def test_self_intersection_marker_uses_both_material_sides(self):
   a=shape([[-1,-1,0],[1,-1,0],[0,1,0],[-1,0,-1],[1,0,-1],[0,0,1]])
   a['T']=np.array([[0,1,2],[3,4,5]])
@@ -58,7 +174,7 @@ class UnifiedDiagnosis(unittest.TestCase):
    def __init__(self):self.reports=[]
    def report(self,levels,text):self.reports.append((levels,text))
   caller=Reporter()
-  with patch.object(N,'run',return_value=rec),patch.object(C.store,'get',return_value=({},{})):
+  with patch.object(N,'run',return_value=rec),patch.object(C.store,'get',return_value=({'pieces':[]},{})):
    self.assertEqual(C.AC9_OT_SimDiagnosePlaced.execute(caller,bpy.context),{'FINISHED'})
   self.assertEqual(len(caller.reports),1)
   self.assertIn('selected pieces',caller.reports[0][1]);self.assertIn('Start-shape warnings: 1',caller.reports[0][1])

@@ -4,8 +4,6 @@
 
 折りの案内: `docs/ja/features/fold-roles.md` を参照。左右のミラーペアの内部線は追加/移動/曲線編集/削除/折り/ゴムを同じ保存対応で同期する。配置だけのUnlinkと型紙の同期は別。古い片線を準備中に見えない線で補完しない。不一致は別メッシュで保持し、古い共有形の対応不明なA/Bは理由付きで拒否する。中央軸上の線は1回、軸外の鏡像2線は各1回適用し、No Sideでは今回の対称な折りをまとめて戻す。無関係な後続の折りや頂点編集は保護する。
 
-人向けの正本は docs/ja/before-start.md（Docusaurusの「使い始める前に」）。同じ版のインストール済み本体のLLM/README.mdと必要ならprocedures.mdをAIへ添付する。ダウンロードZIPの保持は前提にしない。作業前に.blendを別名保存し、経過も必要なら隣のAC9_ClothSim_jobsを別途保持する。Keep Cacheは既定オン、Keep All Simulate Framesは既定オフ、途中記録上限は1,500。この0.4.1候補ではSpace（Blender側でツール/検索ならShift+Space）が開始/停止の既定。既存のカスタム割当はPreferencesのHotkeysで確認。画像・動画の説明と型紙/服の外観の承認を混同しない。
-
 ## 案内上の注意と画面の場所
 
 目的: 利用者に操作を案内するときの、場所の言い方と、AI がしてよいこと・してはいけないことを決めておく。
@@ -16,7 +14,7 @@
 - 右下の Properties エディタの **Tool** タブ: **AC9 Run**（常に最上段）、**AC9 Garment**、**AC9 Piece**、**AC9 Seam**（下に **Lengths & Notches** と **Blend**）、**AC9 Internal Line**、**AC9 Edges**、**AC9 Fabric**、**AC9 Interlining**、**AC9 Button**、**AC9 Measurement**。最後に触った物で切り替わる。何かを選んだのに該当パネルが出ないときは、ツールタブを開いているかを確かめる。
 - サイドバーの **Lists** のタブは 6 つ（**Seams**、**Pieces**、**Fabrics**、**Collision**、**Tapes**、**Fasteners**）。一覧は見て選ぶだけで、設定は ツールタブ。
 - 画面の言語: Blender が日本語表示なら、ボタンは日本語の訳で出る。案内では英語の名前と、日本語表示の利用者には画面の日本語の両方が通じるように言う（訳は `i18n_ja.py`）。
-- 左の道具の列: 型紙の道具は **Setup** の **Pattern Tools** がオンのときだけ出る。**Edit Measure**・**Tape Around**・**Tape Along**・**Tape Straight**・**Place** は常に出る。
+- 左のツールの列: 型紙のツールは **Setup** の **Pattern Tools** がオンのときだけ出る。**Edit Measure**・**Tape Around**・**Tape Along**・**Tape Straight**・**Place** は常に出る。
 - 3D ビューのヘッダー右上: **Overlays**（目のボタンと一覧）。
 - 型紙は、サイドバーの **Work Screen** で出る作業画面の真ん中の 3D ビューで直す。
 
@@ -140,26 +138,26 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 ## 型紙を直す（Whole Pieces・Edit Pieces）
 
-操作 ID: `ac9_cloth_sim.use_tool`（道具に切り替える。`tool` に道具の ID。Whole Pieces は `transform_pattern_tool`、Edit Pieces は `edit_pattern_tool`、どちらも頭に `ac9_cloth_sim.` を付ける。道具の ID で、操作 ID ではない）、`ac9_cloth_sim.edit_pattern`（Edit Pieces に切り替える操作）、`ac9_cloth_sim.pattern_transform`（G・R・S、`mode='MOVE'|'ROTATE'|'SCALE'`）、`ac9_cloth_sim.pattern_edit`（K・X・C・N のキー）、`ac9_cloth_sim.pattern_drag`、`ac9_cloth_sim.pick_piece_under`（ダブルクリック）、`ac9_cloth_sim.context_menu`（何もしていないときの右クリック）、`ac9_cloth_sim.sync_3d`（Update 3D）、`ac9_cloth_sim.set_gap`、`ac9_cloth_sim.pattern_rotate`、`ac9_cloth_sim.pattern_scale`、`ac9_cloth_sim.duplicate_pieces`、`ac9_cloth_sim.symmetrize`、`ac9_cloth_sim.parallel_line`、`ac9_cloth_sim.add_dart`、`ac9_cloth_sim.move_dart`、`ac9_cloth_sim.spread`、`ac9_cloth_sim.cut_line`、`ac9_cloth_sim.piece_label`、`ac9_cloth_sim.mirror_copy`、`ac9_cloth_sim.symmetric_edit`、`ac9_cloth_sim.delete_piece`、`ac9_cloth_sim.delete_selected`、`ac9_cloth_sim.restore_pieces`
+操作 ID: `ac9_cloth_sim.use_tool`（ツールに切り替える。`tool` にツールの ID。Whole Pieces は `transform_pattern_tool`、Edit Pieces は `edit_pattern_tool`、どちらも頭に `ac9_cloth_sim.` を付ける。ツールの ID で、操作 ID ではない）、`ac9_cloth_sim.edit_pattern`（Edit Pieces に切り替える操作）、`ac9_cloth_sim.pattern_transform`（G・R・S、`mode='MOVE'|'ROTATE'|'SCALE'`）、`ac9_cloth_sim.pattern_edit`（K・X・C・N のキー）、`ac9_cloth_sim.pattern_drag`、`ac9_cloth_sim.pick_piece_under`（ダブルクリック）、`ac9_cloth_sim.context_menu`（何もしていないときの右クリック）、`ac9_cloth_sim.sync_3d`（Update 3D）、`ac9_cloth_sim.set_gap`、`ac9_cloth_sim.pattern_rotate`、`ac9_cloth_sim.pattern_scale`、`ac9_cloth_sim.duplicate_pieces`、`ac9_cloth_sim.symmetrize`、`ac9_cloth_sim.parallel_line`、`ac9_cloth_sim.add_dart`、`ac9_cloth_sim.move_dart`、`ac9_cloth_sim.spread`、`ac9_cloth_sim.cut_line`、`ac9_cloth_sim.piece_label`、`ac9_cloth_sim.mirror_copy`、`ac9_cloth_sim.symmetric_edit`、`ac9_cloth_sim.delete_piece`、`ac9_cloth_sim.delete_selected`、`ac9_cloth_sim.restore_pieces`
 
 目的: 型紙の形を直す。既定の3D Follows Editsオフでは、調整した形と着た服への反映はUpdate 3Dまたは次のSimulateまで待つ。オンなら編集ごとに写る。反映と物理計算は別。人向けの正本はdocs/ja/features/pattern.md。
 
 前提条件:
 
 - 画面: 型紙を見る 3D ビュー（サイドバーの **Work Screen** で出る作業画面の真ん中）。オブジェクトモード。
-- 型紙が読み込まれている。道具は **Pattern** パネルの **Whole Pieces**と **Edit Pieces**（または左の列。**Pattern Tools** がオンのとき）。
-- 道具は 2 つに分かれている（2026-10-28〜29）。**ピースを丸ごと動かす・回す・拡大縮小するのは Whole Pieces。角・辺・内部線の点を動かすのは Edit Pieces。** Edit Pieces でピースの内側を引くと箱選択になり、ピースは動かない。利用者が「ピースが動かない」と言ったら、まず持っている道具を確かめる。
+- 型紙が読み込まれている。ツールは **Pattern** パネルの **Whole Pieces**と **Edit Pieces**（または左の列。**Pattern Tools** がオンのとき）。
+- ツールは 2 つに分かれている（2026-10-28〜29）。**ピースを丸ごと動かす・回す・拡大縮小するのは Whole Pieces。角・辺・内部線の点を動かすのは Edit Pieces。** Edit Pieces でピースの内側を引くと箱選択になり、ピースは動かない。利用者が「ピースが動かない」と言ったら、まず持っているツールを確かめる。
 
 手順:
 
-1. ピースごと動かす: **Pattern** の **Whole Pieces** を押して道具を持つ。ピースか内部線をクリックで選び（Shift で足す、何も無い所から引くと箱）、ドラッグで動かす。G（移動）・R（回す）・S（拡大縮小）は選んだ物の真ん中を基準にする。Shift+D（そのまま複製）、F2（名前）、X／Delete（選んだ物を消す）。3D のギズモは移動か回転の片方ずつ出る（道具のヘッダーの **Gizmo** か W で切り替え）。
-2. 形を直す: **Pattern** の **Edit Pieces** を押して道具を持つ。型紙の上で、角・辺・取っ手・内部線（端・途中の点・線全体）をドラッグする。クリックで選び、Shift＋クリックで足すと、選んだ全部を一緒にドラッグできる。ダブルクリックでピース全体を選ぶ。ドラッグ中は X／Y で軸、Shift で 0／45／90°、数字で長さ、Ctrl で吸着を切る。G／R／S（選んだ角・辺・線）、K（辺か内部線に点を足す）、C（辺か内部線の区間をカーブ／直線）、N（合印）、Shift+D（そのまま複製）。S は拡大・縮小だけ。ダーツを足す・動かす、切り開き、線で切る、平行な線は右クリックのメニューにだけある（右クリック＝カーソルの下の物にできることの全部、キーは近道）。道具のヘッダーにはカーソルの下の物のキーだけが出る。全部は **Pattern** パネルの **Keys**（2 つの道具の両方）。
+1. ピースごと動かす: **Pattern** の **Whole Pieces** を押してツールを持つ。ピースか内部線をクリックで選び（Shift で足す、何も無い所から引くと箱）、ドラッグで動かす。G（移動）・R（回す）・S（拡大縮小）は選んだ物の真ん中を基準にする。Shift+D（そのまま複製）、F2（名前）、X／Delete（選んだ物を消す）。3D のギズモは移動か回転の片方ずつ出る（ツールのヘッダーの **Gizmo** か W で切り替え）。
+2. 形を直す: **Pattern** の **Edit Pieces** を押してツールを持つ。型紙の上で、角・辺・取っ手・内部線（端・途中の点・線全体）をドラッグする。クリックで選び、Shift＋クリックで足すと、選んだ全部を一緒にドラッグできる。ダブルクリックでピース全体を選ぶ。ドラッグ中は X／Y で軸、Shift で 0／45／90°、数字で長さ、Ctrl で吸着を切る。G／R／S（選んだ角・辺・線）、K（辺か内部線に点を足す）、C（辺か内部線の区間をカーブ／直線）、N（合印）、Shift+D（そのまま複製）。S は拡大・縮小だけ。ダーツを足す・動かす、切り開き、線で切る、平行な線は右クリックのメニューにだけある（右クリック＝カーソルの下の物にできることの全部、キーは近道）。ツールのヘッダーにはカーソルの下の物のキーだけが出る。全部は **Pattern** パネルの **Keys**（2 つのツールの両方）。
 2b. 何もしていないときの右クリックは、カーソルの下の物のメニュー（`ac9_cloth_sim.context_menu`）。右クリックした物が先に選ばれ、項目はキーやボタンと同じ操作を呼ぶ。操作の途中の右クリックは取り消し。
 2c. **AC9 Run** の **3D Follows Edits**（シーンのプロパティ `follow_edits`、既定オフ）が外れている間は、型紙の直しは 3D に写らずに待つ（`sync_pending` が真、**Update 3D** が赤）。**Update 3D**（`ac9_cloth_sim.sync_3d`）か、次の **Simulate** で写る。
 3. 距離をそろえる: 選んだ内部線・辺の ツールタブに周りまでの距離が並ぶ。距離は表示だけで、「数値入力…」（`ac9_cloth_sim.set_gap`）の小窓で、今の位置からの X・Y か、周りまでの距離を入れて動かす。
 4. 左右ペアの片方を直すと、相方も鏡像で直る。ずれたときは片方を消し、もう片方を **Mirror Copy** する。**Mirror Copy**（`ac9_cloth_sim.mirror_copy`）は選んだ全部を縫い目ごと鏡に写す。
-5. そのままの複製は **Selected Pieces** の **Duplicate** か Shift+D（`ac9_cloth_sim.duplicate_pieces`）。鏡にせず、左右ペアにもしない。複製したピースどうしの縫い目だけ一緒に写る。複製は置かれていないので Place で置く。
-6. 左右対称の 1 ピース（1 枚で裁つ前身頃など）は ツールタブ **AC9 Piece** の **Symmetric Edit**。Rectangle／Ellipse の道具のヘッダーのチェック（既定オン）で、描いたときからオンにもできる。オンのままなら K・X・N、内部線（描く・動かす・消す）・折り・ダーツ・切り開き・縫い目も反対側へ鏡で入る（中心線をまたいで自分の鏡になる線は 1 本）。角を隣の角に落とすと 1 点にまとまる。中心線は `mirror_axis`（中心 x, y と角度）に持ち、R で回すと一緒に回る。中心線で切ると左右ペアでない 2 枚になる。崩れたら隣の **Symmetrize**（`ac9_cloth_sim.symmetrize`、`keep='LEFT'|'RIGHT'`、既定 LEFT）で反対側を作り直す。
+5. そのままの複製は **Selected Pieces** の **Duplicate** か Shift+D（`ac9_cloth_sim.duplicate_pieces`）。鏡にせず、左右ペアにもしない。複製したピースどうしの縫い目だけ一緒に写る。型紙ビューではコピーがマウスに付き、クリックで確定する。確定前のEsc/右クリックは複製自体を取り消し、確定後はUndo 1回で戻す。型紙上の位置指定と3D配置は別で、複製は3D未配置なのでPlaceで置く。
+6. 左右対称の 1 ピース（1 枚で裁つ前身頃など）は ツールタブ **AC9 Piece** の **Symmetric Edit**。Rectangle／Ellipse のツールのヘッダーのチェック（既定オン）で、描いたときからオンにもできる。オンのままなら K・X・N、内部線（描く・動かす・消す）・折り・ダーツ・切り開き・縫い目も反対側へ鏡で入る（中心線をまたいで自分の鏡になる線は 1 本）。角を隣の角に落とすと 1 点にまとまる。中心線は `mirror_axis`（中心 x, y と角度）に持ち、R で回すと一緒に回る。中心線で切ると左右ペアでない 2 枚になる。崩れたら隣の **Symmetrize**（`ac9_cloth_sim.symmetrize`、`keep='LEFT'|'RIGHT'`、既定 LEFT）で反対側を作り直す。
 7. 外周の辺か内部線に平行な内部線は右クリックの Parallel Line（`ac9_cloth_sim.parallel_line`、先に小窓。`distance` m・`count` 本・等間隔。辺なら `piece`・`edges` はカンマ区切りの辺 ID で内側へ、隣り合う辺は 1 本の線。内部線なら `line` に線 ID、`flip`・`both` で側、`extend` で端を外周まで）。
 8. ピースの名前は ツールタブの **AC9 Piece** のいちばん上の欄か F2（`ac9_cloth_sim.piece_label`）。
 

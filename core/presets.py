@@ -241,6 +241,8 @@ def resolve(value, panel=None, environ=None):
                                 ('watch', 'watch', False)):
         if out[key] is None:
             out[key] = getattr(panel, attr, fallback) if panel is not None else fallback
+            if key == 'watch' and not getattr(panel, 'watch_panel_enabled', True):
+                out[key] = False
     out['physical'], out['watch'] = bool(out['physical']), bool(out['watch'])
     out['weight_gsm'], out['bending_uNm'] = float(out['weight_gsm']), float(out['bending_uNm'])
     # Explicit research opt-in (2026-11-14). Keep the Native preference untouched so switching off restores it.

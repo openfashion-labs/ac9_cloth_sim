@@ -146,18 +146,24 @@ def _remake_one(context, spec, name, *, preparation=None):
     return [tx("edits in Edit Mode of {0} dropped", name)] if edited else []
 
 
+def _has_result_shapes(spec, g):
+    """Preserve physical result ownership without promoting its editing basis."""
+    from . import dress as D, display_state as DS
+    return D.has_result(g) or any(row['source'] == 'result' for row in DS.snapshot(spec, g).values())
+
+
 @PB.prepared_consumer
 def give_shape(context, spec, names, *, preparation=None):
     """Pieces placed after the garment was simulated (not in its result): their placed objects made when missing and
     sewn on from them by the next Phase Sim, as pieces Reset are (user 2026-10-25 b-2, DECISIONS
     cloth-sim-fold-face-mountain-valley-2026-10-25: the shape seen is the start; a pocket placed after the jacket
     was dressed had none, Fold, Move by Hand and Settle could not reach it). (spec as stored after, names given)."""
-    from . import dress as D
+    from . import dress as D, display_state as DS
     from . import place_seam as PS
     g = D.garment(spec)
-    if not D.has_result(g):
+    if not _has_result_shapes(spec, g):
         return spec, []
-    on_g = D.garment_pieces(g)
+    on_g = set(D.garment_pieces(g)) | DS.result_names(g)
     st = {pc['name']: S.piece_state(pc) for pc in spec['pieces']}
     new = sorted(n for n in with_pairs(spec, names) if n not in on_g and n in spec.get('placement', {})
                  and st.get(n) in ('active', 'freeze'))
@@ -230,12 +236,12 @@ def _reset_on_garment(context, spec, names, *, preparation=None):
     """Pieces placed while the garment is dressed and not Reset yet (picked on the garment): Reset now and shown as
     placed objects where they were placed (user 2026-10-20 b-1: placing a piece of the dressed garment resets it, one
     step instead of two; Ctrl+Z takes it back). Report lines."""
-    from . import dress as D
+    from . import dress as D, display_state as DS
     g = D.garment(spec)
-    if not D.has_result(g):
+    if not _has_result_shapes(spec, g):
         return []
     obs = PLV.objects(spec)
-    on_g = D.garment_pieces(g)
+    on_g = set(D.garment_pieces(g)) | DS.result_names(g)
     pick = with_pairs(spec, names)
     # a piece the garment does not have (placed after it) has nothing to Reset: shown as its adjusted shape at once,
     # the next Phase Sim sewing it on from there (user 2026-10-25 b-2)
@@ -248,6 +254,7 @@ def _reset_on_garment(context, spec, names, *, preparation=None):
     try:
         done = D.reset_to_placed(context, g, spec, todo, context.scene.ac9_cloth_sim.mesh_size, preparation=preparation)
     except ValueError as exc:
+        PB.cancel(preparation)
         return out + [tx("not reset ({0})", exc)]
     return out + ([tx("reset {0} (the next Simulate run sews it on from here)", ', '.join(done))] if done else [])
 
@@ -292,7 +299,7 @@ def remake(context, spec, names, prepared_out=None, *, preparation=None):
         prepared_out.append(res)
     g = D.garment(spec)
     # on a dressed garment only the pieces Reset are shown as objects: the others stay on the garment
-    replace_prepared(context, spec, res, reset=hit, only=hit if D.has_result(g) else None)
+    replace_prepared(context, spec, res, reset=hit, only=hit if _has_result_shapes(spec, g) else None)
     if edited:
         rep_.append(tx("edits in Edit Mode dropped (moves kept): {0}", ', '.join(edited)))
     return rep_
@@ -372,7 +379,7 @@ def show_start(context, spec, names=(), *, preparation=None):
     from . import dress as D
     from . import place_settle as PT
     g = D.garment(spec)
-    if D.has_result(g):
+    if _has_result_shapes(spec, g):
         return None
     PLV.leave_edit(context)
     out = []
@@ -1946,10 +1953,39 @@ def rebuild_placement(context, spec, names, prepared_out=None, *, preparation=No
 def _remade(context, spec, sp, lead):
     """sp stored and the pieces `lead` (with their pairs) made again as Place makes them: report lines."""
     lost = shape_kinds(spec, lead)
-    store.put(context, sp)
-    r = rebuild_placement(context, sp, lead)
-    r += [tx("{0}: {1} dropped (placed again)", n, ', '.join(k)) for n, k in sorted(lost.items())]
-    overlay.invalidate()
+    edit_owner = store.edit_owner(context)
+    layer = context.view_layer.as_pointer()
+    active = context.view_layer.objects.active
+    active_uid = int(active.session_uid) if active is not None else None
+    active_piece = next((n for n, ob in PLV.objects(spec).items() if ob == active), None)
+    try:
+        with PB.operation(context) as preparation:
+            try:
+                store.write(context, sp, owner=edit_owner)
+            except Exception:
+                if edit_owner.matches(context, content=False):
+                    body = S.dumps(sp)
+                    if store.text(context).as_string() == body:
+                        preparation.owned_bodies.add(body)
+                raise
+            PB.replan_source(preparation)
+            store.refresh(context, sp)
+            r = rebuild_placement(context, sp, lead, preparation=preparation)
+            if not preparation.canceled:
+                r += [tx("{0}: {1} dropped (placed again)", n, ', '.join(k)) for n, k in sorted(lost.items())]
+            overlay.invalidate()
+        if preparation.canceled:
+            raise ValueError(str(preparation.failure) if preparation.failure is not None else '; '.join(r))
+    except Exception:
+        if context.view_layer.as_pointer() == layer and edit_owner.matches(context, content=True):
+            context.view_layer.update()
+            if context.view_layer.as_pointer() == layer and edit_owner.matches(context, content=True):
+                restored = next((ob for ob in context.view_layer.objects if int(ob.session_uid) == active_uid), None)
+                if restored is None and active_piece is not None:
+                    restored = PLV.objects(store.get(context)[0]).get(active_piece)
+                if active_uid is None or (restored is not None and context.view_layer.objects.get(restored.name) == restored):
+                    SEL.restore_flags(context, dict(selected=SEL.objects(context), active=restored))
+        raise
     return r
 
 

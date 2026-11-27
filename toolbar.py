@@ -419,7 +419,7 @@ class AC9_OT_SimToolHover(bpy.types.Operator):
             if t in TAPE_MODES or t == 'MOVE_LEVEL':     # the line under the cursor, the ring to lay
                 from . import measure_edit as MEE
                 MEE.hover(context, event, t)
-                if t in ('TAPE_ALONG', 'TAPE_STRAIGHT') and ok and MEE.MT._ui['hot'] is None:
+                if (t in ('TAPE_ALONG', 'TAPE_STRAIGHT') or (t == 'MEASURE' and context.window_manager.ac9_tape_method == 'THREE_POINTS')) and ok and MEE.MT._ui['hot'] is None:
                     PC.tape_point(context, event, kind)
                 else:
                     PC.clear(context)
@@ -427,7 +427,7 @@ class AC9_OT_SimToolHover(bpy.types.Operator):
                 from . import draft_tool as DT
                 DT.hover_piece(context, event)
                 if ok:
-                    PC.snap_point(context, event, DRAW_SNAP[t])
+                    PC.snap_point(context, event, DRAW_SNAP[t],outline_only=t in ('DRAW_LINE','IRECT','IELLIPSE'),internal_positions=t in ('DRAW_LINE','IRECT','IELLIPSE'))
             elif t in ('ADD_SEAM', 'ADD_SEAM_MN'):
                 PC.seam_point(context, event) if ok else PC.clear(context)
             elif t == 'PLACE':
@@ -577,8 +577,9 @@ class AC9_OT_SimToolClick(bpy.types.Operator):
             # a click on a measurement's line picks it (Edit Measure: a measured line or a tape, which it then
             # drags; a click on nothing just drops the pick)
             from . import measure_edit as MEE
-            key = MEE.pick(context, (event.mouse_region_x, event.mouse_region_y),
-                           kinds=MEE.EDIT_KINDS if t == 'MOVE_LEVEL' else None)
+            key = None if event.ctrl and t in TAPE_MODES else MEE.pick(
+                context, (event.mouse_region_x, event.mouse_region_y),
+                kinds=MEE.EDIT_KINDS if t == 'MOVE_LEVEL' else None)
             if key is not None and t != 'MOVE_LEVEL':
                 MEE.select(context, key)
                 return {'FINISHED'}
@@ -590,6 +591,9 @@ class AC9_OT_SimToolClick(bpy.types.Operator):
         if t in TAPE_MODES:
             if kind == 'BODY':
                 r = _call("ac9_cloth_sim.measure_tape", event, mode=TAPE_MODES[t])
+                if r is not None and 'FINISHED' in r:
+                    from . import undo_guard
+                    undo_guard.push("Tape")
             else:
                 r = _call("ac9_cloth_sim.measure_pattern", event)
         elif t == 'MOVE_LEVEL':
@@ -688,6 +692,18 @@ def tool_button(layout, context, tool_id, text, icon):
 
 # ---------------------------------------------------------------- the tools
 
+def tool_policy(context):
+    from .core import tool_policy as TP
+    return TP.policy(active_tool(context) or '')
+
+
+def pattern_seams(context):
+    from .core import tool_policy as TP
+    props = context.scene.ac9_cloth_sim
+    return TP.pattern_seams(active_tool(context) or '', props.show_pattern_seams_always,
+                            enabled=props.show_overlays)
+
+
 def works_on(layout, tool):
     layout.label(text_ctxt=CTX, text=tx("Works on: ") + tx(WORKS[tool][0]), icon='INFO')
 
@@ -703,7 +719,7 @@ KEYS = {
     'IELLIPSE': "drag inside a piece, or click two corners  Shift circle  Alt from center",
     'ADD_SEAM': "select A, then B  Enter / click: add  Ctrl: invert snapping  F: other way",
     'ADD_SEAM_MN': "select stretches on A, Enter  select stretches on B, Enter: add  Ctrl: invert snapping",
-    'MEASURE': "click: keep the ring  Tab direction  Ctrl+wheel tilt (Shift 1 deg)  click a line: pick",
+    'MEASURE': "click three body points: keep the ring  click a line: pick",
     'TAPE_ALONG': "click points  Enter: keep  Backspace undo  Esc / right-click: cancel  click a line: pick",
     'TAPE_STRAIGHT': "click two points: pulled taut (over bulges, across hollows)  click a line: pick",
     'MOVE_LEVEL': "drag a line or a tape, release: keep  Esc / right-click: put back  Ctrl+wheel on a laid ring: tilt",
@@ -716,7 +732,10 @@ MENU_TOOLS = {'MOVE_LEVEL', 'PLACE'}       # these show a right-click menu (draf
 
 
 def _keys(layout, tool):
-    layout.label(text_ctxt=CTX, text=tx(KEYS[tool]) + tx("  X/Del delete") + (tx("  right-click: menu") if tool in MENU_TOOLS else ""))
+    text = KEYS[tool]
+    if tool == 'MEASURE' and bpy.context.window_manager.ac9_tape_method == 'ONE_POINT':
+        text = "click: keep the ring  Tab direction  Ctrl+wheel tilt (Shift 1 deg)  click a line: pick"
+    layout.label(text_ctxt=CTX, text=tx(text) + tx("  X/Del delete") + (tx("  right-click: menu") if tool in MENU_TOOLS else ""))
 
 
 def draw_seam_settings(context, layout):
@@ -830,6 +849,7 @@ def _tape_keymap(tool):
     return (
         ("ac9_cloth_sim.tool_hover", {"type": 'MOUSEMOVE', "value": 'ANY'}, {"properties": [("tool", tool)]}),
         ("ac9_cloth_sim.tool_click", {"type": 'LEFTMOUSE', "value": 'PRESS'}, {"properties": [("tool", tool)]}),
+        ("ac9_cloth_sim.tool_click", {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True}, {"properties": [("tool", tool)]}),
     ) + DELETE_KEYS + DRAW_MENU_KEYS
 
 
@@ -839,9 +859,7 @@ class AC9_WT_Measure(bpy.types.WorkSpaceTool):
     bl_context_mode = 'OBJECT'
     bl_idname = "ac9_cloth_sim.measure_tool"
     bl_label = "Tape Around"
-    bl_description = ("A tape round the body: the ring under the cursor shows, click keeps it. Tab: its direction, "
-                      "Ctrl+wheel: tilt it (Shift: by 1 deg). Click a measured line: pick it. On the pattern: the "
-                      "length between two points on the outlines")
+    bl_description = ("Tape round the body: choose three points, or one point with a direction in Tool Settings")
     bl_icon = "ops.mesh.loopcut_slide"
     bl_widget = None
     bl_keymap = _tape_keymap('MEASURE') + (
@@ -857,8 +875,10 @@ class AC9_WT_Measure(bpy.types.WorkSpaceTool):
     )
 
     def draw_settings(context, layout, tool):
-        layout.prop(context.window_manager, "ac9_tape_plane", text="")
-        layout.prop(context.window_manager, "ac9_tape_tilt")
+        layout.prop(context.window_manager, "ac9_tape_method", expand=True)
+        if context.window_manager.ac9_tape_method == 'ONE_POINT':
+            layout.prop(context.window_manager, "ac9_tape_plane", text="")
+            layout.prop(context.window_manager, "ac9_tape_tilt")
         works_on(layout, 'MEASURE')
         _keys(layout, 'MEASURE')
 

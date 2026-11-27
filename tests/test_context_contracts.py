@@ -28,11 +28,17 @@ def inventory():
             IL.set_smooth(sp,n,l,1,True);D.set_smooth(sp,n,1,True)
         if hole:D.set_hole(sp,n,l,True)
         hits=[('piece',n),('edge',n,'E2',.3),('corner',n,1),('handle',n,'E2',0),
-              ('iline',n,l,.3),('inode',n,l,1),('ihandle',n,l,0,0),('iend',n,l,'start'),('notch',n,'N1')]
+              ('iline',n,l,0),('inode',n,l,1),('ihandle',n,l,0,0),('iend',n,l,'start'),('notch',n,'N1')]
         for tool in ('EDIT_PATTERN','TRANSFORM_PATTERN','DRAW'):
          for hit in hits:
           for row in T.menu_items(sp,hit,tool):
             if row is not None:found[key(tool,hit,row)]=row[1]
+    sp,n,l,_=fixture('self')
+    pc=D.piece(sp,n)
+    joint=D.add_internal(sp,n,[D.corners(pc)[0].tolist(),[80,80]],mirror=False)
+    for hit in [('corner',n,0),('inode',n,joint,0)]:
+        for row in T.menu_items(sp,hit,'EDIT_PATTERN'):
+            if row is not None:found[key('EDIT_PATTERN',hit,row)]=row[1]
     sp,n,l,_=fixture('self')
     for p in sp['pieces']:p['internals']=[]
     DA.add_dart(sp,n,'E2',.3,width=20,length=40)

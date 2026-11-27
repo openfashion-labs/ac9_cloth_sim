@@ -15,7 +15,8 @@ SOLVER = Path(__file__).resolve().parents[1] / 'solver'
 def _load():
     """live_session_worker with its solver-only imports stubbed (no newton / warp needed)."""
     stubs = {name: types.ModuleType(name) for name in ('process_tree', 'prepared_live', 'preload_config',
-                                                        'lifecycle_trace', 'job_cancel')}
+                                                        'lifecycle_trace', 'job_cancel', 'runtime_guard')}
+    stubs['runtime_guard'].verify_actual_environment = lambda: None
     stubs['process_tree'].join_owned_job = lambda *a, **k: None
     stubs['lifecycle_trace'].mark = lambda *a, **k: None
     stubs['job_cancel'].check = lambda: None

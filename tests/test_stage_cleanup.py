@@ -13,7 +13,7 @@ class StageCleanupTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as folder:
             work = Path(folder)
-            for name in ('run_stages.py', 'lifecycle_trace.py', 'process_tree.py'):
+            for name in ('run_stages.py', 'lifecycle_trace.py', 'process_tree.py', 'runtime_guard.py'):
                 shutil.copy2(root / 'solver' / name, work / name)
             stage = work / 'stage'
             stage.mkdir()

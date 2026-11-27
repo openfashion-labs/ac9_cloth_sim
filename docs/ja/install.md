@@ -7,9 +7,9 @@ sidebar_position: 2
 
 ## インストール
 
-> この説明は0.4.1の候補です。分離版の正式公開前は、[0.4.0のRelease](https://github.com/openfashion-labs/ac9_cloth_sim/releases/tag/v0.4.0)の全部入りZIPを使います。
+> この説明は0.5.0の候補です。分離版の正式公開前は、[0.4.0のRelease](https://github.com/openfashion-labs/ac9_cloth_sim/releases/tag/v0.4.0)の全部入りZIPを使います。
 
-### Extensionsから入れる（0.4.1・公開準備中）
+### Extensionsから入れる（0.5.0・公開準備中）
 
 正式公開後は、この節からExtensionsの導入ページへ案内します。現在はまだ利用できません。
 
@@ -22,7 +22,7 @@ sidebar_position: 2
 ### ZIPから手動で入れる
 
 1. Blender **5.2** を使います。配布版は5.2より前のBlenderには入りません。
-2. 現在は0.4.0 Releaseの `ac9_cloth_sim-0.4.0.zip` をダウンロードします。0.4.1公開後の全部入り版は `ac9_cloth_sim-0.4.1-full.zip` です。**解凍しません**。
+2. 現在は0.4.0 Releaseの `ac9_cloth_sim-0.4.0.zip` をダウンロードします。0.5.0公開後の全部入り版は `ac9_cloth_sim-0.5.0-full.zip` です。**解凍しません**。
 3. 「編集」→「プリファレンス」（Edit → Preferences）の「アドオン」（Add-ons）を開きます。
 4. 右上の **∨** →「Install from Disk…」（ディスクからインストール…）からZIPを選び、インストールします。
 5. **AC9 Cloth Sim** が有効になっていることを確認します。

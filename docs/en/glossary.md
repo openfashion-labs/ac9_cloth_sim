@@ -5,6 +5,9 @@ sidebar_position: 8
 
 # Glossary
 
+Japanese UI terminology uses Tool = ツール, Silhouette = シルエット, and Collision = コリジョン, matching the sidebar.
+The Overlays menu uses Avatar Silhouette and Collision Silhouettes for the corresponding displays.
+
 These are the terms used in this guide and on screen. Each term is listed under its English UI name, with the Japanese UI name in parentheses where one exists (you can switch Blender to Japanese).
 
 ## Patterns and seams

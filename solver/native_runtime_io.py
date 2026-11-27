@@ -24,10 +24,29 @@ KNOWN_FILES = frozenset((MARKER, 'worker.lock', 'console.txt', 'progress.txt', '
                          'grab.json.tmp', 'params.json.tmp'))
 
 
+def io_path(path, *, force=False):
+    """OS I/O spelling only; descriptors and ownership keep their canonical paths.
+
+    Blender's Windows host does not enable the same long-path behavior as its
+    standalone Python. Include room for atomic filenames, and count UTF-16 units.
+    """
+    if os.name != 'nt':
+        return Path(path)
+    value = os.path.normpath(os.path.abspath(os.fspath(path)))
+    prefix = chr(92)*2+'?'+chr(92)
+    if value.startswith(prefix) or (not force and len(value.encode('utf-16-le',errors='surrogatepass'))//2 < 240):
+        return Path(value)
+    if value.startswith(chr(92)*2):
+        value = prefix+'UNC'+chr(92)+value[2:]
+    else:
+        value = prefix+value
+    return Path(value)
+
+
 @contextmanager
 def _stage_claim(stage):
     """OS-owned lock: released even when the acquiring process is killed."""
-    with open(Path(stage) / 'native_runtime.lock', 'a+b') as claim:
+    with open(io_path(Path(stage) / 'native_runtime.lock'), 'a+b') as claim:
         if os.name == 'nt':
             import msvcrt
             claim.seek(0, os.SEEK_END)
@@ -58,16 +77,16 @@ def _canonical(path):
 
 
 def _read(path):
-    with open(path, encoding='utf8') as stream:
+    with open(io_path(path), encoding='utf8') as stream:
         return json.load(stream)
 
 
 def _write(path, data):
-    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    temporary = io_path(path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp'))
     try:
         with open(temporary, 'x', encoding='utf8') as stream:
             json.dump(data, stream)
-        os.replace(temporary, path)
+        os.replace(temporary, io_path(path))
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -99,7 +118,7 @@ def _status_claimed(stage, directory, token, *, base=None, **fields):
     marker = _validate(stage, directory, token, require_current=False, base=base)
     marker.update(fields)
     _write(directory / MARKER, marker)
-    descriptor = _read(stage / DESCRIPTOR) if (stage / DESCRIPTOR).is_file() else {}
+    descriptor = _read(stage / DESCRIPTOR) if io_path(stage / DESCRIPTOR).is_file() else {}
     if descriptor.get('token') == token and descriptor.get('stage') == _canonical(stage):
         descriptor.update(fields)
         _write(stage / DESCRIPTOR, descriptor)
@@ -111,20 +130,20 @@ class RuntimeOwner:
         if config.get('native_three') is not True or config.get('fast_live'):
             raise ValueError('Native runtime I/O requires the isolated Native route')
         self.stage = Path(stage).resolve()
-        self.stage.mkdir(exist_ok=True)
+        io_path(self.stage).mkdir(exist_ok=True)
         self.token = uuid.uuid4().hex
         self.base = _base(temp_root) if temp_root is not None else _base()
         self.directory = self.base / self.token
         self.controls = {}
         try:
             with _stage_claim(self.stage):
-                if (self.stage / DESCRIPTOR).exists():
+                if io_path(self.stage / DESCRIPTOR).exists():
                     previous = _read(self.stage / DESCRIPTOR)
                     if previous.get('version') != 1 or previous.get('stage') != _canonical(self.stage):
                         raise ValueError('Unrecognized Native runtime descriptor')
                     if previous.get('phase') in ('allocated', 'running', 'cleanup_pending'):
                         raise ValueError('This stage already has a Native runtime owner')
-                self.directory.mkdir(parents=True, exist_ok=False)
+                io_path(self.directory).mkdir(parents=True, exist_ok=False)
                 data = dict(version=1, token=self.token, stage=_canonical(self.stage),
                             directory=str(self.directory), owner_pid=os.getpid(), created_ns=time.time_ns(), phase='allocated')
                 _write(self.directory / MARKER, data)
@@ -132,15 +151,15 @@ class RuntimeOwner:
                     if config.get(key) is not None and config.get(key) != '':
                         source = Path(config[key])
                         target = self.directory / name
-                        if source.is_file():
-                            shutil.copy2(source, target)
+                        if io_path(source).is_file():
+                            shutil.copy2(io_path(source), io_path(target))
                         self.controls[key] = str(target)
                 _write(self.stage / DESCRIPTOR, data)
         except Exception:
-            if (self.directory / MARKER).exists():
+            if io_path(self.directory / MARKER).exists():
                 self.abort_before_launch()
-            elif self.directory.exists() and not any(self.directory.iterdir()):
-                self.directory.rmdir()
+            elif io_path(self.directory).exists() and not any(io_path(self.directory).iterdir()):
+                io_path(self.directory).rmdir()
             raise
 
     def settings(self):
@@ -149,7 +168,7 @@ class RuntimeOwner:
     def abort_before_launch(self):
         """Caller must have not launched a worker; no reader has been published."""
         marker = _validate(self.stage, self.directory, self.token, require_current=False, base=self.base)
-        if marker.get('phase') not in ('allocated', 'retained') or marker.get('worker_pid') or (self.directory / 'worker.lock').exists():
+        if marker.get('phase') not in ('allocated', 'retained') or marker.get('worker_pid') or io_path(self.directory / 'worker.lock').exists():
             raise ValueError('A started Native runtime cannot be aborted as unlaunched')
         _status(self.stage, self.directory, self.token, base=self.base, phase='aborted')
         return self.release(readers_released=True)
@@ -163,16 +182,16 @@ class RuntimeOwner:
     def _release_claimed(self, preserve):
         if self.directory.parent != self.base or self.directory.name != self.token:
             raise ValueError('Unsafe Native runtime cleanup target')
-        descriptor = _read(self.stage / DESCRIPTOR) if (self.stage / DESCRIPTOR).is_file() else {}
+        descriptor = _read(self.stage / DESCRIPTOR) if io_path(self.stage / DESCRIPTOR).is_file() else {}
         current = (descriptor.get('token') == self.token and descriptor.get('stage') == _canonical(self.stage)
                    and descriptor.get('directory') == str(self.directory))
-        credential = self.stage / ('native_runtime_cleanup_' + self.token + '.json')
+        credential = io_path(self.stage / ('native_runtime_cleanup_' + self.token + '.json'))
         backup = _read(credential) if credential.is_file() else None
         if backup is not None and (backup.get('version') != 1 or backup.get('token') != self.token or
                 backup.get('stage') != _canonical(self.stage) or backup.get('directory') != str(self.directory) or
                 backup.get('phase') != 'cleanup_pending'):
             raise ValueError('Invalid Native runtime cleanup credential')
-        if not self.directory.exists():
+        if not io_path(self.directory).exists():
             if backup is not None:
                 try:
                     credential.unlink()
@@ -181,7 +200,7 @@ class RuntimeOwner:
             if current and descriptor.get('phase') == 'cleanup_pending':
                 descriptor.update(phase='retired'); _write(self.stage / DESCRIPTOR, descriptor)
             return True
-        if (self.directory / MARKER).exists():
+        if io_path(self.directory / MARKER).exists():
             marker = _validate(self.stage, self.directory, self.token, require_current=False, base=self.base)
         elif backup is not None:
             marker = backup
@@ -193,9 +212,9 @@ class RuntimeOwner:
             raise ValueError('Missing Native runtime cleanup credential')
         if preserve or marker.get('phase') not in ('complete', 'aborted', 'cleanup_pending'):
             return False
-        files = list(self.directory.iterdir())
+        files = list(io_path(self.directory).iterdir())
         if any(not path.is_file() or path.name not in KNOWN_FILES for path in files):
-            if (self.directory / MARKER).exists():
+            if io_path(self.directory / MARKER).exists():
                 _status_claimed(self.stage, self.directory, self.token, base=self.base, phase='retained', reason='Unexpected cache file')
             return False
         marker.update(phase='cleanup_pending')
@@ -209,8 +228,8 @@ class RuntimeOwner:
             for path in files:
                 if path.name != MARKER:
                     path.unlink()
-            (self.directory / MARKER).unlink()
-            self.directory.rmdir()
+            io_path(self.directory / MARKER).unlink()
+            io_path(self.directory).rmdir()
             credential.unlink()
         except OSError as error:
             marker.update(reason=str(error))
@@ -230,7 +249,7 @@ class WorkerRuntime:
         self.directory = Path(config[DIR_KEY]).resolve()
         self.token = config[TOKEN_KEY]
         marker = _validate(self.stage, self.directory, self.token)
-        if marker.get('phase') != 'allocated' or (self.directory / 'worker.lock').exists():
+        if marker.get('phase') != 'allocated' or io_path(self.directory / 'worker.lock').exists():
             raise ValueError('Native runtime has already been started')
         self.expected_points = None
         self.closed = False
@@ -247,7 +266,7 @@ class WorkerRuntime:
             marker = _validate(self.stage, self.directory, self.token)
             if marker.get('phase') != 'allocated':
                 raise ValueError('Native runtime is no longer allocated')
-            with open(self.directory / 'worker.lock', 'x', encoding='utf8') as lock:
+            with open(io_path(self.directory / 'worker.lock'), 'x', encoding='utf8') as lock:
                 lock.write(str(os.getpid()))
             self.claimed = True
             _status_claimed(self.stage, self.directory, self.token, worker_pid=os.getpid(), phase='running')
@@ -256,9 +275,9 @@ class WorkerRuntime:
             self.old_stderr.flush()
         prefix = ''
         name = getattr(self.old_stdout, 'name', None)
-        if isinstance(name, (str, os.PathLike)) and Path(name).is_file() and self.old_stdout.seekable():
-            prefix = Path(name).read_text(encoding='utf8')
-        self.stream = open(self.directory / 'console.txt', 'w', encoding='utf8')
+        if isinstance(name, (str, os.PathLike)) and io_path(name).is_file() and self.old_stdout.seekable():
+            prefix = io_path(name).read_text(encoding='utf8')
+        self.stream = open(io_path(self.directory / 'console.txt'), 'w', encoding='utf8')
         self.stream.write(prefix)
         sys.stdout = sys.stderr = self.stream
 
@@ -277,19 +296,19 @@ class WorkerRuntime:
             return
         _validate(self.stage, self.directory, self.token)
         live = self.directory / 'live.npy'
-        if live.exists():
+        if io_path(live).exists():
             import numpy as np
-            q = np.load(live, allow_pickle=False)
+            q = np.load(io_path(live), allow_pickle=False)
             if (not np.issubdtype(q.dtype, np.floating) or self.expected_points is None or q.shape != (self.expected_points, 3) or
                     not np.isfinite(q).all()):
                 raise ValueError('Invalid Native runtime live output')
         for name in ['live.npy', 'progress.txt']:
             source = self.directory / name
-            if source.is_file():
-                target = self.stage / (name + '.' + self.token + '.tmp')
+            if io_path(source).is_file():
+                target = io_path(self.stage / (name + '.' + self.token + '.tmp'))
                 try:
-                    shutil.copy2(source, target)
-                    os.replace(target, self.stage / name)
+                    shutil.copy2(io_path(source), target)
+                    os.replace(target, io_path(self.stage / name))
                 finally:
                     if target.exists():
                         target.unlink()
@@ -310,7 +329,7 @@ class WorkerRuntime:
                 self.stream.flush()
                 self.stream.close()
             self.publish()
-            content = (self.directory / 'console.txt').read_text(encoding='utf8')
+            content = io_path(self.directory / 'console.txt').read_text(encoding='utf8')
             if self.old_stdout.seekable():
                 self.old_stdout.seek(0)
                 self.old_stdout.write(content)

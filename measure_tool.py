@@ -14,6 +14,7 @@ Where things are kept:
 import hashlib
 import json
 from pathlib import Path
+from .core import overlay_policy as OP
 from .i18n import CTX, rpt, tx
 
 import blf
@@ -47,7 +48,7 @@ LABEL = {'height': "Height", 'neck_height': "Neck height", 'crotch_height': "Cro
 
 # the hovered / active item, for the overlay
 _ui = {'hot': None, 'preview': None, 'preview_label': None,
-       'preview_domain': None, 'preview_owner': None, 'preview_pieces': ()}
+       'preview_domain': None, 'preview_owner': None, 'preview_pieces': (), 'points': None}
 
 
 def _cm(v):
@@ -184,7 +185,7 @@ def remeasure_all(context, ob, data, cache):
         res, _ = measure_body(context, ob, data, cache)
     for t in data.get('tapes', []):
         try:                                           # one tape that fails does not leave the ones after it old
-            store_tape(ob, cache, t, data)
+            store_tape(ob, cache, t, data, invalidate=True)
         except Exception as e:
             print("AC9 Cloth Sim: laying the tape again failed:", t.get('name'), e)
     data['body_geo'] = cache.geo
@@ -237,6 +238,15 @@ def tape_compute(cache, t):
     """A tape from its definition (body-local mm): (length, extra, world-mm polyline) or None."""
     ob = cache.ob
     M, _ = _mat(ob)
+    if t['kind'] == 'around' and t.get('method') == 'THREE_POINTS':
+        P = (np.c_[np.asarray(t['pts'], float) * 0.001, np.ones(3)] @ M.T)[:, :3] * 1000.0
+        P, _ = _on_skin(cache, t, P, [None] * 3)
+        r = ME.tape_around_points(cache.body, P)
+        if r is not None:
+            p, n = ME.three_point_plane(P)
+            t['p'] = _round(_to_local(ob, [p])[0], 2)
+            t['n'] = np.round(_dir_local(ob, n), 6).tolist()
+        return r
     if t['kind'] == 'around':
         p = (M @ np.r_[np.asarray(t['p'], float) * 0.001, 1.0])[:3] * 1000.0
         n = _dir_world(ob, t['n'])
@@ -284,7 +294,7 @@ def _on_skin(cache, t, P, N):
         t['anchors'], t['ntri'] = anchors, int(len(body.T))
     else:
         t.pop('anchors', None), t.pop('ntri', None)
-    t['pts'] = _round(_to_local(ob, out_p), 2)
+    t['pts'] = _round(_to_local(ob, out_p), 4 if t.get('method') == 'THREE_POINTS' else 2)
     t['normals'] = [np.round(_dir_local(ob, n), 6).tolist() if n is not None else None for n in out_n]
     if not any(n is not None for n in t['normals']):
         t.pop('normals')
@@ -297,10 +307,17 @@ def drop_anchors(t):
     t.pop('ntri', None)
 
 
-def store_tape(ob, cache, t, data):
+def store_tape(ob, cache, t, data, invalidate=False):
     r = tape_compute(cache, t)
     if r is None:
+        if invalidate and t.get('method') == 'THREE_POINTS':
+            t.update(value=None, extra=None, invalid=True)
+            geo = read(ob, GEO)
+            geo.get('tapes', {}).pop(t['name'], None)
+            write(ob, geo, GEO)
+            write(ob, data)
         return False
+    t.pop('invalid', None)
     t['value'], t['extra'] = round(float(r[0]), 2), round(float(r[1]), 2)
     data.setdefault('tapes', []).append(t) if t not in data.get('tapes', []) else None
     geo = read(ob, GEO)
@@ -423,7 +440,7 @@ class AC9_OT_MeasureBody(bpy.types.Operator):
             # narrowest, the user's offsets kept) and the tapes laid again with their points on the skin
             res, cache = measure_body(context, ob, data, fresh=True)
             for t in data.get('tapes', []):
-                store_tape(ob, cache, t, data)
+                store_tape(ob, cache, t, data, invalidate=True)
         except Exception as exc:
             self.report({'ERROR'}, rpt("Could not measure the body (upright, facing -Y?): {0}", exc))
             return {'CANCELLED'}
@@ -505,9 +522,10 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
         """{'item:<key>' | 'tape:<name>': screen points} of what can be dragged (not a height)."""
         geo = read(self.ob, GEO)
         its = self.data.get('items', {})
-        P = {'item:' + k: v for k, v in _screen_polys(context, self.ob, geo.get('items', {})).items()
+        mp = context.scene.ac9_cloth_sim_measure
+        P = {'item:' + k: v for k, v in _screen_polys(context, self.ob, geo.get('items', {}) if mp.show_body else {}).items()
              if its.get(k, {}).get('kind') != 'height' and k != 'back_length'}
-        P.update({'tape:' + k: v for k, v in _screen_polys(context, self.ob, geo.get('tapes', {})).items()})
+        P.update({'tape:' + k: v for k, v in _screen_polys(context, self.ob, geo.get('tapes', {}) if mp.show else {}).items()})
         return P
 
     def _finish(self, context):
@@ -541,12 +559,13 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
         if t is None:
             return None
         i = None
-        if t['kind'] != 'around':                         # the tape's point nearest the press
+        if t['kind'] != 'around' or t.get('method') == 'THREE_POINTS':  # the nearest authored point
             region, rv3d = context.region, context.region_data
             S2 = [location_3d_to_region_2d(region, rv3d, Vector(p)) for p in _to_world(self.ob, t['pts'])]
             d = [np.hypot(s.x - xy[0], s.y - xy[1]) if s is not None else np.inf for s in S2]
             i = int(np.argmin(d))
-        return {'kind': 'tape', 'key': name, 'i': i, 'start': json.loads(json.dumps(t))}
+        return {'kind': 'tape', 'key': name, 'i': i, 'start': json.loads(json.dumps(t)),
+                'start_geo': read(self.ob, GEO).get('tapes', {}).get(name)}
 
     def _move_tape(self, context, event):
         hit = _ray_body(context, self.ob, event)
@@ -555,7 +574,7 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
             return None
         prev = json.loads(json.dumps(t))
         loc = _round(_to_local(self.ob, [hit[0]]), 2)[0]
-        if t['kind'] == 'around':
+        if t['kind'] == 'around' and t.get('method') != 'THREE_POINTS':
             t['p'] = loc
         else:
             t['pts'][self.drag['i']] = loc
@@ -578,7 +597,13 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
             if t is not None:
                 t.clear()
                 t.update(dr['start'])
-                store_tape(self.ob, self.cache, t, self.data)
+                geo = read(self.ob, GEO)
+                if dr['start_geo'] is None:
+                    geo.get('tapes', {}).pop(dr['key'], None)
+                else:
+                    geo.setdefault('tapes', {})[dr['key']] = dr['start_geo']
+                write(self.ob, self.data)
+                write(self.ob, geo, GEO)
 
     def modal(self, context, event):
         context.area.tag_redraw()
@@ -590,7 +615,7 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
                 self.polys = self._polys(context)
                 if getattr(self, 'from_tool', False):
                     self._finish(context)
-                    return {'FINISHED'}
+                    return {'CANCELLED'}
                 return {'RUNNING_MODAL'}
             self._finish(context)
             return {'FINISHED'}
@@ -600,6 +625,8 @@ class AC9_OT_MeasureMoveLevel(bpy.types.Operator):
             if self.drag is None:
                 self.polys = self.polys or self._polys(context)
                 _ui['hot'] = _nearest_poly(self.polys, xy)
+                from . import measure_edit as MEE
+                _ui['hot'] = MEE.pick(context, xy, kinds=MEE.EDIT_KINDS) or _ui['hot']
                 return {'RUNNING_MODAL'}
             if self.drag['kind'] == 'tape':
                 t = self._move_tape(context, event)
@@ -662,6 +689,14 @@ def _ray_body(context, ob, event):
     return p, n
 
 
+AROUND_METHODS = [('THREE_POINTS', "Three Points", "A girth through three points on the body"),
+                  ('ONE_POINT', "One Point / Direction", "A girth through one point with a chosen direction")]
+AROUND_STEPS = ("Tape Around: click the first point   Esc: cancel",
+                "Tape Around: click the second point   Backspace: back   Esc: cancel",
+                "Tape Around: {0}click the third point to keep   Backspace: back   Esc: cancel")
+AROUND_BAD_PLANE = "Choose a point away from the line between the first two points"
+AROUND_BAD_RING = "No closed ring passes through these points; choose another third point"
+
 PLANES = [('AUTO', "Auto", "Across the nearest limb, or level round the torso"),
           ('HORIZONTAL', "Level", "A level (horizontal) ring"),
           ('FRONT', "Front-back", "A vertical ring seen from the front (over the shoulder, through the crotch)"),
@@ -669,13 +704,12 @@ PLANES = [('AUTO', "Auto", "Across the nearest limb, or level round the torso"),
 
 
 class AC9_OT_MeasureTape(bpy.types.Operator):
-    """Lay a tape measure on the body. Around: click a point, the tape goes round the body through it. Along:
-    click points, the tape follows the body's surface through them; Enter keeps it, Esc or right-click cancels"""
+    """Tape round the body: choose three points, or one point with a direction in Tool Settings"""
     bl_idname = "ac9_cloth_sim.measure_tape"
     bl_label = "Tape"
     bl_options = {'REGISTER', 'UNDO', 'BLOCKING'}
 
-    mode: EnumProperty(translation_context=CTX, items=[('AROUND', "Around", "Round the body through one point"),
+    mode: EnumProperty(translation_context=CTX, items=[('AROUND', "Around", "Round the body through three points or one point and direction"),
                               ('ALONG', "Along", "Along the body's surface through clicked points"),
                               ('STRAIGHT', "Straight", "Pulled taut between two points: over the bulges, across the hollows")],
                        default='AROUND', options={'HIDDEN'})
@@ -683,7 +717,7 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
     @classmethod
     def description(cls, context, props):
         if props.mode == 'AROUND':
-            return "Tape round the body: click a point; Tab changes the ring's direction, Ctrl+wheel tilts it"
+            return "Tape round the body: choose three points, or one point with a direction in Tool Settings"
         if props.mode == 'STRAIGHT':
             return ("Tape pulled taut between two points of the body (over the bulges, across the hollows): "
                     "click one, then the other")
@@ -697,17 +731,20 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
 
     def invoke(self, context, event):
         self.ob = _body(context)
-        _ui.update(preview_domain='WORLD', preview_owner=self.ob.name, preview_pieces=())
+        _ui.update(preview_domain='WORLD', preview_owner=self.ob.name, preview_pieces=(), points=None)
         self.cache = body_cache(context, self.ob)
         self.data = read(self.ob)
         self.pts, self.nrms = [], []
+        self.method = context.window_manager.ac9_tape_method
         self.plane = [p[0] for p in PLANES].index(context.window_manager.ac9_tape_plane)
         self._header(context, None)
-        return TB.start_modal(self, context, event)        # the Measure tool's click is the first point
+        return TB.start_modal(self, context, event)        # the first click is an authored point
 
     def _header(self, context, val):
         v = "" if val is None else _len(val) + "   "
-        if self.mode == 'AROUND':
+        if self.mode == 'AROUND' and self.method == 'THREE_POINTS':
+            txt = tx(AROUND_STEPS[min(len(self.pts), 2)], v)
+        elif self.mode == 'AROUND':
             txt = tx("Tape Around: {0}click: keep   Tab: direction ({1})   Esc / right-click: done", v, PLANES[self.plane][1])
         elif self.mode == 'STRAIGHT':
             txt = tx("Tape Straight: {0}click two points   Esc / right-click: cancel", v)
@@ -718,6 +755,9 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
     def _finish(self, context):
         _ui['preview'] = None
         _ui['preview_label'] = None
+        _ui['points'] = None
+        from . import pre_click as PC
+        PC.clear(context)
         context.area.header_text_set(None)
         _redraw(context)
 
@@ -728,9 +768,24 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
             from . import measure_edit as MEE                # the new tape is the one picked
             MEE.select(context, 'tape:' + t['name'])
             _redraw(context)
+            return True
+        return False
 
     def _preview(self, context, event):
         hit = _ray_body(context, self.ob, event)
+        if self.mode == 'AROUND' and self.method == 'THREE_POINTS':
+            P = self.pts + ([hit[0]] if hit is not None else [])
+            _ui.update(preview=None, preview_label=None, points=np.asarray(P, float) * 0.001 if P else None)
+            self._header(context, None)
+            if len(P) == 3:
+                r = ME.tape_around_points(self.cache.body, P)
+                if r is not None:
+                    _ui['preview'] = (r[2] * 0.001, True)
+                    _ui['preview_label'] = (P[-1] * 0.001, _len(r[0]))
+                    self._header(context, r[0])
+                else:
+                    context.area.header_text_set(tx(AROUND_BAD_PLANE if ME.three_point_plane(P) is None else AROUND_BAD_RING))
+            return hit
         if self.mode == 'AROUND':
             if hit is None:
                 _ui['preview'] = None
@@ -768,9 +823,38 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
         context.area.tag_redraw()
         if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
             return {'PASS_THROUGH'}
+        if event.ctrl and event.type == 'Z' and event.value == 'PRESS':
+            if self.pts:
+                self.pts.pop(); self.nrms.pop()
+                self._preview(context, event)
+            return {'RUNNING_MODAL'}
         if event.type == 'ESC' and event.value == 'PRESS':
             self._finish(context)
-            return {'FINISHED'} if self.mode == 'AROUND' or not self.pts else {'CANCELLED'}
+            return {'CANCELLED'}
+        if self.mode == 'AROUND' and self.method == 'THREE_POINTS':
+            if event.type == 'MOUSEMOVE':
+                self._preview(context, event)
+            elif event.type in {'BACK_SPACE', 'BACKSPACE'} and event.value == 'PRESS' and self.pts:
+                self.pts.pop(); self.nrms.pop()
+                self._preview(context, event)
+            elif event.type == 'LEFTMOUSE' and event.value == 'PRESS':
+                hit = self._preview(context, event)
+                if hit is not None:
+                    if len(self.pts) < 2:
+                        if not self.pts or np.linalg.norm(hit[0] - self.pts[0]) >= 0.1:
+                            self.pts.append(hit[0]); self.nrms.append(hit[1])
+                        _ui['points'] = np.asarray(self.pts, float) * 0.001
+                        self._header(context, None)
+                    elif ME.tape_around_points(self.cache.body, self.pts + [hit[0]]) is not None:
+                        t = {'kind': 'around', 'method': 'THREE_POINTS',
+                             'pts': _round(_to_local(self.ob, self.pts + [hit[0]]), 4)}
+                        if self._keep(context, t):
+                            self._finish(context)
+                            return {'FINISHED'}
+            elif event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
+                self._finish(context)
+                return {'CANCELLED'}
+            return {'RUNNING_MODAL'}
         if self.mode == 'AROUND':
             if event.type == 'TAB' and event.value == 'PRESS':
                 self.plane = (self.plane + 1) % len(PLANES)
@@ -786,12 +870,11 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
                     self._keep(context, {'kind': 'around', 'p': _round(_to_local(self.ob, [p])[0], 2),
                                          'n': np.round(_dir_local(self.ob, n), 6).tolist(),
                                          'n0': np.round(_dir_local(self.ob, n0), 6).tolist(), 'tilt': [tilt, 0.0]})
-                    if getattr(self, 'from_tool', False):      # the Measure tool: one ring per click
-                        self._finish(context)
-                        return {'FINISHED'}
+                    self._finish(context)  # every entry point: one tape per operator / undo step
+                    return {'FINISHED'}
             elif event.type == 'RIGHTMOUSE' and event.value == 'PRESS':
                 self._finish(context)
-                return {'FINISHED'}
+                return {'CANCELLED'}
             return {'RUNNING_MODAL'}
         if self.mode == 'STRAIGHT':
             if event.type == 'MOUSEMOVE':
@@ -817,7 +900,7 @@ class AC9_OT_MeasureTape(bpy.types.Operator):
             if hit is not None:
                 self.pts.append(hit[0])
                 self.nrms.append(hit[1])
-        elif event.type == 'BACK_SPACE' and event.value == 'PRESS' and self.pts:
+        elif event.type in {'BACK_SPACE', 'BACKSPACE'} and event.value == 'PRESS' and self.pts:
             self.pts.pop()
             self.nrms.pop()
             self._preview(context, event)
@@ -1067,6 +1150,9 @@ class AC9_OT_MeasurePattern(bpy.types.Operator):
     def _finish(self, context):
         _ui['preview'] = None
         _ui['preview_label'] = None
+        _ui['points'] = None
+        from . import pre_click as PC
+        PC.clear(context)
         context.area.header_text_set(None)
         _redraw(context)
 
@@ -1139,11 +1225,26 @@ class AC9_OT_MeasurePatternRemove(bpy.types.Operator):
 
 # ---------------------------------------------------------------- panel
 
+def _set_show_tapes(props, visible):
+    # Freeze the old shared flag for the body before the first independent
+    # tape toggle. Otherwise a legacy/default body's visibility would follow it.
+    if 'show_body' not in props:
+        props['show_body'] = props.get('show', True)
+    props['show'] = visible
+
+
 class AC9MeasureProps(bpy.types.PropertyGroup):
     sel: StringProperty(options={'HIDDEN', 'SKIP_SAVE'},
                         description="The picked measurement: item:<key> | tape:<name> | pattern:<name> (measure_edit)")
-    show: BoolProperty(name="Show Measurements", default=True, update=lambda s, c: _redraw(c),
-                       description="Draw the measured lines and tapes on the body")
+    show: BoolProperty(name=OP.label("show"), default=True, update=lambda s, c: _redraw(c),
+                       get=lambda s: s.get('show', True), set=_set_show_tapes,
+                       description=OP.note("show"))
+    # Old files have only `show`: inherit their visibility until the user chooses
+    # a separate body setting. No migration writes or measurement deletion.
+    show_body: BoolProperty(name=OP.label("show_body"), update=lambda s, c: _redraw(c),
+                            get=lambda s: s.get('show_body', s.show),
+                            set=lambda s, v: s.__setitem__('show_body', v),
+                            description=OP.note("show_body"))
 
 
 def _cols(col):
@@ -1169,6 +1270,7 @@ class AC9_PT_SimMeasure(bpy.types.Panel):
         layout = self.layout
         props = context.scene.ac9_cloth_sim
         mp = context.scene.ac9_cloth_sim_measure
+        layout.operator("ac9_cloth_sim.add_avatar", icon='OUTLINER_OB_ARMATURE')
         # the same Body field as Placement's: drawn here only when Placement is not shown (no garment), two fields
         # read as two bodies
         if store.get(context)[0] is None:
@@ -1176,7 +1278,8 @@ class AC9_PT_SimMeasure(bpy.types.Panel):
         row = layout.row(align=True)
         row.operator("ac9_cloth_sim.measure_body", text="Measure Body")
         row.operator("ac9_cloth_sim.measure_garment", text="Measure Garment")
-        row.prop(mp, "show", text="", icon='HIDE_OFF' if mp.show else 'HIDE_ON')
+        from .display_settings import draw_measure_visibility
+        draw_measure_visibility(layout, context)
         ob = props.body
         data = read(ob)
         items = data.get('items')
@@ -1306,12 +1409,13 @@ def _build(context):
     """The world (m) lines to draw, rebuilt when the stored data or the body's place changes."""
     global _draw_cache
     ob = _body(context)
+    mp = context.scene.ac9_cloth_sim_measure
     spec, outlines = store.get(context)
     go = garment_object(context)
     visible_pattern = VV.pattern_names(context, spec)
     body_visible = VV.object_decoration_allowed(context, ob)
     garment_visible = VV.object_decoration_allowed(context, go)
-    visibility = (visible_pattern, body_visible, garment_visible)
+    visibility = (visible_pattern, body_visible, garment_visible, mp.show_body, mp.show)
     if visibility not in _draw_views:
         if len(_draw_views) >= 16:
             _draw_views.clear()
@@ -1320,7 +1424,7 @@ def _build(context):
     key = (ob.name if ob else None, ob[PROP] if ob is not None and PROP in ob else None,
            ob[GEO] if ob is not None and GEO in ob else None, tuple(map(tuple, ob.matrix_world)) if ob else None,
            go[PROP] if go is not None and PROP in go else None, id(spec), _ui['hot'],
-           context.scene.ac9_cloth_sim_measure.sel, visible_pattern, body_visible, garment_visible,
+           context.scene.ac9_cloth_sim_measure.sel, visible_pattern, body_visible, garment_visible, mp.show_body, mp.show,
            (context.scene.unit_settings.system, context.scene.unit_settings.length_unit))   # labels in the unit
     if _draw_cache['key'] == key:
         return _draw_cache
@@ -1341,15 +1445,15 @@ def _build(context):
     if ob is not None and body_visible:
         geo = read(ob, GEO)
         data = read(ob)
-        for k, g in geo.get('items', {}).items():
+        for k, g in (geo.get('items', {}) if mp.show_body else {}).items():
             W = _to_world(ob, g['pts'])
             put('body', 'item:' + k, W, g['closed'], 'WORLD', ob.name)
             it = data.get('items', {}).get(k)
             if it is not None and len(W):
                 p = W[np.argmin(W[:, 1])] if g['closed'] else W[-1]
-                out['labels'].append((p, f"{tx(LABEL.get(k, k))} {_cm(it['value'])}", 'WORLD', ob.name))
+                out['labels'].append((p, f"{tx(LABEL.get(k, k))}: {_cm(it['value'])}", 'WORLD', ob.name))
         tps = {t['name']: t for t in data.get('tapes', [])}
-        for name, g in geo.get('tapes', {}).items():
+        for name, g in (geo.get('tapes', {}) if mp.show else {}).items():
             t = tps.get(name, {})
             if t.get('kind') == 'along' and t.get('main') == 'straight':      # its straight length: the chords
                 W = _to_world(ob, t['pts'])
@@ -1358,15 +1462,15 @@ def _build(context):
             put('tapes', 'tape:' + name, W, g['closed'], 'WORLD', ob.name)
             if len(W):
                 out['labels'].append((W[np.argmin(W[:, 1])] if g['closed'] else W[-1],
-                                      f"{name} {_cm(MEE.tape_value(t) if t else None)}", 'WORLD', ob.name))
-    if ob is not None and go is not None and garment_visible:
+                                      f"{name}: {_cm(MEE.tape_value(t) if t else None)}", 'WORLD', ob.name))
+    if mp.show_body and ob is not None and go is not None and garment_visible:
         gd = read(go)
         if gd.get('body') == ob.name:
             for k, g in gd.get('items', {}).items():
                 if g['covered']:
                     out['garment'].extend(_segments(np.asarray(g['pts']) * 0.001, True))
                     out['sources']['garment:' + k] = ('WORLD', go.name)
-    if spec and outlines and PV.layout_empty(context) is not None:
+    if mp.show and spec and outlines and PV.layout_empty(context) is not None:
         M = np.array(PV.layout_matrix(context))
         for row_, st, al, pa, pb in _pattern_rows(spec, outlines):
             pieces = (row_['a']['piece'], row_['b']['piece'])
@@ -1375,7 +1479,7 @@ def _build(context):
             W = np.array([[pa[0], pa[1], 0, 1000.0], [pb[0], pb[1], 0, 1000.0]]) * 0.001
             W = (W @ M.T)[:, :3]
             put('pattern', 'pattern:' + row_['name'], W, False, 'PATTERN', pieces)
-            out['labels'].append((0.5 * (W[0] + W[1]), f"{row_['name']} {_cm(al if al is not None else st)}",
+            out['labels'].append((0.5 * (W[0] + W[1]), f"{row_['name']}: {_cm(al if al is not None else st)}",
                                   'PATTERN', pieces))
     _draw_cache.clear()
     _draw_cache.update(out)
@@ -1383,6 +1487,8 @@ def _build(context):
 
 
 def _preview_allowed(context):
+    if not context.scene.ac9_cloth_sim_measure.show:
+        return False
     if _ui['preview_domain'] == 'WORLD':
         return VV.object_decoration_allowed(context, bpy.data.objects.get(_ui['preview_owner'] or ''))
     if _ui['preview_domain'] == 'PATTERN':
@@ -1393,7 +1499,7 @@ def _preview_allowed(context):
 def _draw_view():
     context = bpy.context
     mp = getattr(context.scene, 'ac9_cloth_sim_measure', None)
-    if mp is None or not mp.show or not getattr(context.scene.ac9_cloth_sim, 'show_overlays', True):
+    if mp is None or not (mp.show_body or mp.show) or not getattr(context.scene.ac9_cloth_sim, 'show_overlays', True):
         return
     g = _build(context)
     region = context.region
@@ -1413,13 +1519,27 @@ def _draw_view():
         sh.uniform_float('color', C_PREVIEW)
         sh.uniform_float('lineWidth', 3.0)
         batch_for_shader(sh, 'LINES', {'pos': _segments(P, closed)}).draw(sh)
+    dots = _ui.get('points') if _preview_allowed(context) else None
+    from . import measure_edit as MEE
+    s = MEE.selected(context)
+    if (mp.show and s is not None and s[0] == 'tape' and s[2].get('method') == 'THREE_POINTS'
+            and VV.object_decoration_allowed(context, _body(context))):
+        fixed = _to_world(_body(context), s[2]['pts'])
+        dots = fixed if dots is None else np.vstack([fixed, dots])
+    if dots is not None and len(dots):
+        point_shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+        point_shader.bind()
+        point_shader.uniform_float('color', C_PREVIEW)
+        gpu.state.point_size_set(8.0)
+        batch_for_shader(point_shader, 'POINTS', {'pos': np.asarray(dots, np.float32)}).draw(point_shader)
+        gpu.state.point_size_set(1.0)
     gpu.state.blend_set('NONE')
 
 
 def _draw_px():
     context = bpy.context
     mp = getattr(context.scene, 'ac9_cloth_sim_measure', None)
-    if mp is None or not mp.show or not getattr(context.scene.ac9_cloth_sim, 'show_overlays', True):
+    if mp is None or not (mp.show_body or mp.show) or not getattr(context.scene.ac9_cloth_sim, 'show_overlays', True):
         return
     g = _build(context)
     labels = list(g['labels']) if g else []
@@ -1456,7 +1576,16 @@ CLASSES = (AC9MeasureProps, AC9_OT_MeasureBody, AC9_OT_MeasureResetLevels, AC9_O
            AC9_PT_SimMeasureGarment)
 
 
+@bpy.app.handlers.persistent
+def _measurement_undo(_dummy):
+    _ui.update(hot=None, preview=None, preview_label=None, points=None)
+    _cache.update(key=None, cache=None)
+    _redraw(bpy.context)
+
+
 def register():
+    bpy.app.handlers.undo_post.append(_measurement_undo)
+    bpy.app.handlers.redo_post.append(_measurement_undo)
     for c in CLASSES:
         bpy.utils.register_class(c)
     bpy.types.Scene.ac9_cloth_sim_measure = PointerProperty(type=AC9MeasureProps)
@@ -1466,6 +1595,9 @@ def register():
 
 
 def unregister():
+    for handlers in (bpy.app.handlers.undo_post, bpy.app.handlers.redo_post):
+        if _measurement_undo in handlers:
+            handlers.remove(_measurement_undo)
     if bpy.app.timers.is_registered(_measure_completed):
         bpy.app.timers.unregister(_measure_completed)
     _pending_results.clear()

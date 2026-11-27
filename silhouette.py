@@ -15,6 +15,7 @@ from gpu_extras.batch import batch_for_shader
 from bpy_extras.view3d_utils import region_2d_to_origin_3d, region_2d_to_vector_3d
 from . import pattern_view as PV, overlay as OV, view_visibility as VV
 from .core import silhouette as C
+from .core import overlay_policy as OP
 from .i18n import CTX, tx
 
 _handles = []
@@ -258,8 +259,8 @@ def hit_position(context, region, xy):
 
 class AC9_OT_SilhouettePosition(bpy.types.Operator):
     bl_idname = 'ac9_cloth_sim.silhouette_position'
-    bl_label = 'Set Display Position'
-    bl_description = 'Click the flat pattern to place the three silhouettes together; Esc cancels'
+    bl_label = OP.label('silhouette_position')
+    bl_description = OP.note('silhouette_position')
     bl_translation_context = CTX
     bl_options = {'UNDO'}
 

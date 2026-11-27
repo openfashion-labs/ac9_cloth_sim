@@ -319,6 +319,12 @@ def delete_key_case():
         bpy.ops.wm.open_mainfile(filepath=BLEND)
         with bpy.context.temp_override(**view3d()):
             c = bpy.context
+            from ac9_cloth_sim import toolbar as TB
+            TB.sync(c)
+            row['tool_set'] = sorted(bpy.ops.wm.tool_set_by_id(name='ac9_cloth_sim.edit_seams_tool'))
+            row['tool_domain'] = TB.tool_policy(c)['domain']
+            if row['tool_set'] != ['FINISHED'] or row['tool_domain'] != 'seam':
+                raise RuntimeError('Delete-seam fixture did not activate Edit Seams')
             bpy.ops.ed.undo_push(message='A')
             c.scene['undo_test_probe'] = 1
             bpy.ops.ed.undo_push(message='B')

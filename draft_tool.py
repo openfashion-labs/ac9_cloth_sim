@@ -21,6 +21,7 @@ from . import prepare_build as PB
 import copy
 import json
 import math
+from .core import extend as EX
 from .i18n import CTX, rpt, tx
 
 import blf
@@ -39,11 +40,15 @@ from . import store
 from . import toolbar as TB
 from . import view_visibility as VV
 from .core import draft as D
+from .core import boundary_connection as BC
 from .core import iline as IL
 from .core import snap as SN
 from .core import spec as S
+from .core import tool_policy as TP
+from . import selection_frame as SF
 from . import selection as SEL
 from . import units as U
+from .copy_place import CopyPlacement
 
 TOOL_ID = "ac9_cloth_sim.edit_pattern_tool"
 # Whole Pieces (user 2026-10-28, DECISIONS cloth-sim-transform-edit-split): whole pieces and internal lines
@@ -67,8 +72,9 @@ _imore = []                   # [(piece, line id)]
 _csel = []                    # [(piece, edge id)]
 # points of internal lines picked (user 2026-11-17: as corners, one by one): (piece, line id, vertex index among the
 # line's vertices, IL.shape). In picked_lines they are ('ipoint', piece, "<line id>|<vertex>")
+_span_sel = []              # (piece, line, authored span); never owns the complete line
 _psel = []                    # [(piece, line id, vertex)]
-ISEL = (1.0, 0.55, 0.1, 1.0)
+ISEL = TP.SELECTED_COLOR
 # the outline edges picked on the pattern (user 2026-10-22, DECISIONS cloth-sim-edge-select-2026-10-22): a click on
 # an edge picks it, Shift+click adds or takes it out (across pieces); the Tool tab shows their lengths and total
 _esel = []                    # [(piece, edge id)]
@@ -84,6 +90,7 @@ def select_internal(context, piece=None, line=None, extend=False):
     """Pick internal line `line` of `piece` (None: none picked); the Tool tab then shows it. extend: add it to the
     lines picked (the Tool tab shows it), or take it out if picked."""
     _companion_scope(context, 'internal')
+    _span_sel.clear()
     k, cur = (piece, line), (_isel['piece'], _isel['line'])
     if extend and piece:
         if k == cur:                              # taken out: the one picked before it is shown
@@ -105,6 +112,37 @@ def select_internal(context, piece=None, line=None, extend=False):
         for area in win.screen.areas:
             if area.type == 'VIEW_3D':
                 area.tag_redraw()
+
+
+def select_span(context, spec, nm, lid, span, extend=False):
+    """The line owns attributes; only this authored span owns the edit selection."""
+    if not extend:
+        select_internal(context)
+    x = (nm, lid, int(span))
+    if x in _span_sel:
+        _span_sel.remove(x)
+    else:
+        _span_sel.append(x)
+    if _span_sel:
+        _isel.update(piece=_span_sel[-1][0], line=_span_sel[-1][1])
+    else:
+        _isel.update(piece=None, line=None)
+    _companion_scope(context, 'internal')
+    from . import tool_tab
+    tool_tab.publish(context, 'INTERNAL')
+
+
+def span_points(spec, nm, lid, span):
+    it = D.internal(D.piece(spec, nm), lid)
+    N, C, closed, _ = IL.shape(it)
+    if not 0 <= int(span) < len(C):
+        return []
+    return [('ipoint', nm, ipoint_key(lid, j)) for j in (int(span), (int(span) + 1) % len(N))]
+
+
+def internal_hit_points(spec, h):
+    """Only Edit Pieces receives a fourth, authored span index."""
+    return span_points(spec, h[1], h[2], h[3]) if h and h[0] == 'iline' and len(h) > 3 else []
 
 
 def select_edge(context, piece=None, eid=None, extend=False):
@@ -205,6 +243,46 @@ def ipoint_index(spec, h):
     return 0 if h[3] == 'start' else n - 1
 
 
+def vertex_ref(spec,hit):
+    if hit[0]=='corner':return ('corner',D.piece(spec,hit[1])['edges'][int(hit[2])]['id'])
+    return ('internal',hit[2],ipoint_index(spec,hit))
+
+def bind_drag_outline(preview,before,grab,target):
+    if grab[0]!='corner':return False
+    ref=vertex_ref(before,grab)
+    return BC.bind_pair(preview,grab[1],ref,target)
+
+
+
+
+def internal_position_targets(spec, g, group=(), move_only='BOTH'):
+    """Stationary geometry only, measured once at invoke through the actual edit paths.
+
+    Two independent translations include outline-edge carry and mirrored/selected
+    geometry without duplicating their dependency rules. The source is never edited.
+    """
+    pc = D.piece(spec, g[1])
+    lines = {g[2]}
+    for delta in ((1.0, 0.0), (0.0, 1.0)):
+        preview = copy.deepcopy(spec)
+        if move_only != 'BOTH':
+            BC.detach_pair(preview, g[1], vertex_ref(preview, g))
+        if group:
+            move_lines(preview, group, np.asarray(delta))
+        elif g[0] == 'inode':
+            IL.move_node(preview, g[1], g[2], g[3], delta)
+        else:
+            D.move_internal(preview, g[1], g[2], g[3], delta)
+        after = D.piece(preview, g[1])
+        for it in pc.get('internals', []):
+            other = D.internal(after, it['id'])
+            if (np.shape(it['pts']) != np.shape(other['pts']) or
+                    not np.allclose(it['pts'], other['pts'], rtol=0, atol=1e-7)):
+                lines.add(it['id'])
+    target_pc = dict(pc, internals=[it for it in pc.get('internals', []) if it['id'] not in lines])
+    return SN.Targets({'pieces': [target_pc]}, internal_vertices=True)
+
+
 def ialign_points(spec, g):
     """The points a dragged internal line's end or vertex g ('iend' / 'inode') lines up with across and up and down:
     the piece's corners, the other lines' points, and its own line's points that stay (not its mirror vertex, which
@@ -216,7 +294,6 @@ def ialign_points(spec, g):
             continue
         N, _, closed, _ = IL.shape(it)
         if it['id'] != g[2]:
-            out.append(N)
             continue
         if g[0] == 'iend':
             out.append(N[[-1 if g[3] == 'start' else 0]])
@@ -283,12 +360,17 @@ def picked_lines(spec):
             out.append(('corner', nm, eid))
     for nm, lid in [(_isel['piece'], _isel['line'])] + _imore:
         pc = next((x for x in spec['pieces'] if x['name'] == nm), None) if nm and spec else None
-        if pc is not None and any(it['id'] == lid for it in pc.get('internals', [])):
+        if pc is not None and tool_mode(bpy.context) != 'EDIT' and any(it['id'] == lid for it in pc.get('internals', [])) and not any(x[:2] == (nm, lid) for x in _span_sel):
             out.append(('iline', nm, lid))
     for nm, lid, k in _psel:
         if spec is not None and _exists(spec, ('ipoint', nm, ipoint_key(lid, k))):
             out.append(('ipoint', nm, ipoint_key(lid, k)))
-    return out
+    for nm, lid, j in _span_sel:
+        try:
+            out += span_points(spec, nm, lid, j)
+        except (ValueError, IndexError, KeyError):
+            pass
+    return list(dict.fromkeys(out))
 
 
 def in_picked(spec, me, sel):
@@ -313,17 +395,191 @@ def picked_pieces(context, spec):
     return [n for n in SEL.pattern_pieces(context) if n in have]
 
 
-def transform_targets(context, spec, h):
-    """(pieces, lines) a Whole Pieces drag or G / R / S acts on: what is picked when the thing under the cursor
-    is one of them or nothing is under it, else that thing alone."""
+def whole_selection(context, spec):
+    """Visible whole entities only; selection memory is never changed by frame hit testing."""
     visible = VV.pattern_names(context, spec)
     P = [n for n in picked_pieces(context, spec) if n in visible]
-    L = [(n, x) for k, n, x in picked_lines(spec) if k == 'iline' and n in visible]
+    L = [(n, x) for k, n, x in picked_lines(spec) if k == 'iline' and n in visible
+         and n not in P]
+    return P, L
+
+
+_frame_memory = SF.Memory()
+_frame_draw_cache = [None,None,None]
+_frame_selections = {}
+
+
+def _whole_points(spec, P, L, outlines=None):
+    points = []
+    for nm in P:
+        pc = D.piece(spec, nm)
+        if pc.get('enabled', True):
+            ol = (outlines or {}).get(nm)
+            points.extend((ol if ol is not None else S.Outline(pc)).B)
+    for nm, lid in L:
+        pc = D.piece(spec, nm)
+        if pc.get('enabled', True):
+            points.extend(D.internal(pc, lid)['pts'])
+    return np.asarray(points, float).reshape(-1, 2)
+
+
+def _frame_key(context, P, L):
+    scene = getattr(context, 'scene', None)
+    text = store.text(context) if scene is not None else None
+    owner = (getattr(scene, 'session_uid', 0), getattr(text, 'session_uid', 0),
+             getattr(getattr(context, 'workspace', None), 'session_uid', 0),
+             SEL.view_layer_key(context) if getattr(context,'view_layer',None) is not None else None)
+    spec = store.get(context)[0] if scene is not None else None
+    raw = (tuple(sorted(picked_pieces(context,spec))),
+           tuple(sorted((n,l) for k,n,l in picked_lines(spec) if k=='iline')))
+    if _frame_selections.get(owner) != raw:
+        for key in list(_frame_memory.owners):
+            if key[0] == owner:
+                _frame_memory.owners.pop(key,None)
+        _frame_selections[owner] = raw
+        if len(_frame_selections)>64:
+            _frame_selections.pop(next(iter(_frame_selections)))
+    selection = (tuple(sorted(P)),tuple(sorted(L)))
+    return (owner,selection), raw
+
+
+def _frame_points(context, spec, P, L):
+    key = (tuple(P),tuple(L),store.GEN[0])
+    if _frame_draw_cache[0] is not spec or _frame_draw_cache[1] != key:
+        cached_spec,outlines = store.get(context)
+        points = _whole_points(spec,P,L,outlines if cached_spec is spec else None)
+        _frame_draw_cache[:] = [spec,key,points]
+    points = _frame_draw_cache[2]
+    return points
+
+
+def _frame_state(context, spec, P, L):
+    points = _frame_points(context,spec,P,L)
+    return _frame_memory.get(*_frame_key(context,P,L),points) if len(points) else None
+
+
+def _remember_frame(context, spec, P, L, frame):
+    points = _whole_points(spec, P, L)
+    if frame is not None and len(points):
+        _frame_memory.put(*_frame_key(context, P, L), points, frame)
+    _frame_draw_cache[0] = None
+
+
+def whole_frame(context, spec=None):
+    """Shared screen rectangle for display and hit: fixed pixel padding, in the 2D tool only."""
+    if not VV.allows_pattern(context) or tool_mode(context) != 'TRANSFORM':
+        return None
+    if getattr(context, 'region_data', None) is None:
+        return None
+    if spec is None:
+        dr = _state['drag']
+        if dr and (dr.get('owner') is None or not dr['owner'].matches(context,content=False)):
+            dr = None
+        spec = (dr.get('preview') or dr['spec']) if dr else store.get(context)[0]
+    if spec is None:
+        return None
+    P, L = whole_selection(context, spec)
+    points = _frame_points(context,spec,P,L)
+    if not len(points):
+        _frame_key(context,P,L)
+        return None
+    dr = _state['drag']
+    frame = (dr.get('frame_preview') or dr.get('frame')) if dr and dr.get('frame_key') == _frame_key(context,P,L) else None
+    frame = frame if frame is not None else _frame_memory.get(*_frame_key(context,P,L),points)
+    M = PV.layout_matrix(context)
+    screen = [location_3d_to_region_2d(context.region, context.region_data, w)
+              for w in to_world(M, SF.corners(points, frame))]
+    if any(q is None for q in screen):
+        return None
+    xy = np.asarray(screen, float)
+    if not np.isfinite(xy).all():
+        return None
+    a,b = xy[1]-xy[0], xy[3]-xy[0]
+    # Degenerate projected dimensions still receive a visible, hittable margin.
+    if np.linalg.norm(a)<=1e-9 or np.linalg.norm(b)<=1e-9:
+        center,angle = frame; basis = SF.axes(angle)
+        refs = [location_3d_to_region_2d(context.region,context.region_data,w)
+                for w in to_world(M,np.array([center,center+basis[:,0],center+basis[:,1]]))]
+        if any(p is None for p in refs):return None
+        origin,pa,pb = np.asarray(refs,float)
+        if np.linalg.norm(a)<=1e-9:a=pa-origin
+        if np.linalg.norm(b)<=1e-9:b=pb-origin
+    if np.linalg.norm(a)<=1e-9 or np.linalg.norm(b)<=1e-9:return None
+    a,b = a/np.linalg.norm(a), b/np.linalg.norm(b)
+    return xy + TP.WHOLE_FRAME_PADDING_PX * np.array([-a-b,a-b,a+b,-a+b])
+
+
+def whole_frame_hit(context, spec, mx, my):
+    box = whole_frame(context, spec)
+    return box is not None and SF.contains(box, (mx,my))
+
+
+def _whole_frame_segments(box, width, height):
+    """Clip display only, keeping the full hit rectangle and dash origin unchanged."""
+    return SF.dashes(box,width,height)
+
+
+def _draw_whole_frame(context):
+    box = whole_frame(context)
+    if box is None:
+        return
+    segments = _whole_frame_segments(box, context.region.width, context.region.height)
+    if not segments:
+        return
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    gpu.state.blend_set('ALPHA')
+    gpu.state.line_width_set(1.0)
+    try:
+        shader.bind()
+        batch = batch_for_shader(shader, 'LINES', {'pos': segments})
+        for width,color in ((3.,TP.WHOLE_FRAME_DARK),(1.,TP.WHOLE_FRAME_LIGHT)):
+            gpu.state.line_width_set(width);shader.uniform_float('color',color);batch.draw(shader)
+    finally:
+        gpu.state.line_width_set(1.0)
+        gpu.state.blend_set('NONE')
+
+
+def transform_targets(context, spec, h, *, selection_first=False):
+    """Whole entities: G/R/S keeps an existing frame's selection; an explicit drag can pick a new target."""
+    P, L = whole_selection(context, spec)
+    if selection_first and (P or L):
+        return P, L
     if h is not None and h[0] == 'piece' and h[1] not in P:
         return [h[1]], []
     if h is not None and h[0] == 'iline' and (h[1], h[2]) not in L:
         return [], [(h[1], h[2])]
     return P, L
+
+
+def _whole_click(context, spec, hit, mode, point):
+    select_corner(context);select_edge(context);_psel.clear()
+    if hit is None:
+        if mode == 'SET':
+            select_internal(context);SEL.deselect_all(context);SEL._drop_seam(context)
+            from . import garment_mark as GM
+            GM.clear(context)
+        return
+    if hit[0] == 'iline':
+        if mode == 'SET':
+            SEL.deselect_all(context)
+        if mode != 'SUB' or ('iline',hit[1],hit[2]) in picked_lines(spec):
+            select_internal(context,hit[1],hit[2],extend=mode!='SET')
+    else:
+        if mode == 'SET':
+            select_internal(context);TB.select_piece(context,hit[1])
+        else:
+            selected = hit[1] in picked_pieces(context,spec)
+            if mode != 'SUB' or selected:
+                SEL.apply(context,[hit[1]],'SUB' if selected else 'ADD',active=hit[1],view='pattern')
+                from . import tool_tab as TT
+                TT.piece_clicked(context)
+    _mark_flat(context,hit[1],point)
+
+
+def _remember_drag_frame(context, dr):
+    if dr.get('frame_preview') is not None:
+        P,L = dr['frame_targets']
+        _remember_frame(context,dr['preview'],P,L,dr['frame_preview'])
 
 
 def edit_item(spec, h):
@@ -339,9 +595,16 @@ def edit_item(spec, h):
         x = ('ipoint', h[1], ipoint_key(h[2], ipoint_index(spec, h)))
         if _exists(spec, x):
             return x
+    if h[0] == 'iline' and len(h) > 3:
+        return internal_hit_points(spec, h)[0]
     if h[0] in ('iline', 'iend', 'inode', 'ihandle'):
         return ('iline', h[1], h[2])
     return None
+
+
+def hit_selected(spec, hit, items):
+    points = internal_hit_points(spec, hit)
+    return all(x in items for x in points) if points else in_picked(spec, edit_item(spec, hit), items)
 
 
 def _in_rect(context, M, rect):
@@ -382,10 +645,12 @@ def box_points(context, rect, mode='SET'):
         for it in pc.get('internals', []):
             if it.get('kind') == 'baseline' or len(it['pts']) < 2:
                 continue
-            if inside(it['pts']).all():               # the whole line inside: the line, as before
-                ls.append((pc['name'], it['id']))
-            elif IL.editable(it):                     # else its points inside (user 2026-11-17)
-                ps += [(pc['name'], it['id'], int(k)) for k in np.nonzero(inside(IL.shape(it)[0]))[0]]
+            if IL.editable(it):
+                N, C, closed, own = IL.shape(it); mask = inside(N)
+                spans = [j for j in range(len(C)) if mask[j] and mask[(j+1) % len(N)]]
+                covered = {k for j in spans for k in (j, (j+1) % len(N))}
+                ls += [(pc['name'], it['id'], j) for j in spans]
+                ps += [(pc['name'], it['id'], int(k)) for k in np.nonzero(mask)[0] if k not in covered]
     if mode == 'SET':
         select_corner(context)
         select_edge(context)
@@ -401,7 +666,10 @@ def box_points(context, rect, mode='SET'):
             _psel.remove(x)
         elif mode != 'SUB' and x not in _psel:
             _psel.append(x)
-    _pick_lines(context, ls, mode)
+    for nm, lid, j in ls:
+        x = (nm, lid, j)
+        if (mode == 'SUB') == (x in _span_sel):
+            select_span(context, spec, nm, lid, j, extend=True)
     if cs or ps:
         _focus_outline(context)
     for win in context.window_manager.windows:
@@ -452,6 +720,7 @@ def move_lines(sp, items, d):
     """Shift the edges and internal lines `items` (picked_lines) of spec sp by d mm, all at once (in place); the
     pieces changed. Edges move their corners (a corner two picked edges share moves once); a twin moves as the mirror
     image, so a line picked with its twin's mirror line moves once, not twice."""
+    base = copy.deepcopy(sp)
     lines, moved = [], set()
     for kind, nm, lid in items:
         if kind == 'iline' and (nm, lid) not in moved:
@@ -459,8 +728,8 @@ def move_lines(sp, items, d):
             moved |= {(nm, lid), (tw, tlid), (nm, D.self_mirror_line(D.piece(sp, nm), lid)[0])}
             lines.append((nm, lid))
     changed = []
-    for nm, lid in lines:
-        changed += D.move_internal(sp, nm, lid, 'all', tuple(d))
+    if lines:
+        changed += D.transform_group(sp, [], lines, shift=tuple(d))[0]
     ks = {}
     for kind, nm, eid in items:
         if kind == 'edge':
@@ -479,17 +748,19 @@ def move_lines(sp, items, d):
             cs = cs | {inv[j] for j in ks[tw]}
             done.add(tw)
         done.add(nm)
-        changed += D.move_corners(sp, nm, {k: tuple(d) for k in cs})
-    changed += move_ipoints(sp, [x for x in items if x[0] == 'ipoint'], moved, lambda p: d)
+        C0 = D.corners(D.piece(base, nm)); C1 = D.corners(D.piece(sp, nm))
+        changed += D.move_corners(sp, nm, {k: tuple(C0[k] + d - C1[k]) for k in cs})
+    changed += move_ipoints(sp, [x for x in items if x[0] == 'ipoint'], moved, lambda p: d, base=base)
     return list(dict.fromkeys(changed))
 
 
-def move_ipoints(sp, items, skip, move):
+def move_ipoints(sp, items, skip, move, base=None):
     """Move internal lines' points `items` ('ipoint' picked_lines items) of spec sp (in place): move(p) the shift of
     the point at p (mm). A line in skip (moved whole already, or its mirror line) is left; a point and its twin line's
     mirror point both picked move once (the twin follows its line). One picked end of an open line alone moves as a
     drag of that end does (the line follows it, D.move_internal); else the points move one by one (IL.move_nodes).
     Returns the pieces changed."""
+    base=copy.deepcopy(sp) if base is None else base
     per = {}
     for _, nm, key in items:
         lid, k = ipoint_of(key)
@@ -501,6 +772,8 @@ def move_ipoints(sp, items, skip, move):
             continue
         it = D.internal(D.piece(sp, nm), lid)
         N0 = IL.shape(it)[0]
+        origin = IL.shape(D.internal(D.piece(base, nm), lid))[0] if base else N0
+        shift = lambda k: origin[k] + np.asarray(move(origin[k])) - N0[k]
         for tnm, tlid, M in D.mirror_lines(sp, nm, lid):      # its twin's / mirror line's picked points: these
             done.add((tnm, tlid))
             if (tnm, tlid) in per:
@@ -514,9 +787,9 @@ def move_ipoints(sp, items, skip, move):
         n = len(N0)
         if len(ks) == 1 and not it.get('closed') and next(iter(ks)) in (0, n - 1):
             k = next(iter(ks))
-            changed += D.move_internal(sp, nm, lid, 'start' if k == 0 else 'end', tuple(move(N0[k])))
+            changed += D.move_internal(sp, nm, lid, 'start' if k == 0 else 'end', tuple(shift(k)))
         else:
-            changed += IL.move_nodes(sp, nm, lid, {k: tuple(move(N0[k])) for k in ks})
+            changed += IL.move_nodes(sp, nm, lid, {k: tuple(shift(k)) for k in ks})
     return changed
 
 
@@ -578,27 +851,86 @@ def _dots(pts, layers):
     gpu.state.blend_set('NONE')
 
 
+def _marks(context, points, color, radius=4.0, hollow=False, square=False):
+    """Constant screen-size filled outline nodes, hollow internal nodes, square handles."""
+    if not points:
+        return
+    from bpy_extras.view3d_utils import region_2d_to_location_3d
+    rv, region = context.region_data, context.region
+    basis = rv.view_rotation.to_matrix()
+    vx, vy = basis @ Vector((1, 0, 0)), basis @ Vector((0, 1, 0))
+    P = Vector(points[0]); xy = location_3d_to_region_2d(region, rv, P)
+    if xy is None:
+        return
+    unit = (region_2d_to_location_3d(region, rv, (xy.x + 1, xy.y), P) - P).length
+    angles = np.linspace(0, 2 * math.pi, 17)[:-1]
+    rings, fills = [], []
+    for q in points:
+        q = Vector(q)
+        R = ([q + unit * radius * (x * vx + y * vy) for x, y in ((-1,-1),(1,-1),(1,1),(-1,1))]
+             if square else [q + unit * radius * (math.cos(t) * vx + math.sin(t) * vy) for t in angles])
+        for j, v in enumerate(R):
+            w = R[(j + 1) % len(R)]
+            rings += [tuple(v), tuple(w)]
+            if not hollow:
+                fills += [tuple(q), tuple(v), tuple(w)]
+    gpu.state.depth_test_set('NONE'); gpu.state.blend_set('ALPHA')
+    if fills:
+        sh = gpu.shader.from_builtin('UNIFORM_COLOR'); sh.bind(); sh.uniform_float('color', color)
+        batch_for_shader(sh, 'TRIS', {'pos': fills}).draw(sh)
+    sh = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR'); sh.bind()
+    sh.uniform_float('viewportSize', (region.width, region.height))
+    sh.uniform_float('lineWidth', 1.8); sh.uniform_float('color', color)
+    batch_for_shader(sh, 'LINES', {'pos': rings}).draw(sh)
+    gpu.state.blend_set('NONE')
+
+
 def _draw_csel(context):
     spec, _ = store.get(context)
-    visible = VV.pattern_names(context, spec)
-    M = PV.layout_matrix(context)
-    pts = [tuple(to_world(M, [D.piece(spec, nm)['edges'][D.edge_index(D.piece(spec, nm), eid)]['pts'][0]])[0])
-           for kind, nm, eid in picked_lines(spec) if kind == 'corner' and nm in visible]
-    pts += [tuple(to_world(M, [ipoint_pos(spec, nm, x)])[0])          # internal lines' points, the same mark
-            for kind, nm, x in picked_lines(spec) if kind == 'ipoint' and nm in visible]
-    _dots(pts, ((13.0, DARK), (9.0, ISEL)))
+    visible = VV.pattern_names(context, spec); M = PV.layout_matrix(context)
+    corners = [tuple(to_world(M, [D.piece(spec, nm)['edges'][D.edge_index(D.piece(spec, nm), eid)]['pts'][0]])[0])
+               for kind, nm, eid in picked_lines(spec) if kind == 'corner' and nm in visible]
+    nodes = [tuple(to_world(M, [ipoint_pos(spec, nm, x)])[0])
+             for kind, nm, x in picked_lines(spec) if kind == 'ipoint' and nm in visible]
+    _marks(context, corners, DARK, 6); _marks(context, corners, ISEL, 4)
+    _marks(context, nodes, DARK, 7, hollow=True); _marks(context, nodes, ISEL, 5.5, hollow=True)
+
+
+_vertex_draw_cache=[None,None,{}]
+
+
+def drawing_vertex_groups(spec,pc):
+    if _vertex_draw_cache[0] is not spec or _vertex_draw_cache[1]!=store.GEN[0]:
+        _vertex_draw_cache[:]=[spec,store.GEN[0],{}]
+    cache=_vertex_draw_cache[2]
+    if pc['name'] not in cache:cache[pc['name']]=BC.groups(pc)
+    return cache[pc['name']]
 
 
 def _draw_all_corners(context):
-    """Every corner of every piece, small, while Edit Pieces is the tool: what can be picked is seen (user
-    2026-10-26, Fable review REVIEW_fable_drafting_from_scratch §2.2)."""
-    spec, _ = store.get(context)
+    """All authored nodes before hover; no sampled curve points masquerade as handles."""
+    dr = _state['drag']
+    spec = (dr.get('preview') or dr['spec']) if dr else store.get(context)[0]
     if spec is None:
         return
-    M = PV.layout_matrix(context)
-    visible = VV.pattern_names(context, spec)
-    pts = [tuple(w) for pc in spec['pieces'] if pc['name'] in visible for w in to_world(M, D.corners(pc))]
-    _dots(pts, ((7.0, DARK), (4.0, (1.0, 1.0, 1.0, 0.85))))
+    M = PV.layout_matrix(context); visible = VV.pattern_names(context, spec)
+    corners, nodes, joined = [], [], []
+    for pc in spec['pieces']:
+        if pc['name'] not in visible or not pc.get('enabled', True):
+            continue
+        C = D.corners(pc); corners += [tuple(w) for w in to_world(M, C)]
+        joined_refs={r for g in drawing_vertex_groups(spec,pc) for r in g}
+        for it in pc.get('internals', []):
+            if it.get('kind') == 'baseline' or not IL.editable(it):
+                continue
+            N = IL.shape(it)[0]
+            for k,q in enumerate(N):
+                target = joined if ('internal',it['id'],k) in joined_refs else nodes
+                target.append(tuple(to_world(M, [q])[0]))
+    _marks(context, corners, DARK, 4)
+    _marks(context, nodes, TP.INTERNAL_COLOR, 4.5, hollow=True)
+    _marks(context, joined, TP.INTERNAL_COLOR, 7, hollow=True)
+    _marks(context, joined, DARK, 2)
 
 
 def _draw_shown_handles(context):
@@ -607,7 +939,7 @@ def _draw_shown_handles(context):
     dr = _state['drag']
     spec = (dr['preview'] or dr['spec']) if dr is not None else store.get(context)[0]
     shown = shown_handles(spec)
-    if not shown:
+    if not shown and not _span_sel and not _psel:
         return
     M = PV.layout_matrix(context)
     visible = VV.pattern_names(context, spec)
@@ -620,6 +952,20 @@ def _draw_shown_handles(context):
         a, b = to_world(M, [e['pts'][-1 if w else 0], e['ctrl'][w]])
         segs += [tuple(a), tuple(b)]
         tips.append(tuple(b))
+    active = {(nm, lid) for nm, lid, k in _psel} | {(nm, lid) for nm, lid, j in _span_sel}
+    for nm, lid in active:
+        if nm not in visible:
+            continue
+        it = D.internal(D.piece(spec, nm), lid)
+        N, C, closed, _ = IL.shape(it)
+        nodes = {k for n, l, k in _psel if (n, l) == (nm, lid)}
+        spans = {j for n, l, j in _span_sel if (n, l) == (nm, lid)}
+        for j, c in enumerate(C):
+            if c is None: continue
+            for w in range(2):
+                if j not in spans and (j+w) % len(N) not in nodes: continue
+                a, b = to_world(M, [N[(j+w) % len(N)], c[w]])
+                segs += [tuple(a), tuple(b)]; tips.append(tuple(b))
     if not segs:
         return
     region = context.region
@@ -631,7 +977,7 @@ def _draw_shown_handles(context):
     sh.uniform_float('lineWidth', 1.5)
     sh.uniform_float('color', (0.6, 0.85, 1.0, 0.9))
     batch_for_shader(sh, 'LINES', {'pos': segs}).draw(sh)
-    _dots(tips, ((8.0, DARK), (5.0, (0.6, 0.85, 1.0, 1.0))))
+    _marks(context, tips, DARK, 3.5, hollow=True, square=True)
     gpu.state.blend_set('NONE')
 
 
@@ -660,8 +1006,8 @@ def _draw_all_internals(context):
     sh = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
     sh.bind()
     sh.uniform_float('viewportSize', (region.width, region.height))
-    sh.uniform_float('lineWidth', 1.0)
-    sh.uniform_float('color', (0.45, 0.9, 0.8, 0.6))
+    sh.uniform_float('lineWidth', 2.0)
+    sh.uniform_float('color', TP.INTERNAL_COLOR)
     batch_for_shader(sh, 'LINES', {'pos': [tuple(w) for w in to_world(PV.layout_matrix(context), pts)]}).draw(sh)
 
 
@@ -683,9 +1029,23 @@ def _draw_isel(context):
     from . import fold_sides as FS
     M = PV.layout_matrix(context)
     segs = []
-    for kind, nm, lid in picked_lines(spec):
-        if kind == 'iline' and nm in visible:
-            P = np.asarray(D.internal(D.piece(spec, nm), lid)['pts'], float)
+    full = [(nm, lid) for kind, nm, lid in picked_lines(spec) if kind == 'iline']
+    spans = _span_sel if tool_mode(context) == 'EDIT' else []
+    if not full and not spans:
+        return
+    for nm, lid in full + list(dict.fromkeys((n, l) for n, l, _ in spans)):
+        if nm in visible:
+            it = D.internal(D.piece(spec, nm), lid)
+            P = np.asarray(it['pts'], float)
+            if (nm, lid) not in full:
+                N, C, closed, _ = IL.shape(it)
+                parts = []
+                for n, l, j in spans:
+                    if (n, l) == (nm, lid) and j < len(C):
+                        Q = IL.span_points(it)[j]
+                        parts += [tuple(p) for p in to_world(M, [v for a, b in zip(Q[:-1], Q[1:]) for v in (a,b)])]
+                segs += parts
+                continue
             try:
                 deg = float(FS._fold(spec, nm, lid).get('deg') or 0.0)
             except (TypeError, ValueError):
@@ -830,7 +1190,7 @@ def ishape(spec, name, it):
     kk = (name, it['id'])
     if kk not in _ishapes['data']:
         N, C, closed, own = IL.shape(it)
-        _ishapes['data'][kk] = (N, C, closed, own or len(N) <= IL.DENSE)
+        _ishapes['data'][kk] = (N, C, closed, IL.editable(it))
     return _ishapes['data'][kk]
 
 
@@ -847,16 +1207,25 @@ def as_mode(h, mode):
     """pick's hit as the tool takes it (user 2026-10-28, DECISIONS cloth-sim-transform-edit-split): Whole Pieces
     takes whole pieces and internal lines (a corner or an edge: its piece; a line's end, point or handle: the line);
     Edit Pieces takes no piece by its inside (a drag there boxes corners and lines). mode None: as it is."""
-    if h is None or mode is None:
+    if h is None:
         return h
+    if mode is None:
+        return h[:3] if h[0] == 'iline' else h
     if mode == 'TRANSFORM':
         return ('iline', h[1], h[2]) if h[0] in ('iline', 'iend', 'inode', 'ihandle') else ('piece', h[1])
+    if mode == 'EDIT' and h[0] == 'iline':
+        return h
     return None if h[0] == 'piece' else h
 
 
 def pick(context, spec, outlines, M, mx, my, mode='TOOL'):
     """pick_any as the active tool takes it (as_mode); mode: 'TRANSFORM', 'EDIT' or None instead of the tool's."""
-    return as_mode(pick_any(context, spec, outlines, M, mx, my), tool_mode(context) if mode == 'TOOL' else mode)
+    result = as_mode(pick_any(context, spec, outlines, M, mx, my), tool_mode(context) if mode == 'TOOL' else mode)
+    if result and result[0] == 'iline' and len(result) > 3:
+        it = D.internal(D.piece(spec, result[1]), result[2])
+        if not IL.editable(it):
+            return result[:3]  # an imported sampled curve is a single logical edge until authored
+    return result
 
 
 def pick_any(context, spec, outlines, M, mx, my):
@@ -911,15 +1280,17 @@ def pick_any(context, spec, outlines, M, mx, my):
                 iends.append((float(np.linalg.norm(P[-1] - q)), ('iend', pc['name'], it['id'], 'end')))
             A, Dd = P[:-1], np.diff(P, axis=0)
             t = np.clip(((q - A) * Dd).sum(1) / np.maximum((Dd * Dd).sum(1), 1e-12), 0, 1)
-            ilines.append((float(np.linalg.norm(A + t[:, None] * Dd - q, axis=1).min()), ('iline', pc['name'], it['id'])))
+            ilines.append((float(np.linalg.norm(A + t[:, None] * Dd - q, axis=1).min()), ('iline', pc['name'], it['id'], IL.locate(it, q)[0])))
             # its vertices and curve handles (user 2026-10-28): a vertex as an end, a handle as an edge's handle
             N, C, closed, ed = ishape(spec, pc['name'], it)
             if ed:
                 for i in range(len(N)):
                     if closed or 0 < i < len(N) - 1:
                         iends.append((float(np.linalg.norm(N[i] - q)), ('inode', pc['name'], it['id'], i)))
+                active_nodes = {k for nm, lid, k in _psel if (nm, lid) == (pc['name'], it['id'])}
+                active_spans = {j for nm, lid, j in _span_sel if (nm, lid) == (pc['name'], it['id'])}
                 for s, c in enumerate(C):
-                    for w in range(2) if c is not None else ():
+                    for w in [v for v in range(2) if s in active_spans or (s+v) % len(N) in active_nodes] if c is not None else ():
                         handles.append((float(np.linalg.norm(c[w] - q)), ('ihandle', pc['name'], it['id'], s, w)))
     for cand in (handles, notches, cors, iends):
         near = [c for c in cand if c[0] <= r_pt]
@@ -1042,12 +1413,20 @@ def hot_point(spec, h):
 
 # ---------------------------------------------------------------- gaps around the thing dragged (2026-10-23)
 
+def internal_poly(spec, g):
+    it = D.internal(D.piece(spec, g[1]), g[2])
+    if len(g) <= 3:
+        return np.asarray(it['pts'], float)
+    N, C, closed, _ = IL.shape(it); j = int(g[3]); k = (j + 1) % len(N)
+    return IL.span_points(it)[j]
+
+
 def gap_frame(spec, g):
     """What a drag of g measures with, fixed when it starts: the line's direction (an internal line) or the way into
     the piece (an edge), else None."""
     pc = D.piece(spec, g[1])
     if g[0] == 'iline':
-        P = np.asarray(D.internal(pc, g[2])['pts'], float)
+        P = internal_poly(spec, g)
         return P[-1] - P[0]
     if g[0] == 'edge':
         P = np.asarray(pc['edges'][D.edge_index(pc, g[2])]['pts'], float)
@@ -1058,7 +1437,7 @@ def gap_frame(spec, g):
     return None
 
 
-def gap_probe(spec, g, frame=None):
+def gap_probe(spec, g, frame=None, outline_only=False):
     """(probe, A, B): the rays from the thing g (a corner, a line's end, an internal line, an edge) and the lines of
     its piece they can meet (not the thing itself, nor the outline edges that move with it). None for other things."""
     try:
@@ -1068,10 +1447,10 @@ def gap_probe(spec, g, frame=None):
             A, B = SN.piece_segments(pc, skip_edges=((g[2] - 1) % n, g[2]))
             return SN.point_probe(D.corners(pc)[g[2]]), A, B
         if g[0] in ('iend', 'inode', 'iline'):
-            A, B = SN.piece_segments(pc, skip_lines=(g[2],))
+            A, B = SN.piece_segments(dict(pc,internals=[]) if outline_only else pc, skip_lines=(g[2],))
             if g[0] in ('iend', 'inode'):
                 return SN.point_probe(hot_point(spec, g)), A, B
-            return SN.line_probe(D.internal(pc, g[2])['pts'], frame), A, B
+            return SN.line_probe(internal_poly(spec, g), frame), A, B
         if g[0] == 'edge':
             k, n = D.edge_index(pc, g[2]), len(pc['edges'])
             A, B = SN.piece_segments(pc, skip_edges=((k - 1) % n, k, (k + 1) % n))
@@ -1114,6 +1493,13 @@ def commit(context, spec, names, old_spec=None, rigid=None, sources=None, owner=
         PV.update_pieces(context, sp, outlines, names)
     except Exception as exc:
         saved_note = '; '.join(x for x in (saved_note, tx("Pattern saved; pattern objects not updated: {0}", exc)) if x)
+    if ((old_spec is None and sp.get('buttons'))
+            or (old_spec is not None and old_spec.get('buttons') != sp.get('buttons'))):
+        try:
+            from . import button_view
+            button_view.sync_flat(context, sp)
+        except Exception as exc:
+            saved_note = '; '.join(x for x in (saved_note, tx("Pattern saved; pattern objects not updated: {0}", exc)) if x)
     if rigid:
         # the placed objects' layout points follow the pieces moved whole, whether the 3D follows edits or not: they
         # are where on the pattern each vertex is, not the 3D shape
@@ -1225,7 +1611,10 @@ def _prewarm_tick():
         if spec is None:
             return None
         if not DR.prewarm_build(spec, bpy.context.scene.ac9_cloth_sim.mesh_size):
-            return 0.3                              # the one before is still being made
+            if time.monotonic() - _PREWARM_TIMER['due'] > 5.0:
+                DR.prewarm_give_up()                # an older thread that does not stop: the press builds it
+                return None
+            return 0.05                             # an older edit's mesh is stopping: tried again shortly
     except Exception:                               # an optional head start: the press builds it anyway
         pass
     return None
@@ -1276,6 +1665,7 @@ def _drop_hints(*_args):
     # undo / redo / a file loaded: the pattern changed under the hints (the mark is a scene property: undone with it)
     drop_pending(flag=False)
     _state['drag'] = None
+    if _parameter['op'] is not None:_parameter_close(_parameter['op'],bpy.context)
 
 
 _HINT_HANDLERS = ('undo_post', 'redo_post', 'load_post')
@@ -1573,13 +1963,173 @@ def clear_ghost():
     _redraw_views()
 
 
-def draw_why(layout, why):
+def draw_why(layout, why, width=44):
     """Under a dialog's fields: why the values would not apply (the ghost shows nothing then)."""
     if why:
         import textwrap
         col = layout.column(align=True)
-        for k, t in enumerate(textwrap.wrap(why, 44)):
+        for k, t in enumerate(textwrap.wrap(why, width)):
             col.label(text=t, icon='ERROR' if k == 0 else 'BLANK1')
+
+
+# Parameters belong to an edit session, not to the transient popup Blender closes on pan.
+_parameter = {'op': None, 'action': None, 'timer': None, 'generation': 0, 'space': None, 'show_header': None}
+
+
+def parameter_header(context, layout):
+    # Input is now a persistent viewport window; keep ordinary tool settings.
+    return False
+
+
+class AC9_PT_EditParameters(bpy.types.Panel):
+    bl_label='Options'
+    bl_space_type='VIEW_3D'
+    bl_region_type='HEADER'
+    bl_ui_units_x=16
+
+    @classmethod
+    def poll(cls,context):
+        op=_parameter['op']
+        return op is not None and context.window==op._parameter_window and context.area==op._parameter_area
+
+    def draw(self,context):
+        op=_parameter['op']
+        if self.poll(context):op.draw_fields(context,self.layout)
+
+
+class AC9_OT_EditParameterAction(bpy.types.Operator):
+    bl_idname='ac9_cloth_sim.edit_parameter_action'
+    bl_label='Apply / Cancel'
+    bl_options={'INTERNAL'}
+    action:bpy.props.EnumProperty(items=(('NONE','None',''),('APPLY','Apply',''),('CANCEL','Cancel','')),default='NONE',
+                                 options={'HIDDEN','SKIP_SAVE'})
+    session_id:bpy.props.IntProperty(options={'HIDDEN','SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls,context):
+        op=_parameter['op']
+        return (op is not None and context.window==op._parameter_window and context.area==op._parameter_area
+                and context.region is not None and context.region.type=='TOOL_HEADER')
+
+    def execute(self,context):
+        if (not self.poll(context) or self.session_id!=_parameter['generation']
+                or self.action not in ('APPLY','CANCEL')):return {'CANCELLED'}
+        _parameter['action']=self.action
+        return {'FINISHED'}
+
+
+def _parameter_refresh(op,context):
+    preview=getattr(op,'parameter_preview',None)
+    if preview is not None:
+        preview(context);return
+    if isinstance(op,AC9_OT_SimExtendOutline):
+        ghost(op,('extension',op.items,op.method,op.axis,op.distance,op.move_x,op.move_y,op.move_seams,op.join),
+              lambda:op._result(context))
+    elif isinstance(op,AC9_OT_SimSetGap):
+        spec=store.get(context)[0]
+        ghost(op,('set_gap',op.kind,op.piece,op.thing,op.items,op.move_x,op.move_y,tuple(op.gaps),op.width,op.height),
+              lambda:op._ghost(spec))
+    else:
+        spec=store.get(context)[0]
+        ghost(op,('parallel_line',op.piece,op.edges,op.line,op.distance,op.count,op.flip,op.both,op.extend),
+              lambda:(None,(),op._lines(D.piece(spec,op.piece))))
+
+
+def parameter_open(op,context):
+    if _parameter['op'] is not None:
+        op.report({'WARNING'},rpt('Finish the current operation first'))
+        return {'CANCELLED'}
+    area,window=context.area,context.window
+    region=next((r for r in area.regions if r.type=='WINDOW'),None) if area and area.type=='VIEW_3D' else None
+    if (area is None or area.type!='VIEW_3D' or window is None or region is None
+            or context.space_data is None or context.space_data.type!='VIEW_3D'
+            or not any(a==area for a in window.screen.areas)):
+        op.report({'WARNING'},rpt('Open this operation in a pattern 3D view'))
+        return {'CANCELLED'}
+    op._parameter_owner=store.edit_owner(context)
+    op._parameter_area=area;op._parameter_window=window
+    op._parameter_region=region
+    tool=context.workspace.tools.from_space_view3d_mode(context.mode)
+    op._parameter_tool=tool.idname if tool else None
+    op._parameter_timer=context.window_manager.event_timer_add(.05,window=context.window)
+    _parameter.update(op=op,action=None,timer=op._parameter_timer,generation=_parameter['generation']+1,
+                      space=None,show_header=None,ui=None)
+    try:
+        ghost_open(op);_parameter_refresh(op,context)
+        from .edit_window import Window
+        _parameter['ui']=Window(context,op)
+        _parameter['ui'].blocked=bool(_ghost['why'])
+        context.window_manager.modal_handler_add(op)
+    except Exception:
+        _parameter_close(op,context);raise
+    _redraw_views()
+    return {'RUNNING_MODAL'}
+
+
+def _parameter_close(op,context):
+    if _parameter['op'] is not op:return
+    timer=_parameter['timer']
+    ui=_parameter.get('ui')
+    _parameter.update(op=None,action=None,timer=None,space=None,show_header=None,ui=None)
+    if ui is not None:ui.close()
+    if timer is not None:
+        try:context.window_manager.event_timer_remove(timer)
+        except (ReferenceError,RuntimeError):pass
+    clear_ghost();_redraw_views()
+
+
+def parameter_cancel(op,context):
+    if _parameter['op'] is op:_parameter_close(op,context)
+    elif _parameter['op'] is None:clear_ghost();dialog_back(context)
+
+
+def parameter_canvas(area,x,y,region=None):
+    def hit(r):return r.x<=x<r.x+r.width and r.y<=y<r.y+r.height
+    region=region or next((r for r in area.regions if r.type=='WINDOW'),None)
+    return region is not None and hit(region) and not any(hit(r) for r in area.regions if r.type!='WINDOW')
+
+
+def parameter_modal(op,context,event):
+    if _parameter['op'] is not op:return {'CANCELLED'}
+    try:
+        op._parameter_owner.require(context)
+        area=op._parameter_area;region=op._parameter_region
+        if not any(a==area for a in context.screen.areas):raise ValueError(rpt('Editing view is no longer available'))
+        tool=context.workspace.tools.from_space_view3d_mode(context.mode)
+        if (tool.idname if tool else None)!=op._parameter_tool:raise ValueError(rpt('Editing tool changed'))
+        # Blender's WINDOW rectangle extends behind overlapping tool headers / sidebars.
+        inside=parameter_canvas(area,event.mouse_x,event.mouse_y,region=region)
+        action=_parameter['action']
+        ui=_parameter.get('ui')
+        consumed=False
+        if ui is not None:
+            if ui.draw_error:raise ValueError(rpt('The input window could not be drawn'))
+            request=ui.event(context,event,canvas_event=inside)
+            consumed=request=='EDIT'
+            if request in ('APPLY','CANCEL'):action=request
+        elif inside and event.value=='PRESS':
+            if event.type=='ESC':action='CANCEL'
+            elif event.type in ('RET','NUMPAD_ENTER'):action='APPLY'
+        if action=='CANCEL':
+            _parameter_close(op,context);op.cancel(context);return {'CANCELLED'}
+        if event.type=='TIMER' or action=='APPLY' or (ui is not None and ui.changed):
+            with context.temp_override(window=op._parameter_window,area=area,region=region):
+                _parameter_refresh(op,context)
+                if ui is not None:
+                    ui.changed=False;ui.refresh(context,_ghost['key']);ui.blocked=bool(_ghost['why'])
+                if action=='APPLY':
+                    _parameter['action']=None
+                    if _ghost['why']:return {'RUNNING_MODAL'}
+                    _parameter_close(op,context)
+                    return op.execute(context)
+        if consumed:
+            area.tag_redraw();return {'RUNNING_MODAL'}
+        if inside and event.type in ('LEFTMOUSE','RIGHTMOUSE'):
+            return {'RUNNING_MODAL'}
+        return {'PASS_THROUGH'}
+    except (ValueError,ReferenceError,AttributeError) as exc:
+        _parameter_close(op,context);op.cancel(context)
+        op.report({'WARNING'},str(exc));return {'CANCELLED'}
 
 
 GHOST = (0.55, 0.8, 1.0, 0.95)
@@ -1634,6 +2184,8 @@ def dialog_back(context):
 
 
 def _draw_ghost(context):
+    op=_parameter['op']
+    if op is not None and (context.window!=op._parameter_window or context.area!=op._parameter_area):return
     if _ghost['key'] is None or PV.layout_empty(context) is None:
         return
     sp, names, lines = _ghost['spec'], _ghost['names'], _ghost['lines']
@@ -1665,6 +2217,20 @@ def _draw_ghost(context):
     if segs:
         sh.uniform_float('lineWidth', 3.0)
         batch_for_shader(sh, 'LINES', {'pos': segs}).draw(sh)
+    if sp is not None and _ghost['key'][1:2] == ('extension',):
+        # Sewing is independent of the outline: OFF sews the original material
+        # path, ON sews the new boundary, including intervening side edges.
+        sewing=[]
+        visible=VV.pattern_names(context,sp)
+        for sm in sp.get('seams',[]):
+            if not sm.get('enabled',True) or not any(sm[k]['piece'] in names for k in ('a','b')):continue
+            for key in ('a','b'):
+                if sm[key]['piece'] not in visible:continue
+                W=to_world(M,S.side_polyline(sp,sm[key]))
+                sewing.extend(tuple(p) for a,b in zip(W[:-1],W[1:]) for p in (a,b))
+        if sewing:
+            sh.uniform_float('color',(1.0,.1,.65,.95));sh.uniform_float('lineWidth',4.0)
+            batch_for_shader(sh,'LINES',{'pos':sewing}).draw(sh)
 
 
 def _view_state(context):
@@ -1698,9 +2264,9 @@ def _draw_view():
     try:
         if PV.layout_empty(context) is not None:
             _draw_all_internals(context)
-        if PV.layout_empty(context) is not None and tool_active(context) and _state['drag'] is None:
+        if PV.layout_empty(context) is not None and TP.editable(TB.active_tool(context) or '', 'element'):
             _draw_all_corners(context)
-        if PV.layout_empty(context) is not None and (tool_active(context) or _state['drag'] is not None):
+        if PV.layout_empty(context) is not None and TP.editable(TB.active_tool(context) or '', 'element'):
             _draw_shown_handles(context)
         _draw_hover(context)
     except Exception:
@@ -1708,11 +2274,12 @@ def _draw_view():
     try:
         # the picked lines, edges and corners on top of the piece's white outline under the cursor (user
         # 2026-10-26: drawn first, the white line covered the picked edge)
-        if PV.layout_empty(context) is not None and _isel['piece']:
+        mode = tool_mode(context)
+        if PV.layout_empty(context) is not None and mode and _isel['piece']:
             _draw_isel(context)
-        if PV.layout_empty(context) is not None and _esel:
+        if PV.layout_empty(context) is not None and mode == 'EDIT' and _esel:
             _draw_esel(context)
-        if PV.layout_empty(context) is not None and (_csel or _psel):
+        if PV.layout_empty(context) is not None and mode == 'EDIT' and (_csel or _psel):
             _draw_csel(context)
     except Exception:
         pass
@@ -1761,20 +2328,17 @@ def _draw_lock(context):
 
 
 def _draw_hot(context):
-    """The point under the cursor: a white ring round whatever it shows (picked orange or not), not a red dot the
-    size of the picked one (user 2026-10-26). Drawn last."""
+    """Hover adds a rim without changing the node's semantic circle/dot shape."""
     vs = _view_state(context)
-    if vs is None or PV.layout_empty(context) is None:
+    if vs is None or PV.layout_empty(context) is None or tool_mode(context) != 'EDIT':
         return
     spec, names, hot, dragging, bad = vs
-    p = hot_point(spec, hot)
-    if p is None:
+    if hot[0] not in ('corner', 'iend', 'inode', 'handle', 'ihandle'):
         return
-    M = PV.layout_matrix(context)
-    w = tuple(to_world(M, [p])[0])
-    picked = hot[0] == 'corner' and any(k == 'corner' and nm == hot[1] and eid == corner_eid(spec, hot[1], hot[2])
-                                        for k, nm, eid in picked_lines(spec))
-    _dots([w], ((17.0, (1.0, 1.0, 1.0, 1.0)), (13.0, DARK), (9.0, ISEL if picked else (1.0, 0.3, 0.3, 1.0))))
+    p = hot_point(spec, hot)
+    if p is not None:
+        w = tuple(to_world(PV.layout_matrix(context), [p])[0])
+        _marks(context, [w], (1.,1.,1.,1.), 9, hollow=True, square=hot[0] in ('handle','ihandle'))
 
 
 def _draw_hover(context):
@@ -1793,50 +2357,32 @@ def _draw_hover(context):
     sh.uniform_float('color', (1.0, 0.25, 0.2, 1.0) if bad else (YELLOW if dragging else (1, 1, 1, 0.7)))
     batch_for_shader(sh, 'LINES', {'pos': _outline_segs(M, spec, names)}).draw(sh)
     # internal lines of those pieces (the one under the cursor or being moved thicker)
-    segs, hot_segs, iend_pts, ihl = [], [], [], []
+    segs, hot_segs = [], []
+    hot_lines=set()
+    if hot and hot[0] in ('inode','iend'):
+        ref=vertex_ref(spec,hot)
+        members=next((g for g in drawing_vertex_groups(spec,D.piece(spec,hot[1])) if ref in g),(ref,))
+        hot_lines={r[1] for r in members if r[0]=='internal'}
     for nm in names:
         for it in D.piece(spec, nm).get('internals', []):
             if it.get('kind') == 'baseline' or len(it['pts']) < 2:
                 continue
             W = to_world(M, it['pts'])
-            tgt = (hot_segs if hot and hot[0] in ('iend', 'iline', 'inode', 'ihandle') and hot[1] == nm
-                   and hot[2] == it['id'] else segs)
-            tgt += [tuple(p) for u, v in zip(W[:-1], W[1:]) for p in (u, v)]
-            iend_pts += [tuple(W[0]), tuple(W[-1])]
-            N, C, closed, own = IL.shape(it)            # its vertices and curve handles (2026-10-28)
-            if own or len(N) <= IL.DENSE:
-                WN = to_world(M, N)
-                iend_pts += [tuple(w) for k, w in enumerate(WN) if closed or 0 < k < len(WN) - 1]
-                for s, c in enumerate(C):
-                    for w in range(2) if c is not None else ():
-                        a, b = to_world(M, [N[(s + w) % len(N)], c[w]])
-                        ihl.append((tuple(a), tuple(b)))
+            segs += [tuple(p) for u, v in zip(W[:-1], W[1:]) for p in (u, v)]
+            if hot and hot[1]==nm and ((hot[0]=='iline' and hot[2]==it['id']) or it['id'] in hot_lines):
+                HW = to_world(M, internal_poly(spec, hot) if hot[0]=='iline' else it['pts'])
+                hot_segs += [tuple(p) for u, v in zip(HW[:-1], HW[1:]) for p in (u, v)]
     if segs:
         sh.uniform_float('lineWidth', 1.5)
-        sh.uniform_float('color', (0.45, 0.9, 0.8, 0.9))
+        sh.uniform_float('color', TP.INTERNAL_COLOR)
         batch_for_shader(sh, 'LINES', {'pos': segs}).draw(sh)
     if hot_segs:
         sh.uniform_float('lineWidth', 3.0)
-        sh.uniform_float('color', (0.45, 1.0, 0.85, 1.0))
+        sh.uniform_float('color', TP.INTERNAL_COLOR)
         batch_for_shader(sh, 'LINES', {'pos': hot_segs}).draw(sh)
-    hl, hp = [p for ab in ihl for p in ab], [ab[1] for ab in ihl]
-    if hl:
-        sh.uniform_float('lineWidth', 1.5)
-        sh.uniform_float('color', (0.6, 0.85, 1.0, 0.9))
-        batch_for_shader(sh, 'LINES', {'pos': hl}).draw(sh)
     sp = gpu.shader.from_builtin('UNIFORM_COLOR')
     sp.bind()
     gpu.state.point_size_set(8.0)
-    pts = [tuple(w) for nm in names for w in to_world(M, D.corners(D.piece(spec, nm)))]
-    if pts:
-        sp.uniform_float('color', (1, 1, 1, 0.9))
-        batch_for_shader(sp, 'POINTS', {'pos': pts}).draw(sp)
-    if iend_pts:
-        sp.uniform_float('color', (0.45, 0.9, 0.8, 1.0))
-        batch_for_shader(sp, 'POINTS', {'pos': iend_pts}).draw(sp)
-    if hp:
-        sp.uniform_float('color', (0.6, 0.85, 1.0, 1.0))
-        batch_for_shader(sp, 'POINTS', {'pos': hp}).draw(sp)
     _draw_gaps(sh, sp, M)
     gpu.state.point_size_set(1.0)
     gpu.state.blend_set('NONE')
@@ -2017,7 +2563,8 @@ def _sel_dims(context, spec):
     """([(point, mm, away, thing)] lengths, [(a, b, mm, False)] gaps) of the picked edges and internal line (b-1): computed
     once per pattern version and pick, a redraw only projects them."""
     visible = VV.pattern_names(context, spec)
-    k = (store._cache.get('key'), id(spec), tuple(_esel), _isel['piece'], _isel['line'], tuple(_imore), visible)
+    mode = tool_mode(context)
+    k = (store._cache.get('key'), id(spec), tuple(_esel), _isel['piece'], _isel['line'], tuple(_imore), tuple(_span_sel), visible, mode)
     if _selc['key'] == k:
         return _selc['data']
     labels, gaps = [], []
@@ -2033,6 +2580,11 @@ def _sel_dims(context, spec):
         if len(P) >= 2:
             p, away = _line_label(P)
             labels.append((p, S.polyline_len(P), away, ('iline', nm, lid)))
+    for nm, lid, j in (_span_sel if mode == 'EDIT' else []):
+        if nm in visible:
+            P = internal_poly(spec, ('iline', nm, lid, j))
+            p, away = _line_label(P)
+            labels.append((p, S.polyline_len(P), away, ('iline', nm, lid, j)))
     if len(lines) == 1:                      # only the visible line contributes its gaps
         gaps += gap_list(spec, ('iline',) + lines[0])
     data = (labels, [(a, b, mm, False) for a, b, mm, i in gaps])
@@ -2060,6 +2612,8 @@ def _seams_on(spec, thing):
     """The seams on an outline edge ('edge', piece, eid) or an internal line ('iline', piece, line), one row each
     (user 2026-10-23: the seam labels on every edge of the piece under the cursor ran into each other; an edge may
     carry several seams, a cuff's top six). Kept per pattern version."""
+    if not TB.pattern_seams(bpy.context) or (thing[0] == 'iline' and len(thing) > 3):
+        return []
     k, thing = (store._cache.get('key'), id(spec)), tuple(thing)
     if _seamc['key'] != k:
         _seamc.update(key=k, data={})
@@ -2097,6 +2651,8 @@ def _drag_seams(dr):
     """[(point, piece center, text, rgba)]: the seam sides a drag is changing (their length moved), the difference
     to the partner only."""
     from .shape_tool import num
+    if not TB.pattern_seams(bpy.context):
+        return []
     names = dr['names']
     if _dragc['key'] != id(dr):
         base = dr['spec']
@@ -2170,6 +2726,10 @@ def _draw_px():
         if spec is not None:
             _draw_fold_ab(context, spec)
         return
+    try:
+        _draw_whole_frame(context)
+    except Exception:
+        pass
     try:
         from .shape_tool import num, _draw_gaps_px
         dragging = _state['drag'] is not None
@@ -2292,6 +2852,13 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
     bl_label = "Move Pattern"
     bl_options = {'REGISTER', 'UNDO', 'GRAB_CURSOR', 'BLOCKING'}
 
+    move_only: bpy.props.EnumProperty(items=[('BOTH', "Connected", ""), ('INTERNAL', "Internal Only", ""),
+                                                ('OUTLINE', "Outline Only", "")], default='BOTH', options={'HIDDEN','SKIP_SAVE'})
+    target_piece: bpy.props.StringProperty(options={'HIDDEN','SKIP_SAVE'})
+    target_line: bpy.props.StringProperty(options={'HIDDEN','SKIP_SAVE'})
+    target_node: bpy.props.IntProperty(options={'HIDDEN','SKIP_SAVE'})
+    target_corner: bpy.props.IntProperty(options={'HIDDEN','SKIP_SAVE'})
+
     @classmethod
     def poll(cls, context):
         return (context.area is not None and context.area.type == 'VIEW_3D'
@@ -2305,7 +2872,8 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
             d[1], along = 0.0, np.array([1.0, 0.0])
         elif self.axis == 'Y':
             d[0], along = 0.0, np.array([0.0, 1.0])
-        self.snapped, self.lock = None, None
+        self.snapped, self.lock, self._boundary_snap = None, None, None
+        self._outline_vertex_snap=None
         if self.typed:
             # in the scene's unit, as every label on the pattern (user 2026-11-11: one unit; it was mm, 2026-10-23)
             v = U.typed_mm(context, self.typed)
@@ -2334,6 +2902,13 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         with the other pieces' corners. self.snapped: what it snapped to, for the view."""
         g = self.grab
         mmpx = px_to_mm(context, self.M, event.mouse_region_x, event.mouse_region_y)
+        if g[0]=='corner' and getattr(self,'move_only','BOTH')=='BOTH' and along is None:
+            candidates=getattr(self,'outline_vertex_targets',[])
+            if candidates:
+                ref,p=min(candidates,key=lambda item:np.linalg.norm(item[1]-self.grab_pt-d))
+                if np.linalg.norm(p-self.grab_pt-d)<=CORNER_PX*mmpx:
+                    self._outline_vertex_snap=ref;self.snapped=('point',p.copy())
+                    return p-self.grab_pt
         if g[0] in ('corner', 'piece') and along is None:
             # a corner onto another corner (moving a piece: any of its corners, the nearest pair)
             mine = (D.corners(D.piece(self.spec, g[1])) if g[0] == 'piece' else np.atleast_2d(self.grab_pt))
@@ -2379,9 +2954,13 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                 if lines:
                     self.snapped = ('align', [(ax, self.grab_pt + d + shift, others[j]) for ax, i, j in lines])
                     return d + shift
+        if getattr(self, 'move_only', 'BOTH') != 'BOTH':
+            return d
         if g[0] in ('iend', 'inode') and along is None and self.ptargets is not None:
-            p, kind, _ = SN.snap(self.grab_pt + d, CORNER_PX * mmpx, self.ptargets, SN.POINT_KINDS + SN.LINE_KINDS)
+            p, kind, owner = SN.snap(self.grab_pt + d, CORNER_PX * mmpx, self.ptargets, SN.POINT_KINDS + SN.LINE_KINDS)
             if kind is not None:
+                if kind in ('edge', 'mid', 'notch', 'corner') and owner == g[1]:
+                    self._boundary_snap = (kind, owner, p.copy())
                 self.snapped = ('point', p)
                 return p - self.grab_pt
         if g[0] in ('iend', 'inode') and self.ialign is not None and len(self.ialign):
@@ -2440,6 +3019,8 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
     def _edit(self, sp, d):
         """The drag's edit on the spec sp (in place); the pieces it changed."""
         g = self.grab
+        if getattr(self, 'move_only', 'BOTH') != 'BOTH':
+            BC.detach_pair(sp,g[1],vertex_ref(sp,g))
         if self.tgroup:                              # Whole Pieces: the picked pieces and lines, as one
             ch, self.rigid = D.transform_group(sp, *self.tgroup, shift=tuple(d))
             return ch
@@ -2452,6 +3033,8 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         if g[0] == 'piece':
             self.rigid = D.move_piece(sp, g[1], shift=tuple(d))
             return list(self.rigid)
+        if g[0] == 'iline' and self.mode == 'EDIT' and len(g) > 3:
+            return move_ipoints(sp, internal_hit_points(sp, g), set(), lambda p: d)
         if g[0] in ('iend', 'iline'):
             return D.move_internal(sp, g[1], g[2], g[3] if g[0] == 'iend' else 'all', tuple(d))
         if g[0] == 'inode':
@@ -2483,6 +3066,8 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         self.delta = self._delta(context, event)
         sp, ch = self._apply(self.delta)
         dr = _state['drag']
+        if dr.get('frame') is not None:
+            dr['frame_preview'] = (dr['frame'][0]+self.delta,dr['frame'][1])
         bad = D.problems(sp, ch)
         for x in self.group or [self.grab]:
             if x[0] in ('iend', 'iline', 'inode', 'ihandle'):
@@ -2519,7 +3104,8 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
     def invoke(self, context, event):
         spec, outlines, self._owner = store.begin_edit(context)
         self.M = PV.layout_matrix(context)
-        kind, ob, idx = TB.under(context, event.mouse_region_x, event.mouse_region_y)
+        kind, ob, idx = (('PATTERN',None,None) if getattr(self,'move_only','BOTH')!='BOTH'
+                         else TB.under(context, event.mouse_region_x, event.mouse_region_y))
         # A click (nothing moved) leaves no undo step: it only picks and drops the dot (user 2026-11-17: a click is
         # not work to undo, and "Move Pattern" in the history said a piece had moved). CANCELLED keeps what it did
         # (Blender reverts nothing) and, without PASS_THROUGH, the click goes to no other key.
@@ -2557,6 +3143,21 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
             kind = 'NONE'
         g = None if kind == 'NONE' else pick(context, spec, outlines, self.M, event.mouse_region_x,
                                               event.mouse_region_y)
+        self._frame_drag = (self.mode == 'TRANSFORM' and not event.shift and not event.ctrl
+                            and getattr(self, 'move_only', 'BOTH') == 'BOTH'
+                            and whole_frame_hit(context, spec, event.mouse_region_x, event.mouse_region_y))
+        if self._frame_drag:
+            self._frame_click_hit = g
+            P, L = whole_selection(context, spec)
+            self._frame_targets = (P, L)
+            g = ('piece', P[0]) if P else ('iline', *L[0])
+        self.box_hit = g
+        if self.mode == 'TRANSFORM' and not self._frame_drag and getattr(self,'move_only','BOTH') == 'BOTH':
+            # Pressing an unselected target is a click-or-box gesture, never an implicit move.
+            self.box_piece = None
+            return self._box_start(context,event)
+        if getattr(self, 'move_only', 'BOTH') != 'BOTH':
+            g = (('inode', self.target_piece, self.target_line, self.target_node) if getattr(self, 'move_only', 'BOTH') == 'INTERNAL' else ('corner', self.target_piece, self.target_corner))
         self.box_piece = None
         if g is None and self.mode == 'EDIT' and kind != 'NONE':
             # Edit Pieces inside a piece: a drag boxes corners and lines, a click still picks the piece (its Tool tab)
@@ -2572,20 +3173,25 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
             if _psel and not event.shift:
                 select_ipoint(context)
             return self._box_start(context, event)
+        if getattr(self, 'move_only', 'BOTH') != 'BOTH':
+            g = (('inode', self.target_piece, self.target_line, self.target_node) if getattr(self, 'move_only', 'BOTH') == 'INTERNAL'
+                 else ('corner', self.target_piece, self.target_corner))
         self.spec = spec
         self.grab = g
         # a picked edge or internal line grabbed while more are picked (Shift+click): they all move (user 2026-10-25)
         sel = (picked_lines(self.spec) if g[0] in ('edge', 'iline', 'corner', 'iend', 'inode') and not event.shift
                and self.mode != 'TRANSFORM' else [])
         me = (('corner', g[1], corner_eid(self.spec, g[1], g[2])) if g[0] == 'corner' else
-              edit_item(self.spec, g) if g[0] in ('iend', 'inode') else tuple(g[:3]))
-        self.group = sel if len(sel) > 1 and in_picked(self.spec, me, sel) else []
+              edit_item(self.spec, g) if g[0] in ('iend', 'inode', 'iline') else tuple(g[:3]))
+        self.group = sel if getattr(self, 'move_only', 'BOTH') == 'BOTH' and len(sel) > 1 and hit_selected(self.spec, g, sel) else []
         # Whole Pieces: a picked piece or line grabbed while more are picked: they all move (user 2026-10-28)
         self.tgroup = None
         if self.mode == 'TRANSFORM' and not event.shift:
             P, L = transform_targets(context, self.spec, g)
             if len(P) + len(L) > 1:
                 self.tgroup = (P, L)
+            if self._frame_drag:
+                self.tgroup = self._frame_targets
         self.grab_mm = mouse_mm(context, self.M, event.mouse_region_x, event.mouse_region_y)
         self.grab_pt = hot_point(self.spec, g)
         self.axis, self.typed, self.delta, self.rigid = None, '', np.zeros(2), None
@@ -2593,19 +3199,24 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         self.still = None
         if g[0] in ('corner', 'iend', 'inode', 'iline', 'edge'):
             self.frame = gap_frame(self.spec, g)
-            pr = gap_probe(self.spec, g, self.frame)
+            pr = gap_probe(self.spec, g, self.frame,outline_only=g[0] in ('iend','inode','iline'))
             if pr is not None:
-                self.refs = SN.same_refs(D.piece(self.spec, g[1]), pr[0],
+                reference_pc=D.piece(self.spec,g[1])
+                if g[0] in ('iend','inode','iline'):reference_pc=dict(reference_pc,internals=[])
+                self.refs = SN.same_refs(reference_pc, pr[0],
                                          g[2] if g[0] in ('iend', 'inode', 'iline') else None)
                 pc = D.piece(self.spec, g[1])
-                P0 = (np.asarray(D.internal(pc, g[2])['pts'], float) if g[0] == 'iline' else
+                P0 = (internal_poly(self.spec, g) if g[0] == 'iline' else
                       np.asarray(pc['edges'][D.edge_index(pc, g[2])]['pts'], float) if g[0] == 'edge' else None)
                 self.still = (pr[1], pr[2], P0)
         self.ialign = None
+        self.outline_vertex_targets=[]
+        if g[0]=='corner':
+            pc=D.piece(self.spec,g[1]);ref=vertex_ref(self.spec,g);moving=set(BC.members(pc,ref))
+            for r in tuple(moving):moving.update(q for nm,q in BC._copies(self.spec,g[1],r) if nm==g[1])
+            self.outline_vertex_targets=[(r,p) for r,p in BC.points(pc).items() if r[0]=='internal' and r not in moving]
         if g[0] in ('iend', 'inode'):            # its piece's outline and other lines (not its own line)
-            pc = copy.deepcopy(D.piece(self.spec, g[1]))
-            pc['internals'] = [it for it in pc.get('internals', []) if it['id'] != g[2]]
-            self.ptargets = SN.Targets({'pieces': [pc]})
+            self.ptargets = internal_position_targets(self.spec, g, self.group, getattr(self, 'move_only', 'BOTH'))
             self.ialign = ialign_points(self.spec, g)
         if g[0] == 'piece':
             visible = VV.pattern_names(context, self.spec)
@@ -2623,10 +3234,13 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
         self.ipoint = edit_item(self.spec, g) if g[0] in ('iend', 'inode') else None
         if self.ipoint is not None and self.ipoint[0] != 'ipoint':
             self.ipoint = None
-        self.dragging = g[0] not in ('piece', 'iline', 'edge', 'corner') and self.ipoint is None
+        self.dragging = getattr(self, 'move_only', 'BOTH') != 'BOTH' or (g[0] not in ('piece', 'iline', 'edge', 'corner') and self.ipoint is None)
         _state['drag'] = {'spec': self.spec, 'preview': None, 'names': [g[1]], 'grab': g, 'bad': []}
         _state['drag']['owner'] = self._owner
         _state['drag']['area'] = context.area.as_pointer() if context.area else None
+        if self._frame_drag:
+            P,L = self._frame_targets
+            _state['drag'].update(frame=_frame_state(context,self.spec,P,L),frame_key=_frame_key(context,P,L),frame_targets=(P,L))
         self._update(context, event)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -2675,6 +3289,10 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
             bpy.types.SpaceView3D.draw_handler_remove(self._box_h, 'WINDOW')
             (x0, y0), (x1, y1) = self.box
             if abs(x1 - x0) + abs(y1 - y0) < BOX_PX:          # a click on nothing: nothing selected
+                if getattr(self,'mode',None) == 'TRANSFORM' and hasattr(self,'box_hit'):
+                    q = mouse_mm(context,self.M,x0,y0)
+                    _whole_click(context,store.get(context)[0],self.box_hit,self.box_mode,q)
+                    return {'CANCELLED'}
                 if self.box_mode == 'SET':
                     SEL.deselect_all(context)
                     if not getattr(self, 'box_piece', None):    # on nothing at all: the picked seam goes too
@@ -2682,7 +3300,8 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                         from . import garment_mark as GM
                         GM.clear(context)
                 if getattr(self, 'box_piece', None):            # Edit Pieces, a click inside a piece: the piece
-                    TB.select_piece(context, self.box_piece, extend=self.box_mode == 'ADD')
+                    from . import tool_tab as TT
+                    TT.reference_piece(context,self.box_piece)
                     _mark_flat(context, self.box_piece, getattr(self, 'box_mm', None))
                 return {'CANCELLED'}                             # a click: no undo step (see invoke)
             r = (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
@@ -2715,6 +3334,10 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
             if not self.dragging:                    # a click on a piece: select it; on an internal line: pick it
                 # a click: no undo step (see invoke), and the point clicked shown on the cloth too
                 self._end(context)
+                if getattr(self, '_frame_drag', False):
+                    hit = self._frame_click_hit
+                    _whole_click(context,self.spec,hit,'SET',self.grab_mm)
+                    return {'CANCELLED'}
                 if self.grab[0] == 'handle':         # a click on a handle: the corner and edges picked stay
                     return {'CANCELLED'}
                 _mark_flat(context, self.grab[1], self.grab_mm)
@@ -2747,7 +3370,10 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                 if self.grab[0] == 'iline':
                     if self.mode == 'TRANSFORM' and not event.shift:     # a line alone: the pieces dropped
                         SEL.deselect_all(context)
-                    select_internal(context, self.grab[1], self.grab[2], extend=event.shift)
+                    if self.mode == 'EDIT' and len(self.grab) > 3:
+                        select_span(context, self.spec, self.grab[1], self.grab[2], self.grab[3], event.shift)
+                    else:
+                        select_internal(context, self.grab[1], self.grab[2], extend=event.shift)
                     return {'CANCELLED'}
                 if not event.shift:
                     select_internal(context)
@@ -2758,11 +3384,19 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                     self.report({'WARNING'}, rpt("Not applied: ") + dr['bad'][0])
                 self._end(context)
                 return {'CANCELLED'}
+            if self.grab[0]=='corner' and getattr(self,'move_only','BOTH')=='BOTH' and getattr(self,'_outline_vertex_snap',None) is not None:
+                bind_drag_outline(dr['preview'],self.spec,self.grab,self._outline_vertex_snap)
+            elif getattr(self, 'move_only', 'BOTH') == 'BOTH' and self.grab[0] in ('iend', 'inode') and self.snapped and self.snapped[0] == 'point':
+                from .core import point_connection as PC
+                k = ipoint_index(dr['preview'], self.grab)
+                if getattr(self, '_boundary_snap', None) is not None:
+                    PC.bind_pair(dr['preview'], self.grab[1], self.grab[2], k, boundary_snap=self._boundary_snap)
             msg = commit(context, dr['preview'], dr['names'],
                          old_spec=self.spec if self.grab[0] != 'notch' else None,   # a notch moves no cloth
                          rigid=self.rigid if (self.grab[0] == 'piece' or self.tgroup) else None, owner=self._owner)
             if msg:
                 self.report({'INFO'}, msg)
+            _remember_drag_frame(context,dr)
             self._end(context)
             # the line or edge moved stays picked: its gaps can be typed in the Tool tab (2026-10-23, b-2)
             if self.group or self.tgroup:            # the things moved together stay picked as they were
@@ -2778,7 +3412,7 @@ class AC9_OT_SimPatternDrag(bpy.types.Operator):
                 select_ipoint(context, self.grab[1], lid, k)
             elif self.grab[0] in ('iend', 'iline', 'inode', 'ihandle'):
                 _psel.clear()
-                select_internal(context, self.grab[1], self.grab[2])
+                select_span(context, self.spec, self.grab[1], self.grab[2], self.grab[3]) if self.mode == 'EDIT' and len(self.grab) > 3 else select_internal(context, self.grab[1], self.grab[2])
             elif self.grab[0] == 'edge':
                 _psel.clear()
                 select_edge(context, self.grab[1], self.grab[2])
@@ -2875,6 +3509,9 @@ class AC9_OT_SimPatternEdit(bpy.types.Operator):
                 if not IL.editable(it0) and not it0.get('closed') and IL.fit_error(it0) > 1.0:
                     self.report({'WARNING'}, rpt("The curve is up to {0} off the line: K first for a closer fit (Ctrl+Z to undo)", U.fmt(context, IL.fit_error(it0))))
             elif self.action == 'REMOVE' and h and h[0] in ('iend', 'iline'):
+                if tool_mode(context) == 'EDIT':
+                    self.report({'INFO'}, rpt('Select the whole internal line with Whole Pieces to delete it'))
+                    return {'CANCELLED'}
                 def edit(x):
                     gone = D.delete_internal(x, h[1], h[2])
                     if gone:
@@ -3288,16 +3925,17 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
             self.c = D.group_center(self.spec, self.P)
             names = set(self.P)
         elif self.tool == 'TRANSFORM':
-            self.P, self.L = transform_targets(context, self.spec, h)
+            self.P, self.L = whole_selection(context,self.spec)
             if not self.P and not self.L:
-                return {'PASS_THROUGH'}
+                self.report({'INFO'},rpt('Select a piece or internal line first'))
+                return {'CANCELLED'}
             self.c = D.group_center(self.spec, self.P, self.L)
             names = set(self.P) | {n for n, _ in self.L}
         else:
             items = picked_lines(self.spec)
             me = edit_item(self.spec, h)
-            if me is not None and me not in items:          # not picked: the thing under the cursor alone
-                items = [me]
+            if me is not None and not hit_selected(self.spec, h, items):
+                items = internal_hit_points(self.spec, h) or [me]
             if not items:
                 return {'PASS_THROUGH'}
             self.items = items
@@ -3312,6 +3950,9 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
             pts += [np.atleast_2d(ipoint_pos(self.spec, n, x)) for _, n, x in self.ipts]
             self.c = D.group_center(self.spec, [], self.L, np.vstack(pts) if pts else ())
             names = set(self.cpts) | {n for n, _ in self.L} | {n for _, n, _ in self.ipts}
+        self.whole_frame_state = _frame_state(context,self.spec,self.P,self.L) if self.tool == 'TRANSFORM' else None
+        if self.whole_frame_state is not None:
+            self.c = self.whole_frame_state[0].copy()
         self.names = names | {t for t in (D.twin_of(self.spec, n) for n in names) if t}
         q = mouse_mm(context, self.M, event.mouse_region_x, event.mouse_region_y)
         self.q0 = np.asarray(q if q is not None else self.c, float)
@@ -3331,6 +3972,8 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
                           'grab': ('piece', sorted(names)[0]), 'bad': []}
         _state['drag']['owner'] = self._owner
         _state['drag']['area'] = context.area.as_pointer() if context.area else None
+        if self.whole_frame_state is not None:
+            _state['drag'].update(frame=self.whole_frame_state,frame_key=_frame_key(context,self.P,self.L),frame_targets=(self.P,self.L))
         self._update(context, event)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
@@ -3401,6 +4044,9 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
             k = (f, 1.0) if self.axis == 'X' else (1.0, f) if self.axis == 'Y' else (f, f)
             txt = tx("Scale x{0:.3f}", f)
         self.amount = (deg, k, d)
+        if getattr(self,'whole_frame_state',None) is not None:
+            center,angle = self.whole_frame_state
+            _state['drag']['frame_preview'] = (center+d,angle+deg)
         sp = light_copy(self.spec, self.names)
         try:
             if self.items is None:
@@ -3415,7 +4061,7 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
                     ch += D.move_corners(sp, n, {j: tuple(fm(C[j])[0] - C[j]) for j in ks})
                 ch += D.transform_group(sp, [], self.L, deg, k, center=self.c)[0]
                 moved = set(self.L) | {(m, l) for n, x in self.L for m, l, _ in D.mirror_lines(self.spec, n, x)}
-                ch += move_ipoints(sp, self.ipts, moved, lambda p: fm(p)[0] - p)
+                ch += move_ipoints(sp, self.ipts, moved, lambda p: fm(p)[0] - p, base=self.spec)
                 self.rigid = None
             bad = D.problems(sp, ch)
         except ValueError as exc:
@@ -3461,6 +4107,7 @@ class AC9_OT_SimPatternTransform(bpy.types.Operator):
                     self.report({'WARNING'}, rpt("Not applied: ") + dr['bad'][0])
                 return {'CANCELLED'}
             msg = commit(context, dr['preview'], dr['names'], old_spec=self.spec, rigid=self.rigid, owner=self._owner)
+            _remember_drag_frame(context,dr)
             if msg:
                 self.report({'INFO'}, msg)
             return {'FINISHED'}
@@ -3505,7 +4152,7 @@ class AC9_WT_TransformPattern(bpy.types.WorkSpaceTool):
         ("ac9_cloth_sim.delete_selected", {"type": 'X', "value": 'PRESS'}, None),
         ("ac9_cloth_sim.delete_selected", {"type": 'DEL', "value": 'PRESS'}, None),
         ("ac9_cloth_sim.duplicate_pieces", {"type": 'D', "value": 'PRESS', "shift": True},
-         {"properties": [("follow", True)]}),
+         {}),
         ("ac9_cloth_sim.piece_label", {"type": 'F2', "value": 'PRESS'}, None),
         ("wm.context_toggle_enum", {"type": 'W', "value": 'PRESS'},
          {"properties": [("data_path", 'scene.ac9_cloth_sim.whole_gizmo'), ("value_1", 'MOVE'),
@@ -3515,6 +4162,7 @@ class AC9_WT_TransformPattern(bpy.types.WorkSpaceTool):
     )
 
     def draw_settings(context, layout, tool):
+        if parameter_header(context,layout):return
         if context.scene.ac9_cloth_sim.sync_pending:    # 3D Follows Edits off and edits waiting (AC9 Run)
             layout.label(text=tx("3D not updated"), icon='ERROR')
         layout.label(text_ctxt=CTX, text=tx("Works on: ") + tx("pieces and internal lines"), icon='INFO')
@@ -3574,37 +4222,26 @@ class AC9_WT_EditPattern(bpy.types.WorkSpaceTool):
         ("ac9_cloth_sim.pattern_transform", {"type": 'R', "value": 'PRESS'}, {"properties": [("mode", 'ROTATE')]}),
         ("ac9_cloth_sim.pattern_transform", {"type": 'G', "value": 'PRESS'}, {"properties": [("mode", 'MOVE')]}),
         ("ac9_cloth_sim.duplicate_pieces", {"type": 'D', "value": 'PRESS', "shift": True},
-         {"properties": [("follow", True)]}),
+         {}),
         ("ac9_cloth_sim.piece_label", {"type": 'F2', "value": 'PRESS'}, None),
         ("ac9_cloth_sim.context_menu", {"type": 'RIGHTMOUSE', "value": 'PRESS'},
          {"properties": [("tool", 'EDIT_PATTERN')]}),
     )
 
     def draw_settings(context, layout, tool):
+        if parameter_header(context,layout):return
         # only the keys for what is under the cursor; all of them in the Pattern panel's Keys (user 2026-10-23, Fable
         # review REVIEW_fable_tool_hints_2026-10-23: the 14 items ran past the header's one row)
         if context.scene.ac9_cloth_sim.sync_pending:    # 3D Follows Edits off and edits waiting (AC9 Run)
             layout.label(text=tx("3D not updated"), icon='ERROR')
-        layout.label(text_ctxt=CTX, text=tx("Works on: ") + tx("pattern"), icon='INFO')
-        layout.label(text_ctxt=CTX, text="click: select (Shift adds)  double-click: whole piece  drag: move")
+        layout.label(text=tx(TP.EDIT_HEADER))
         h = _state.get('hover')
-        layout.label(text=HOVER_KEYS.get(h[0] if h else None, ""))
-        layout.label(text_ctxt=CTX, text="right-click: menu   all keys: sidebar Pattern > Keys")
+        layout.label(text=tx(HOVER_KEYS.get(h[0] if h else None, "")))
+        layout.label(text=tx(TP.EDIT_MENU_HINT))
 
 
 # the header's keys by what is under the cursor (pick's kinds); None: nothing under it
-HOVER_KEYS = {
-    'edge': "K add point  C curve  N notch",
-    'corner': "drag: move  X delete",
-    'notch': "drag: slide  X delete",
-    'iend': "drag: move the end  X delete line",
-    'iline': "K point  C curve  X delete",
-    'inode': "drag: move the point  X delete point",
-    'ihandle': "drag: bend the curve  C straighten",
-    'handle': "drag: bend the curve",
-    'piece': "Shift+D copy  F2 name",
-    None: "drag: box select corners and lines   G / R / S: what is picked",
-}
+HOVER_KEYS = TP.EDIT_HINTS
 
 # every key of Edit Pieces, for the Pattern panel's Keys (ui.draw_keys) and the tool's tooltip
 ALL_KEYS = (
@@ -3619,7 +4256,7 @@ ALL_KEYS = (
     ("C", "curve / straighten the edge or line"),
     ("N", "put a notch on the edge"),
     ("Shift+D", "copy the selected pieces (or the one under the cursor)"),
-    ("X / Del", "delete the corner, notch or line"),
+    ("X / Del", "delete the corner, notch or internal point; whole lines: Whole Pieces"),
 )
 
 
@@ -3680,6 +4317,8 @@ class _DrawPoints:
         except Exception:
             pass
 
+    OUTLINE_ONLY = False
+    INTERNAL_POSITIONS = False
     SNAP_KINDS = ('corner', 'notch', 'mid', 'edge')     # a new piece lines up with the others' corners and sides
 
     def invoke(self, context, event):
@@ -3689,7 +4328,7 @@ class _DrawPoints:
         PV.layout_empty(context, create=True)
         self.M = PV.layout_matrix(context)
         self.pts, self.cur, self.typed = [], None, ''
-        self.snapper = ST.Snapper(context, self.SNAP_KINDS)
+        self.snapper = ST.Snapper(context, self.SNAP_KINDS,outline_only=self.OUTLINE_ONLY, internal_positions=self.INTERNAL_POSITIONS)
         self.snap_piece = None
         self._draw_area = context.area.as_pointer()
         self._h = bpy.types.SpaceView3D.draw_handler_add(self._draw, (context,), 'WINDOW', 'POST_VIEW')
@@ -3807,6 +4446,8 @@ class AC9_OT_SimDrawLine(_DrawPoints, bpy.types.Operator):
                   "   Esc / right click: cancel")
         context.area.header_text_set(txt)
 
+    OUTLINE_ONLY = True
+    INTERNAL_POSITIONS = True
     SNAP_KINDS = ('corner', 'notch', 'iend', 'mid', 'edge', 'iline')
 
     def invoke(self, context, event):
@@ -3904,30 +4545,34 @@ class AC9_OT_SimMatchLength(bpy.types.Operator):
         spec = store.get(context)[0]
         return spec is not None and store.active_seam(context, spec) is not None
 
-    def invoke(self, context, event):
-        # the numbers first, in a dialog with the changed side drawn on the pattern (user 2026-11-17)
-        spec = store.get(context)[0]
-        sm = store.active_seam(context, spec)
-        names = sorted({sm[k]['piece'] for k in ('a', 'b') if isinstance(sm.get(k), dict) and 'piece' in sm[k]})
-        if names:
-            dialog_aside(context, event, names, spec)
-        ghost_open(self)
-        return context.window_manager.invoke_props_dialog(self)
+    def invoke(self,context,event):
+        spec=store.get(context)[0];sm=store.active_seam(context,spec)
+        if sm is None:return {'CANCELLED'}
+        self._parameter_seam_id=sm['id']
+        return parameter_open(self,context)
 
-    def draw(self, context):
-        col = self.layout.column()
-        col.prop(self, "ease")
-        col.prop(self, "end")
-        spec = store.get(context)[0]
-        if spec is not None:
-            sm = store.active_seam(context, spec)
-            draw_why(col, ghost(self, ("match", sm['id'] if sm else None, self.side, self.ease, self.end),
-                                lambda: self._make(context, spec)[:2] + ([],)))
+    modal=parameter_modal
+
+    def _seam(self,context,spec):
+        sid=getattr(self,'_parameter_seam_id',None)
+        return next((sm for sm in spec.get('seams',[]) if sm['id']==sid),None) if sid else store.active_seam(context,spec)
+
+    def parameter_preview(self,context):
+        spec=store.get(context)[0];sm=self._seam(context,spec)
+        return ghost(self,('match',sm['id'] if sm else None,self.side,self.ease,self.end),
+                     lambda:self._make(context,spec)[:2]+([],))
+
+    def draw(self,context):self.draw_fields(context,self.layout)
+
+    def draw_fields(self,context,layout):
+        col=layout.column()
+        for name in TP.PARAMETER_FIELDS['match_length']:col.prop(self,name)
+        draw_why(col,self.parameter_preview(context))
 
     def _make(self, context, spec):
         """(the copy, pieces changed, seam, lengths before and after); a ValueError when it cannot be done."""
         sp = S.loads(S.dumps(spec))
-        sm = store.active_seam(context, sp)
+        sm = self._seam(context,sp)
         if sm is None:
             raise ValueError(rpt("No active seam"))
         ch, l0, l1, tg = D.match_side_length(sp, sm['id'], self.side, self.ease * 1000.0, self.end)
@@ -3936,9 +4581,8 @@ class AC9_OT_SimMatchLength(bpy.types.Operator):
             raise ValueError(bad[0])
         return sp, ch, sm, l0, l1
 
-    def cancel(self, context):
-        clear_ghost()
-        dialog_back(context)
+    def cancel(self,context):
+        parameter_cancel(self,context)
 
     def execute(self, context):
         clear_ghost()
@@ -4132,19 +4776,27 @@ class AC9_OT_SimDeletePiece(bpy.types.Operator):
     bl_idname = "ac9_cloth_sim.delete_piece"
     bl_label = "Delete Piece"
     bl_options = {'REGISTER', 'UNDO'}
+    names: bpy.props.StringProperty(options={'HIDDEN','SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
-        return store.get(context)[0] is not None and bool(SEL.pattern_pieces(context))
+        return store.get(context)[0] is not None
 
     def invoke(self, context, event):
+        if not self.names:
+            self.names=json.dumps(SEL.pattern_pieces(context))
+        if not json.loads(self.names):return {'CANCELLED'}
+        self._delete_owner=store.edit_owner(context)
         return context.window_manager.invoke_confirm(self, event)
 
     def execute(self, context):
         spec, _ = store.get(context)
+        if hasattr(self,'_delete_owner'):self._delete_owner.require(context)
         PV.require_integrity(context, spec)
         spec = S.loads(S.dumps(spec))
-        names = SEL.pattern_pieces(context)
+        names = json.loads(self.names) if self.names else SEL.pattern_pieces(context)
+        valid={p['name'] for p in spec['pieces']}
+        if not isinstance(names,list) or not names or any(not isinstance(n,str) or n not in valid for n in names):return {'CANCELLED'}
         gone = []
         for nm in names:
             gone += D.delete_piece(spec, nm)
@@ -4183,14 +4835,30 @@ class AC9_OT_SimDeleteInternal(bpy.types.Operator):
     bl_idname = "ac9_cloth_sim.delete_internal"
     bl_label = "Delete Internal Line"
     bl_options = {'REGISTER', 'UNDO'}
+    piece: bpy.props.StringProperty(options={'HIDDEN','SKIP_SAVE'})
+    line: bpy.props.StringProperty(options={'HIDDEN','SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
-        return selected_internal(context, store.get(context)[0]) is not None
+        return store.get(context)[0] is not None and TB.tool_policy(context)['domain'] == 'whole'
 
     def execute(self, context):
         spec, _ = store.get(context)
-        name, lid, _it = selected_internal(context, spec)
+        if TB.tool_policy(context)['domain'] != 'whole':
+            self.report({'INFO'},rpt('Select the whole internal line with Whole Pieces to delete it'))
+            return {'CANCELLED'}
+        if bool(self.piece) != bool(self.line):return {'CANCELLED'}
+        explicit = bool(self.piece and self.line)
+        target = (self.piece,self.line) if explicit else (selected_internal(context,spec) or ())[:2]
+        visible = VV.pattern_names(context,spec)
+        if len(target)!=2 or target[0] not in visible:
+            return {'CANCELLED'}
+        name,lid = target
+        pc = next((p for p in spec['pieces'] if p['name']==name),None)
+        if pc is None or not any(it['id']==lid for it in pc.get('internals',[])):
+            return {'CANCELLED'}
+        if not explicit and target not in whole_selection(context,spec)[1]:
+            return {'CANCELLED'}
         old = S.loads(S.dumps(spec))
         sp = S.loads(S.dumps(spec))
         gone = D.delete_internal(sp, name, lid)
@@ -4244,8 +4912,8 @@ class AC9_OT_SimCutOut(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class AC9_OT_SimCloneShape(bpy.types.Operator):
-    """Make a new piece from the closed internal shape (a pocket drawn where it goes): the same outline, the piece's fabric, no seams, just right of the piece. The shape stays on the piece"""
+class AC9_OT_SimCloneShape(CopyPlacement, bpy.types.Operator):
+    """Copy the closed internal shape as a pattern piece; move the pointer into the pattern view and click to place. Esc or right click cancels the copy. The source shape stays"""
     bl_idname = "ac9_cloth_sim.clone_shape"
     bl_label = "Clone as Pattern"
     bl_options = {'REGISTER', 'UNDO'}
@@ -4268,30 +4936,35 @@ class AC9_OT_SimCloneShape(bpy.types.Operator):
     def poll(cls, context):
         return store.get(context)[0] is not None
 
-    def execute(self, context):
-        spec, _ = store.get(context)
+    def _copy_build(self, context, spec):
         t = self._target(context, spec)
         if t is None:
-            self.report({'WARNING'}, "Pick a closed internal shape first")
-            return {'CANCELLED'}
+            raise ValueError(tx("Pick a closed internal shape first"))
         name, lid, _ = t
         sp = S.loads(S.dumps(spec))
         try:
             made = D.clone_shapes(sp, name, lid, sew=self.sew)
             nm = made[(name, lid)]
         except ValueError as e:
-            self.report({'WARNING'}, str(e))
-            return {'CANCELLED'}
+            raise ValueError(str(e)) from e
         names = list(made.values())
+        # Start each authored copy at its own source shape. No per-piece empty-space search may change the group.
+        for (source, line), new_name in made.items():
+            delta = D.group_center(spec, lines=[(source, line)]) - D.piece_center(D.piece(sp, new_name))
+            D.transform_piece(sp, new_name, shift=delta)
         bad = D.problems(sp, names)
         if bad:
-            self.report({'WARNING'}, rpt("Not applied: ") + bad[0])
-            return {'CANCELLED'}
-        commit(context, sp, names)
+            raise ValueError(rpt("Not applied: ") + bad[0])
+        self._copy_source, self._copy_line = name, lid
+        return sp, names, nm
+
+    def _copy_finish(self, context, sp):
+        names = self._copy_names
+        nm, name, lid = self._copy_anchor_name, self._copy_source, self._copy_line
+        commit(context, sp, names, owner=self._copy_owner)
         SEL.apply(context, names, 'SET', active=nm, view='pattern')
         from . import tool_tab
         tool_tab.piece_clicked(context)
-        frame_pieces(context, [name] + names)
         self.report({'INFO'}, rpt("Added piece {0} from {1} on {2}", nm, lid, name))
         # sewn on: onto its piece in 3D when that is placed or worn (Part to Seam, user 2026-10-28); else Place it
         if (self.sew and context.area is not None and context.area.type == 'VIEW_3D'
@@ -4369,7 +5042,12 @@ class AC9_OT_SimPickPieceUnder(bpy.types.Operator):
         select_internal(context)
         if not event.shift:
             select_edge(context)
-        TB.select_piece(context, name, extend=event.shift)
+        if tool_mode(context) == 'EDIT':
+            from . import tool_tab as TT
+            TT.reference_piece(context,name)
+            _mark_flat(context,name,q)
+        else:
+            TB.select_piece(context, name, extend=event.shift)
         context.area.tag_redraw()
         return {'FINISHED'}
 
@@ -4394,17 +5072,43 @@ class AC9_OT_SimDeleteSelected(bpy.types.Operator):
     def invoke(self, context, event):
         from . import tool_tab
         spec, outlines = store.get(context)
+        domain = TB.tool_policy(context)['domain']
+        if spec is not None and VV.allows_pattern(context) and domain == 'whole':
+            P,L = whole_selection(context,spec)
+            visible=VV.pattern_names(context,spec)
+            raw_lines=[(n,l) for k,n,l in picked_lines(spec) if k=='iline' and n in visible]
+            if P and raw_lines:
+                self.report({'INFO'},rpt('Select one whole internal line to delete'))
+                return {'CANCELLED'}
+            if len(L)==1 and not P:
+                return bpy.ops.ac9_cloth_sim.delete_internal(piece=L[0][0],line=L[0][1])
+            if P and not L:
+                return bpy.ops.ac9_cloth_sim.delete_piece('INVOKE_DEFAULT',names=json.dumps(P))
+            if L:
+                self.report({'INFO'},rpt('Select one whole internal line to delete'))
+            return {'CANCELLED'}
         if spec is not None and AC9_OT_SimPatternDrag.poll(context):
             h = pick(context, spec, outlines, PV.layout_matrix(context), event.mouse_region_x, event.mouse_region_y)
-            if h and h[0] in ('corner', 'notch', 'iend'):
+            if domain == 'element' and h and h[0] in ('corner', 'notch', 'iend','inode'):
                 return bpy.ops.ac9_cloth_sim.pattern_edit('INVOKE_DEFAULT', action='REMOVE')
+        if domain == 'element':
+            if selected_internal(context,spec) is not None:
+                self.report({'INFO'},rpt('Select the whole internal line with Whole Pieces to delete it'))
+            return {'CANCELLED'}
         kind = tool_tab.resolve(context, spec) if spec is not None else None
+        if kind == 'SEAM' and domain != 'seam':
+            return {'CANCELLED'}
+        if kind == 'INTERNAL' and domain not in ('element', 'whole'):
+            return {'CANCELLED'}
         if kind is None:
             from . import measure_edit as MEE
             kind = 'MEASURE' if MEE.selected(context) is not None else None
         if kind == 'MEASURE':
             return bpy.ops.ac9_cloth_sim.measure_delete()
         if kind == 'INTERNAL':
+            if domain == 'element':
+                self.report({'INFO'}, rpt('Select the whole internal line with Whole Pieces to delete it'))
+                return {'CANCELLED'}
             return bpy.ops.ac9_cloth_sim.delete_internal()
         if kind == 'SEAM':
             return bpy.ops.ac9_cloth_sim.seam_edit(action='DELETE')
@@ -4644,6 +5348,8 @@ def draw_gaps(layout, context, spec, g):
     """The gaps of the picked thing g (an internal line, or one outline edge), shown with their arrows, and one button
     that moves it by a number: X / Y or a gap's distance (user 2026-11-11, Fable review: one dialog for the arrow
     buttons, as "how far from where it is now")."""
+    if g[0] == 'iline' and any((n,l) == (g[1],g[2]) for n,l,j in _span_sel):
+        return draw_move_by_number(layout, context, spec)
     pr = gap_probe(spec, g)
     gl = SN.gaps(pr[0], SN.gauge(*pr)) if pr is not None else []
     from .shape_tool import fmt
@@ -4687,6 +5393,11 @@ def numeric_row(spec, hit):
     picked things together when hit is one of several picked, else hit alone. A whole piece: its move and size."""
     if hit[0] == 'piece':
         return (NUMERIC_INPUT, "ac9_cloth_sim.set_gap", "", {'kind': 'PIECE', 'piece': hit[1], '_invoke': True})
+    if internal_hit_points(spec, hit):
+        items = picked_lines(spec)
+        hs = internal_hit_points(spec, hit)
+        if not all(x in items for x in hs): items = hs
+        return (NUMERIC_INPUT, 'ac9_cloth_sim.set_gap', '', {'kind': 'MULTI', 'items': json.dumps(items), '_invoke': True})
     me = edit_item(spec, hit) if hit[0] in ('corner', 'edge', 'iline', 'iend', 'inode') else None
     if me is None:
         return None
@@ -4696,6 +5407,122 @@ def numeric_row(spec, hit):
                 {'kind': 'MULTI', 'items': json.dumps([list(x) for x in sel]), '_invoke': True})
     return (NUMERIC_INPUT, "ac9_cloth_sim.set_gap", "",
             {'kind': me[0].upper(), 'piece': me[1], 'thing': me[2], '_invoke': True})
+
+
+def extension_row(spec, hit, tool):
+    """Only an explicit outline-edge hit can start extension."""
+    if tool != TP.EXTENSION['tool'] or hit[0] != TP.EXTENSION['hit']:
+        return None
+    me = ('edge', hit[1], hit[2])
+    picked = picked_lines(spec)
+    selected = picked if me in picked else [me]
+    edges = [list(x) for x in selected if x[0] == 'edge']
+    return (TP.EXTENSION['label'], TP.EXTENSION['operator'], '',
+            {'items': json.dumps(edges), 'ignored': len(selected)-len(edges), '_invoke': True})
+
+
+class AC9_OT_SimExtendOutline(bpy.types.Operator):
+    """Add fabric along selected outline edges and retain their original paths as internal lines"""
+    bl_idname = 'ac9_cloth_sim.extend_outline'
+    bl_label = 'Extend Outline'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    items: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    ignored: bpy.props.IntProperty(default=0, options={'HIDDEN', 'SKIP_SAVE'})
+    method: bpy.props.EnumProperty(name='Extension method', items=(
+        ('XY','X/Y displacement','Move all selected runs by the same X/Y displacement'),
+        ('AXIS','Outward along axis','Extend each separate selected run outward along X or Y'),
+        ('WIDTH','Width from outline','Extend each selected outline outward by a perpendicular width')), default='XY')
+    axis: bpy.props.EnumProperty(name='Axis', items=(('X','X axis',''),('Y','Y axis','')), default='Y')
+    distance: bpy.props.FloatProperty(name='Distance', min=0.0, precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP)
+    move_x: bpy.props.FloatProperty(name='X', precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP)
+    move_y: bpy.props.FloatProperty(name='Y', precision=1, subtype='DISTANCE', unit='LENGTH', step=U.LEN_STEP)
+    join: bpy.props.EnumProperty(name='Corner treatment',translation_context=CTX,items=(
+        ('MITER','Connect corners','Join extended edges at their intersections'),
+        ('SEPARATE','Each edge','Extend each edge separately, leaving corner gaps')),default='MITER')
+    move_seams: bpy.props.BoolProperty(name='Move seams to new outline', default=False,
+                                     description='Off: keep sewing at the original material positions')
+
+    parameter_choices={'method':TP.EXTENSION_METHOD_CHOICES}
+
+    @classmethod
+    def poll(cls, context):
+        return store.get(context)[0] is not None
+
+    def _selection(self):
+        selected = {}
+        for kind, name, edge in json.loads(self.items):
+            if kind != 'edge':
+                raise ValueError(rpt('Select an outline edge to extend'))
+            selected.setdefault(name, []).append(edge)
+        return selected
+
+    def _result(self, context):
+        if hasattr(self, '_owner'):
+            self._owner.require(context)
+        base = self._before if hasattr(self, '_before') else store.get(context)[0]
+        if getattr(self,'method','XY')=='WIDTH':
+            sp,names,lines=EX.plan_width(base,self._selection(),self.distance*1000,self.move_seams,individual=self.join=='SEPARATE')
+        elif getattr(self,'method','XY')=='AXIS':
+            sp,names,lines=EX.plan_axis(base,self._selection(),self.axis,self.distance*1000,self.move_seams)
+        else:
+            sp,names,lines=EX.plan(base,self._selection(),[self.move_x*1000,self.move_y*1000],self.move_seams)
+        return sp, names, [D.internal(D.piece(sp,nm),lid)['pts'] for nm,lids in lines.items() for lid in lids]
+
+    def invoke(self, context, event):
+        before, _, self._owner = store.begin_edit(context)
+        self._before = copy.deepcopy(before)
+        try:
+            selected = self._selection()
+            if not selected:raise ValueError(rpt('Select an outline edge to extend'))
+        except (ValueError, KeyError, TypeError) as exc:
+            self.report({'WARNING'}, str(exc));return {'CANCELLED'}
+        self.move_x = self.move_y = 0.0
+        self.method='WIDTH';self.axis='Y';self.distance=0.0;self.join='MITER'
+        self.move_seams = False
+        return parameter_open(self,context)
+
+    modal=parameter_modal
+
+    def draw(self,context):
+        self.draw_fields(context,self.layout)
+
+    def draw_fields(self, context, layout):
+        selected = self._selection()
+        col = layout.column(align=True)
+        col.label(text=tx('{0} outline edges / {1} pieces',sum(map(len,selected.values())),len(selected)))
+        if self.ignored:col.label(text=tx('{0} selected items are not outline edges',self.ignored),icon='INFO')
+        for name in TP.PARAMETER_FIELDS['extension'][self.method]:
+            options={'text':''} if name=='method' else {'text':tx('Width')} if name=='distance' and self.method=='WIDTH' else {}
+            if name in ('axis','join'):options['expand']=True
+            col.prop(self,name,**options)
+        col.label(text=tx('The original edges remain as internal lines'))
+        before=getattr(self,'_before',None) or store.get(context)[0]
+        if any(any(s[k]['piece'] in selected for k in ('a','b')) for s in before.get('seams',[])):
+            col.label(text=tx('Sewing preview: pink'))
+        why=ghost(self,('extension',self.items,self.method,self.axis,self.distance,self.move_x,self.move_y,self.move_seams,self.join),
+                  lambda:self._result(context))
+        if self.method=='WIDTH' and self.distance<=0:
+            col.label(text=tx('Enter a width'),icon='INFO')
+        else:draw_why(layout,why,width=22)
+
+
+    def check(self, context):
+        return True
+
+    def cancel(self, context):
+        parameter_cancel(self,context)
+
+    def execute(self, context):
+        clear_ghost();dialog_back(context)
+        before=store.get(context)[0]
+        try:
+            sp,names,_=self._result(context)
+            note=commit(context,sp,names,old_spec=before,owner=getattr(self,'_owner',None))
+        except (ValueError, KeyError, StopIteration, TypeError) as exc:
+            self.report({'WARNING'},str(exc));return {'CANCELLED'}
+        if note:self.report({'INFO'},note)
+        return {'FINISHED'}
 
 
 def _exists(spec, item):
@@ -4855,18 +5682,19 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
             w, h = self._box(spec) / 1000.0
             self.size0, self.width, self.height = (w, h), w, h
         names = sorted({x[1] for x in self._items()})
-        dialog_aside(context, event, names, spec)     # beside the pieces: the dialog does not cover the ghost
-        ghost_open(self)
-        return context.window_manager.invoke_props_dialog(self)
+        return parameter_open(self,context)
 
-    def draw(self, context):
+    modal=parameter_modal
+
+    def draw(self,context):
+        self.draw_fields(context,self.layout)
+
+    def draw_fields(self, context, layout):
         spec, _ = store.get(context)
-        layout = self.layout
         col = layout.column(align=True)
         n = len(self._items())
         col.label(text_ctxt=CTX, text=tx("Move from where it is") if n == 1 else tx("Move the {0} picked from where they are", n))
-        col.prop(self, "move_x")
-        col.prop(self, "move_y")
+        for name in TP.PARAMETER_FIELDS['numeric']:col.prop(self,name)
         if self.size0[0] > 0:
             col = layout.column(align=True)
             col.label(text=tx("Size (about its middle)"))
@@ -4992,8 +5820,7 @@ class AC9_OT_SimSetGap(bpy.types.Operator):
         return sp, ch, [D.internal(D.piece(sp, nm), x)['pts'] for k, nm, x in self._items() if k == 'iline']
 
     def cancel(self, context):
-        clear_ghost()
-        dialog_back(context)
+        parameter_cancel(self,context)
 
     def execute(self, context):
         clear_ghost()
@@ -5191,8 +6018,8 @@ def missing_pieces(context, spec):
     return list(PV.integrity(context, spec)['missing'])
 
 
-class AC9_OT_SimMirrorCopy(bpy.types.Operator):
-    """Make mirrored copies of the selected pattern pieces beside them, with their seams; each copy is edited together with its original from then on, and placed in 3D as its mirror image when the original is placed"""
+class AC9_OT_SimMirrorCopy(CopyPlacement, bpy.types.Operator):
+    """Make linked mirrored copies with their seams; click in the pattern view to place. Esc or right click cancels the copy. Placed originals also get mirrored 3D copies"""
     bl_idname = "ac9_cloth_sim.mirror_copy"
     bl_label = "Mirror Copy"
     bl_options = {'REGISTER', 'UNDO'}
@@ -5204,37 +6031,20 @@ class AC9_OT_SimMirrorCopy(bpy.types.Operator):
         ('y', "Front / Back", "Mirror front to back: the copy upside down beside the piece; in 3D a piece laid flat is mirrored about the garment's center (where it is, for the first pair), one on the body across the body's center (Y)")],
         default='x')
 
-    # the right-click menu: the copies follow the mouse until a click, as Duplicate (Shift+D)
-    follow: bpy.props.BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
-
     @classmethod
     def poll(cls, context):
         return store.get(context)[0] is not None and bool(SEL.pattern_pieces(context))
 
-    def invoke(self, context, event):
-        r = self.execute(context)
-        if r == {'FINISHED'} and self.follow and getattr(self, 'made', None) and context.region is not None                 and context.region.type == 'WINDOW' and AC9_OT_SimPatternDrag.poll(context):
-            import json
-            SEL.apply(context, self.made, 'SET', active=self.made[0], interaction=True)
-            bpy.ops.ac9_cloth_sim.pattern_transform('INVOKE_DEFAULT', mode='MOVE', pieces=json.dumps(self.made))
-        return r
-
-    def execute(self, context):
+    def _copy_build(self, context, spec):
         # the symmetric pattern (user 2026-10-23, Fable review REVIEW_fable_symmetric_copy_2026-10-23): several
         # pieces at once, always with their seams, placed as mirror images; buttons are not copied
         from .core import seam_twin as ST
-        spec, _ = store.get(context)
         spec = S.loads(S.dumps(spec))
         names = SEL.pattern_pieces(context)
         made, skipped = D.mirror_group(spec, names, plane=self.plane)
         if not made:
             self.report({'WARNING'}, rpt("{0}: each has its mirrored twin already", ', '.join(skipped)))
-            return {'CANCELLED'}
-        # a little off the originals, as Duplicate (user 2026-11-11: mirror_group lays them right of every piece,
-        # far off the screen); before the 3D placement below, which mirrors the original's
-        d = (D.group_center(spec, list(made)) - D.group_center(spec, list(made.values()))
-             + np.array([DUPLICATE_OFF, -DUPLICATE_OFF]))
-        D.transform_group(spec, list(made.values()), (), 0.0, (1.0, 1.0), tuple(d))
+            return spec, [], None
         self.made = list(made.values())
         ids, notes = ST.mirror_seams_group(spec, made)
         pl = spec.get('placement', {})
@@ -5253,7 +6063,16 @@ class AC9_OT_SimMirrorCopy(bpy.types.Operator):
                 PLC.set_pair_middle(spec, n, made[n], self.plane)
             pl[made[n]] = S.mirrored_placement(pl[n], S.Outline(D.piece(spec, n)), S.Outline(D.piece(spec, made[n])),
                                                pose='mirror', cx=S.mirror_center(spec, self.plane, n))
-        commit(context, spec, list(made.values()))
+        self._copy_mapping, self._copy_placed = made, placed
+        self._copy_notes, self._copy_skipped, self._copy_ids = notes, skipped, ids
+        active = SEL.lead(context, made) or next(iter(made))
+        return spec, list(made.values()), made[active]
+
+    def _copy_finish(self, context, spec):
+        made, placed = self._copy_mapping, self._copy_placed
+        notes, skipped, ids = self._copy_notes, self._copy_skipped, self._copy_ids
+        commit(context, spec, list(made.values()), owner=self._copy_owner)
+        SEL.apply(context, list(made.values()), 'SET', active=self._copy_anchor_name, interaction=True)
         r = _show_placed(context, spec, made, placed)
         for n in notes:
             self.report({'WARNING'}, rpt("Seams: {0}", n))
@@ -5314,14 +6133,16 @@ class AC9_OT_SimParallelLine(bpy.types.Operator):
         else:
             self.report({'WARNING'}, rpt("Point at an outline edge or an internal line, or pick one"))
             return {'CANCELLED'}
-        dialog_aside(context, event, [self.piece], spec)     # beside the piece: the dialog does not cover the ghost
-        ghost_open(self)
-        return context.window_manager.invoke_props_dialog(self)
+        return parameter_open(self,context)
 
-    def draw(self, context):
-        col = self.layout.column()
-        col.prop(self, "distance")
-        col.prop(self, "count")
+    modal=parameter_modal
+
+    def draw(self,context):
+        self.draw_fields(context,self.layout)
+
+    def draw_fields(self, context, layout):
+        col = layout.column()
+        for name in TP.PARAMETER_FIELDS['parallel']:col.prop(self,name)
         if self.line:
             col.prop(self, "both")
             sub = col.column()
@@ -5347,8 +6168,7 @@ class AC9_OT_SimParallelLine(bpy.types.Operator):
         return lines
 
     def cancel(self, context):
-        clear_ghost()
-        dialog_back(context)
+        parameter_cancel(self,context)
 
     def execute(self, context):
         clear_ghost()
@@ -5376,59 +6196,45 @@ class AC9_OT_SimParallelLine(bpy.types.Operator):
         return {'FINISHED'}
 
 
-DUPLICATE_OFF = 20.0     # mm right and down of the originals: a copy shows next to them
-
-
-class AC9_OT_SimDuplicatePieces(bpy.types.Operator):
-    """Copy the selected pattern pieces as they are (not mirrored, not a left-right pair), a little off the originals; with the mouse over the pattern they follow it until a click (right click: they stay a little off). The seams between the copied pieces are copied too. The copies are not placed (Place them)"""
+class AC9_OT_SimDuplicatePieces(CopyPlacement, bpy.types.Operator):
+    """Copy selected pieces and their shared seams; click in the pattern view to place. Esc or right click cancels the copy. Copies are independent and not placed in 3D"""
     bl_idname = "ac9_cloth_sim.duplicate_pieces"
     bl_label = "Duplicate"
     bl_options = {'REGISTER', 'UNDO'}
-
-    # Shift+D and the right-click menu: the copies follow the mouse. A panel button leaves them a little off the
-    # originals (its region is the 3D view's WINDOW too, so the region cannot tell them apart: GUI test 2026-11-11)
-    follow: bpy.props.BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
         return store.get(context)[0] is not None
 
-    def invoke(self, context, event):
-        self.names = SEL.pattern_pieces(context)
-        if not self.names and AC9_OT_SimPatternDrag.poll(context):
+    def _copy_build(self, context, spec):
+        names = SEL.pattern_pieces(context)
+        event = self._copy_event
+        if not names and event is not None and AC9_OT_SimPatternDrag.poll(context):
             spec, outlines = store.get(context)
             h = pick(context, spec, outlines, PV.layout_matrix(context), event.mouse_region_x, event.mouse_region_y,
                      mode=None)
-            self.names = [h[1]] if h else []
-        self.near = True
-        r = self.execute(context)
-        # over the pattern: the copies follow the mouse until a click, as Blender's Shift+D (user 2026-11-11: they
-        # were laid right of every piece, off the screen); right click leaves them a little off the originals
-        if r == {'FINISHED'} and self.follow and getattr(self, 'made', None) and context.region is not None \
-                and context.region.type == 'WINDOW' and AC9_OT_SimPatternDrag.poll(context):
-            import json
-            bpy.ops.ac9_cloth_sim.pattern_transform('INVOKE_DEFAULT', mode='MOVE', pieces=json.dumps(self.made))
-        return r
-
-    def execute(self, context):
-        names = getattr(self, 'names', None) or SEL.pattern_pieces(context)
+            names = [h[1]] if h else []
         if not names:
-            self.report({'WARNING'}, rpt("Select the pieces to copy"))
-            return {'CANCELLED'}
-        spec, _ = store.get(context)
+            raise ValueError(rpt("Select the pieces to copy"))
         spec = S.loads(S.dumps(spec))
         made, ids = D.duplicate_group(spec, names)
-        if getattr(self, 'near', False) and made:
-            # from the place duplicate_group lays them (right of every piece) to a little off the originals
-            a, b = next(iter(made.items()))
-            d = D.group_center(spec, [a]) - D.group_center(spec, [b]) + np.array([DUPLICATE_OFF, -DUPLICATE_OFF])
-            D.transform_group(spec, list(made.values()), (), 0.0, (1.0, 1.0), tuple(d))
         self.made = list(made.values())
-        commit(context, spec, list(made.values()))
+        self._copy_ids = ids
+        active = SEL.lead(context, made) or next(iter(made))
+        return spec, self.made, made[active]
+
+    def _copy_finish(self, context, spec):
+        ids = self._copy_ids
+        commit(context, spec, self.made, owner=self._copy_owner)
         # the copies selected: Place, G or S goes on with them
-        SEL.apply(context, list(made.values()), 'SET', active=next(iter(made.values())), interaction=True)
-        self.report({'INFO'}, rpt("Copied {0} ({1}), {2} seams", len(made), ', '.join(made.values()), len(ids)))
+        SEL.apply(context, self.made, 'SET', active=self._copy_anchor_name, interaction=True)
+        self.report({'INFO'}, rpt("Copied {0} ({1}), {2} seams", len(self.made), ', '.join(self.made), len(ids)))
         return {'FINISHED'}
+
+
+def _attribute_piece(context):
+    from . import tool_tab
+    return tool_tab.attribute_selection(context)[1]
 
 
 class AC9_OT_SimSymmetrize(bpy.types.Operator):
@@ -5443,13 +6249,13 @@ class AC9_OT_SimSymmetrize(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return store.get(context)[0] is not None and _selected_piece(context) is not None
+        return store.get(context)[0] is not None and _attribute_piece(context) is not None
 
     def execute(self, context):
         spec, _ = store.get(context)
         old = S.loads(S.dumps(spec))
         sp = S.loads(S.dumps(spec))
-        name = _selected_piece(context)
+        name = _attribute_piece(context)
         try:
             ch = D.symmetrize(sp, name, self.keep)
         except ValueError as exc:
@@ -5494,14 +6300,15 @@ class AC9_OT_SimSymmetricEdit(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return store.get(context)[0] is not None and _selected_piece(context) is not None
+        return store.get(context)[0] is not None and _attribute_piece(context) is not None
 
     def execute(self, context):
         spec, _ = store.get(context)
         spec = S.loads(S.dumps(spec))
-        name = _selected_piece(context)
+        from . import tool_tab
+        selected, name = tool_tab.attribute_selection(context, spec)
         # the selected pieces all follow the active one's switch (the Tool tab sets them all)
-        names = [n for n in dict.fromkeys(SEL.pattern_pieces(context) + [name])]
+        names = list(selected)
         if D.piece(spec, name).get('mirror_edit'):
             for n in names:
                 D.piece(spec, n).pop('mirror_edit', None)
@@ -5786,6 +6593,11 @@ def _menu_select(context, hit):
         from . import measure_edit as MEE
         MEE.select(context, hit[1])
     elif hit[0] in ('edge', 'corner', 'iline', 'iend', 'inode', 'ihandle'):
+        if hit[0] == 'iline' and len(hit) > 3 and tool_mode(context) == 'EDIT':
+            hs = internal_hit_points(store.get(context)[0], hit)
+            if not all(x in picked_lines(store.get(context)[0]) for x in hs):
+                select_span(context, store.get(context)[0], hit[1], hit[2], hit[3])
+            return
         item = edit_item(store.get(context)[0], hit)
         if item is not None:
             kind, name, iid = item
@@ -5891,7 +6703,7 @@ _MENU_ITEMS = {
              ("Add Dart", "ac9_cloth_sim.add_dart", "")],
     'corner': [("Delete", "ac9_cloth_sim.pattern_edit", 'REMOVE')],
     'notch': [("Delete", "ac9_cloth_sim.pattern_edit", 'REMOVE')],
-    'piece': [("Duplicate", "ac9_cloth_sim.duplicate_pieces", "follow=True"), ("Mirror Copy", "ac9_cloth_sim.mirror_copy", "follow=True"),
+    'piece': [("Duplicate", "ac9_cloth_sim.duplicate_pieces", ""), ("Mirror Copy", "ac9_cloth_sim.mirror_copy", ""),
               (SYM_KEEP_LEFT, "ac9_cloth_sim.symmetrize", "keep=LEFT"),
               (SYM_KEEP_RIGHT, "ac9_cloth_sim.symmetrize", "keep=RIGHT"), None,
               ("Move", "ac9_cloth_sim.pattern_transform", "mode=MOVE"),
@@ -5918,7 +6730,7 @@ _MENU_ITEMS_T = {
     'iline': [("Move", "ac9_cloth_sim.pattern_transform", "mode=MOVE"),
               ("Rotate", "ac9_cloth_sim.pattern_transform", "mode=ROTATE"),
               ("Scale", "ac9_cloth_sim.pattern_transform", "mode=SCALE"), None,
-              ("Delete", "ac9_cloth_sim.delete_selected", "")],
+              ("Delete", "ac9_cloth_sim.delete_internal", "")],
 }
 _MENU_KEYS = {"Add Point": "K", "Curve": "C", "Delete": "X", "Delete Point": "X", "Straighten": "C",
               "Delete Line": "X", "Add Notch": "N", "Duplicate": "Shift+D", "Rotate": "R", "Scale": "S", "Name": "F2",
@@ -5932,6 +6744,8 @@ def menu_items(spec, hit, tool=None):
     line is moved, turned and scaled whole)."""
     if not hit:
         return []
+    if tool != 'EDIT_PATTERN' and hit[0] == 'iline':
+        hit = hit[:3]
     kind = hit[0]
     if tool == 'DRAW':                            # a drawing tool's menu: the size of what is under the cursor
         nr = numeric_row(spec, hit) if kind in ('piece', 'iline') else None
@@ -5945,7 +6759,12 @@ def menu_items(spec, hit, tool=None):
                   ("Clone as Pattern (+Sew)", "ac9_cloth_sim.clone_shape", "",
                    {'piece': hit[1], 'line': hit[2], 'sew': True}), None]
                  if it is not None and it.get('closed') else [])
-        return first + [r if r is None else r + ({},) for r in _MENU_ITEMS_T['iline']]
+        return first + [r if r is None else r + ({'piece':hit[1],'line':hit[2]} if r[1]=='ac9_cloth_sim.delete_internal' else {},)
+                        for r in _MENU_ITEMS_T['iline']]
+    if kind == 'iline' and tool == 'EDIT_PATTERN' and len(hit) > 3:
+        nr = numeric_row(spec, hit)
+        return ([nr, None] if nr else []) + [('Add Point', 'ac9_cloth_sim.pattern_edit', 'SPLIT', {}),
+                                             ('Curve', 'ac9_cloth_sim.pattern_edit', 'CURVE', {})]
     if kind == 'iline':
         pc = next((x for x in spec['pieces'] if x['name'] == hit[1]), None)
         it = next((x for x in (pc or {}).get('internals', []) if x['id'] == hit[2]), None)
@@ -5982,6 +6801,13 @@ def menu_items(spec, hit, tool=None):
     if kind in ('edge', 'corner') and _dart_hit(spec, hit):   # a dart's leg or apex: moving it (no key now)
         rows = [("Move Dart", "ac9_cloth_sim.move_dart", "")] + ([None] if rows else []) + rows
     out = [r if r is None else r + ({},) for r in rows]
+    if tool == 'EDIT_PATTERN' and kind in ('corner', 'iend', 'inode'):
+        from .boundary_picker import nearby
+        pc = D.piece(spec, hit[1])
+        ref=vertex_ref(spec,hit)
+        if len(nearby(pc,ref))>1:
+            out=[('Separate Vertex and Move','ac9_cloth_sim.separate_vertex','',
+                  dict(piece=hit[1],vertex=json.dumps(ref),_invoke=True)),None]+out
     if kind in ('corner', 'handle'):              # the corner's smoothness (no key: the menu only, user 2026-11-13)
         cr = _corner_rows(spec, hit)
         out = cr + ([None] if cr and out else []) + out
@@ -5991,6 +6817,9 @@ def menu_items(spec, hit, tool=None):
     nr = numeric_row(spec, hit) if kind in ('corner', 'edge', 'iline', 'iend', 'inode', 'piece') else None
     if nr is not None:                            # the Tool tab's Numeric Input here too (user 2026-11-11, 11-17)
         out = [nr] + ([None] if out else []) + out
+    extension = extension_row(spec, hit, tool)
+    if extension is not None:
+        out = [extension, None] + out
     return out
 
 
@@ -6126,7 +6955,9 @@ class AC9_OT_SimSelectAllPieces(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (AC9_OT_SimSync3D, AC9_OT_SimPatternHover, AC9_OT_SimPatternDrag, AC9_OT_SimSetGap, AC9_OT_SimPatternEdit, AC9_OT_SimCornerSmooth, AC9_OT_SimIPointSmooth, AC9_OT_SimPatternRotate,
+from .boundary_picker import AC9_OT_SimSeparateVertex
+
+CLASSES = (AC9_OT_SimSeparateVertex, AC9_PT_EditParameters, AC9_OT_EditParameterAction, AC9_OT_SimSync3D, AC9_OT_SimPatternHover, AC9_OT_SimPatternDrag, AC9_OT_SimSetGap, AC9_OT_SimExtendOutline, AC9_OT_SimPatternEdit, AC9_OT_SimCornerSmooth, AC9_OT_SimIPointSmooth, AC9_OT_SimPatternRotate,
            AC9_OT_SimPatternScale, AC9_OT_SimDuplicatePieces, AC9_OT_SimSymmetrize, AC9_OT_SimParallelLine,
            AC9_OT_SimEditPatternTool,
            AC9_OT_SimMatchLength, AC9_OT_SimExportDXF, AC9_OT_SimImportDXF, AC9_OT_SimImportSVG, AC9_OT_SimDrawPiece, AC9_OT_SimDrawLine, AC9_OT_SimNewPattern, AC9_OT_SimDeletePiece, AC9_OT_SimMirrorCopy,
@@ -6165,6 +6996,8 @@ def _icon(key):
 
 
 def register():
+    from .boundary_picker import register_handlers
+    register_handlers()
     for c in CLASSES:
         bpy.utils.register_class(c)
     try:
@@ -6217,6 +7050,9 @@ def register():
 
 
 def unregister():
+    if _parameter['op'] is not None:_parameter_close(_parameter['op'],bpy.context)
+    from .boundary_picker import unregister_handlers
+    unregister_handlers()
     for h in _handles:
         try:
             bpy.types.SpaceView3D.draw_handler_remove(h, 'WINDOW')
@@ -6246,3 +7082,4 @@ def unregister():
         _icons = None
     for c in reversed(CLASSES):
         bpy.utils.unregister_class(c)
+

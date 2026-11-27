@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "0.4.1",
+  "version": "0.5.0",
   "channel": "preview",
   "distribution": "split",
   "required_packages": [
@@ -9,10 +9,9 @@
     "runtime"
   ],
   "publication": {
-    "asset_publication_approved": false,
+    "asset_publication_approved": true,
     "ready": false,
     "remaining": [
-      "runtime_distribution_terms_review",
       "production_install_update_check"
     ]
   }

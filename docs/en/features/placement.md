@@ -62,13 +62,32 @@ Press **Diagnose** in its own panel to inspect the displayed cloth surface befor
 - Selected pieces and their linked pairs are checked; with no selection, all displayed eligible pieces. An unavailable selection never silently expands to the whole garment.
 - Intrusion counts vertices inside the body or Collision objects, including the floor. The rule is deeper than 0.5 mm, within 50 mm, excluding open-boundary faces and the appropriate arm faces. Cloth checks include transverse intersections between pieces and nonadjacent self-intersections within a piece. Only face pairs directly joined by a verified stitch edge are excluded as sewn neighbors.
 - Expand **Diagnosis Results** for each piece, crossing partners, self-crossing and principal stretch. Face counts are not numbers of holes or locations. Geometric crossings whose sewing cannot be verified are shown as **crossing candidates**; confirmed crossings and other checks remain available. Degenerate faces are marked as not checked. Start-shape notes have a separate box.
-- **Display** selects **Problem Areas / Stretch / Face Side / None**. Overlays > **Diagnosis Display** controls the same value. Switching display does not rerun the collision diagnosis. Stretch numbers and colors use the same principal triangle stretch relative to the pattern. Face Side shows the current face in blue and back in red; a visible back is not an error count.
+- The overview puts scope, intrusion, intersections and maximum stretch on separate rows. Crossing-partner lists belong to **Diagnosis Results** in the panel and are no longer repeated at the top left of either view. Location squares, diamonds and counts remain in both views.
+- The panel's **Diagnosis Display** is one group of four choices: **Diagnosis Locations / 3D Stretch Map** above **Face Side / None**. Its position stays the same before and after diagnosis; there is no duplicate dropdown in the same panel.
+- Diagnose opens **Diagnosis Locations**. The overview includes maximum stretch and its piece. When the maximum among fully checked pieces exceeds x1.05, one neutral diamond marks that face's centroid in both 3D and the matching pattern. Ties use one representative. The mark locates stretch; it does not judge fabric quality. Partial checks are identified, and an entirely unchecked scope is never reported as x1.00.
+- **Diagnosis Display** selects **Diagnosis Locations / Stretch / Face Side / None**. **3D Stretch Map** shows the distribution across displayed cloth in one click; **Diagnosis Locations** returns to the marks. Patterns show the diamond, without a stretch surface fill. Overlays > **Diagnosis Display** controls the same value. Switching display does not rerun diagnosis. Numbers and the diamond describe the diagnosis time; the map describes displayed geometry. Stretch numbers and colors use the same principal triangle stretch relative to the pattern. Colors indicate ratios, not pass/fail. Face Side shows the face in blue and back in red; a visible back is not an error count.
 - Problem Areas colors confirmed faces red and unverified sewing candidates yellow, with corresponding markers in 3D and on the pattern. Intersection markers use the 3D intersection and interpolated material positions on each surface. Occluded spots use dashed squares and faint dots. Nearby regions are grouped by their 3D or pattern distance, independently of camera angle.
 - Results carry a check time and frame. Changes to targets, other cloth, body, visibility, shape source, pattern, seams, particle distance, or start references invalidate old marks. Changing viewport alone does not. Loading and Undo/Redo return the check to an unmeasured state.
 - Start-shape warnings remain available without placed objects. They do not build and verify every array of the next solver run. Observations from the last run are identified separately as **Recorded Run Checks**.
 - Coplanar contact, sewing correctness and final garment quality are outside this check.
 
 Placement no longer adds automatic quality warnings or red marks. Failures to construct a shape or missing required settings are still reported immediately. Press **Diagnose** again after correcting the shape.
+
+### Diagnosis display examples
+
+The front panel was deliberately stretched sideways for this example. It is not a garment-quality reference.
+
+![Diagnosis panel: six pieces, five inside vertices, 69 confirmed crossing faces, maximum stretch x1.71](../img/d_diagnosis_panel.png)
+
+![Match diagnosis squares and the maximum-stretch diamond between the garment and its pattern](../img/d_diagnosis_views.png)
+
+The same shape with **3D Stretch Map** selected. Red surface coloring shows stretch distribution; its purpose differs from the red squares in Diagnosis Locations.
+
+![3D stretch distribution on the same shape](../img/d_diagnosis_stretch.png)
+
+This example has missing material coordinates. Stretch is **not checked**, and crossings whose sewing cannot be verified are yellow **crossing candidates**. Zero confirmed crossing faces does not mean that candidates or unchecked items have disappeared.
+
+![Unchecked stretch and 137 crossing-candidate faces shown in yellow](../img/d_diagnosis_unchecked.png)
 
 ## Tools for tidying the adjusted shape (no physics calculation)
 
@@ -96,7 +115,7 @@ Select the pieces first, then press any of these. They are tools for tidying the
 
 ## Pairs (the Pair section in Tool tab > AC9 Piece)
 
-The Tool tab's "AC9 Piece" shows, from the top: the piece's name and size, **State** and **Display** (always shown), then sections you can fold: **Fabric & Look**, **Simulation**, **Pair**, **This Piece's Symmetry** and **Placement**.
+The Tool tab's "AC9 Piece" shows, from the top: the piece's name and size, **State** and **Display** (always shown), then sections you can fold: **Fabric & Material**, **Simulation**, **Pair**, **This Piece's Symmetry** and **Placement**.
 
 The **Pair** section shows the partner and, in three parts, the pattern, the placement in 3D and the simulated result (the right-click menus keep their buttons).
 

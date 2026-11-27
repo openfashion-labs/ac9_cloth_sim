@@ -144,6 +144,82 @@ class BuildAheadTests(unittest.TestCase):
             self.BA._skip(why)
         self.assertEqual(traced, ['drag', 'modal', 'drag'])
 
+    def prepared_task(self):
+        calls=[]
+        session=types.SimpleNamespace(poisoned=False,lease=None,process=types.SimpleNamespace(poll=lambda:None),
+            compatible=lambda *a:True,submit=lambda *a,**k:(calls.append((a,k)) or Job(self.stage)))
+        self.DR._LIVE_SESSION=session
+        self.DR.newton_python=lambda ctx:'python'
+        self.DR.solver_process_env=lambda *a:{}
+        self.BA.enabled=lambda *a:True;self.BA._busy_retry=lambda:False
+        row=dict(key='ready',idx='idx',avatar='avatar',cfg='cfg',stage='stage',solver_env={},prepare_s=19.,key_s=.01,worker_s=20.,phases=[])
+        task=types.SimpleNamespace(generation=0,session=session,snapshot_s=.02,matches=lambda ctx:True,
+                                   read=lambda:row,aborted=0)
+        task.abort=lambda:setattr(task,'aborted',task.aborted+1)
+        self.BA._A['prep']=task
+        return task,calls
+
+    def test_prepared_result_is_submitted_without_main_preparation(self):
+        task,calls=self.prepared_task();self.BA._prepared(None,task)
+        self.assertEqual(len(calls),1);self.assertEqual(calls[0][1],dict(op='build'))
+        self.assertEqual(self.BA._A['key'],'ready');self.assertEqual(task.aborted,0)
+
+    def test_changed_source_or_edit_generation_is_never_submitted(self):
+        for reason in ['document','generation','session','disabled']:
+            task,calls=self.prepared_task()
+            if reason=='document':task.matches=lambda ctx:False
+            if reason=='generation':task.generation=-1
+            if reason=='session':self.DR._LIVE_SESSION=object()
+            if reason=='busy':self.BA._busy_retry=lambda:True
+            if reason=='disabled':self.BA.enabled=lambda *a:False
+            self.BA._prepared(None,task)
+            self.assertEqual(calls,[],reason);self.assertEqual(task.aborted,1,reason)
+            self.assertIsNone(self.BA._A['prep'])
+
+    def test_navigation_holds_ready_result_until_it_ends(self):
+        task,calls=self.prepared_task();self.BA._busy_retry=lambda:True
+        self.BA._prepared(None,task)
+        self.assertFalse(calls);self.assertEqual(task.aborted,0)
+        self.assertIs(self.BA._A['prep'],task)
+        self.BA._busy_retry=lambda:False;self.BA._prepared(None,task)
+        self.assertEqual(len(calls),1);self.assertEqual(task.aborted,0)
+
+    def test_missing_metrics_cannot_transfer_the_input_lease(self):
+        task,calls=self.prepared_task();row=task.read();del row['prepare_s']
+        self.BA._prepared(None,task)
+        self.assertFalse(calls);self.assertEqual(task.aborted,1)
+
+    def test_diagnostic_failure_keeps_submitted_input_alive(self):
+        task,calls=self.prepared_task()
+        def fail(*a,**kw):raise RuntimeError('trace unavailable')
+        self.BA._trace=fail;self.BA._prepared(None,task)
+        self.assertEqual(len(calls),1);self.assertEqual(task.aborted,0)
+        self.assertIs(self.BA._A['prep'],task);self.assertIsNotNone(self.BA._A['job'])
+
+    def test_preparation_error_is_optional_and_retires_private_input(self):
+        task,calls=self.prepared_task()
+        def fail():raise ValueError('private preparation failed')
+        task.read=fail
+        self.BA._prepared(None,task)
+        self.assertFalse(calls);self.assertEqual(task.aborted,1)
+        self.assertIsNone(self.BA._A['job'])
+
+    def test_press_cancels_cpu_preparation_without_wait(self):
+        task,calls=self.prepared_task();self.BA.pressed()
+        self.assertEqual(task.aborted,1);self.assertIsNone(self.BA._A['prep'])
+        self.assertFalse(calls)
+
+    def test_geometry_update_cancels_the_snapshot_generation(self):
+        task,calls=self.prepared_task();task.dependencies={23}
+        bpy=sys.modules['bpy'];bpy.context=types.SimpleNamespace()
+        bpy.types=types.SimpleNamespace(Collection=type('Collection',(),{}))
+        self.BA.switched_on=lambda:True
+        item=types.SimpleNamespace(session_uid=23)
+        graph=types.SimpleNamespace(updates=[types.SimpleNamespace(id=item,is_updated_geometry=True,is_updated_transform=False)])
+        self.BA._input_update(None,graph)
+        self.assertEqual(task.aborted,1);self.assertEqual(self.BA._A['generation'],1)
+        self.assertFalse(calls)
+
     def test_switch_overrides(self):
         # the preference is on by default; the environment switch overrides it either way
         os.environ['AC9_BUILD_AHEAD'] = '0'
@@ -172,7 +248,7 @@ class HookTests(unittest.TestCase):
         self.assertIn('DR.fast_start(bpy.context)', ba)                  # part of Fast Simulation Start
         self.assertIn('build_ahead.pressed()', dress)                    # a press drops the build not sent yet
         self.assertIn("op='build'", ba)
-        self.assertIn('for_build=True', ba)                              # a build's input: no resume gate, no record
+        self.assertIn('for_build=True', (ROOT/'ahead_prepare.py').read_text(encoding='utf-8'))                              # a build's input: no resume gate, no record
         self.assertIn('not (for_build and not _fast_live)', dress)
         self.assertIn('if not for_build:', dress)
         self.assertIn('_PIECE_TRIS.get(', dress)                         # an unchanged piece is not triangulated again

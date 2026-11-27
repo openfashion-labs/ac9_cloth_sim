@@ -77,9 +77,10 @@ class Statements(unittest.TestCase):
     def _builder(self, kept_key):
         from unittest.mock import Mock
         R=object.__new__(RR.Resident);R.g={'model':'kept'} if kept_key else None;R.key=kept_key;R.last=None;R.snap={}
-        R.runtime=None;R.codes=[];R.loop_i=0;R.vram=lambda:{}
+        R.runtime=None;R.codes=[];R.loop_i=0;R.vram=lambda:{};R.i_heavy={2,5}
         R._begin=Mock(side_effect=AssertionError('a build never begins'))
-        def fresh(init,mark):
+        def fresh(init,mark,upto=None):
+            R.upto=upto
             R.g={'model':K('new')};return dict(setup_s=1.0,keepable=R.keepable,why_not=None)
         R._fresh=Mock(side_effect=fresh);R.keepable=True
         return R
@@ -90,6 +91,14 @@ class Statements(unittest.TestCase):
         with patch.object(RR,'structure_key',return_value=K('new')):info=R.run('idx','body',{},{},build_only=True)
         self.assertEqual((info['mode'],R.key,R.g),('build',K('new'),{'model':K('new')}))
         R._fresh.assert_called_once()
+        # a build stops after the last heavy statement: a begin runs every later one again
+        self.assertEqual(R.upto,6)
+
+    def test_a_press_builds_up_to_the_loop(self):
+        from unittest.mock import patch
+        R=self._builder(K('old'))
+        with patch.object(RR,'structure_key',return_value=K('new')):R.run('idx','body',{},{})
+        self.assertIsNone(R.upto)
 
     def test_build_only_of_the_kept_structure_does_nothing(self):
         from unittest.mock import patch
@@ -155,6 +164,8 @@ class Statements(unittest.TestCase):
             if old is None: sys.modules.pop('warp', None)
             else: sys.modules['warp'] = old
         self.assertLess(R.i_builder, R.i_final); self.assertLess(R.i_final, R.loop_i)
+        # a build stops after the last heavy statement: everything a begin restores is taken before it
+        self.assertLess(R.i_final, max(R.i_heavy)); self.assertLess(R.i_filters_end, max(R.i_heavy))
         heads = sorted(R.heads[i].split('(')[0].split(chr(10))[0] for i in R.i_heavy)
         # the solver, the collision pipeline and the Native 3 block only (not the checkpoint branch)
         self.assertEqual(heads, ['if NATIVE_THREE:', 'pipe = newton.CollisionPipeline', 'solver = newton.solvers.SolverVBD'])
