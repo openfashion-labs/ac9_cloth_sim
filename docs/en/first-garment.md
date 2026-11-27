@@ -33,12 +33,14 @@ To start from your own body (avatar), or from a pattern made in other software (
 2. Press **N** in the 3D viewport to show the sidebar, and open the "AC9 Cloth Sim" tab ("Work Screen" in [Blender basics](blender-basics.md)).
 3. In the **Setup** panel, press **Work Screen**. You get a screen with the 3D view on the left, the pattern in the middle, and the Tool tab on the right.
 
-![the Setup panel (Work Screen and Add Avatar numbered)](img/fg_setup.png)
+![Work Screen in the Setup panel](img/fg_setup.png)
 
 ## 2. Load the avatar and measure it
 
-1. In **Setup**, press **Add Avatar**. The avatar appears in the 3D view on the left and is also set in the **Body** field.
+1. At the top of **Measure**, press **Add Avatar**. The avatar appears in the 3D view on the left and is also set in the **Body** field. It starts unmeasured; press **Measure Body** if you need dimensions and measurement lines.
 2. In the **Measure** panel of the sidebar, press **Measure Body**. The bust, waist, hip, neck, arm and other measurements appear in a table, and the measured places are drawn as lines around the body.
+
+**Body & Garment Measurements** hides the body's lines and labels; **Measuring Tapes** controls manual tapes separately. Hiding a measurement keeps its value.
 
 ![the Measure panel after Measure Body, and the lines on the body](img/fg_measured.png)
 
@@ -123,13 +125,18 @@ Which piece goes on which cylinder:
 - To place on the back, turn the view in the 3D viewport on the left so you see the back of the body (drag with the middle button; without one, see [Blender basics](blender-basics.md)).
 - If you mix up front and back, or left and right, the calculation still runs. If the garment is worn oddly, place it again.
 
-The shape you see when you release is the shape the simulation starts from. Placement does not add automatic quality warnings or red marks. Press **Diagnose** in its own panel to check the displayed cloth for intrusion, cloth crossing, stretch, and start-shape warnings. Placed and dressed pieces share this entry point; nothing moves. Expand **Diagnosis Results** for pieces and crossing partners. **Display** selects Problem Areas, Stretch, Face Side, or None. Diagnose again after correcting the shape.
+The shape you see when you release is the shape the simulation starts from. Placement does not add automatic quality warnings or red marks. Press **Diagnose** in its own panel to check the displayed cloth for intrusion, cloth crossing, stretch, and start-shape warnings. Placed and dressed pieces share this entry point; nothing moves. Expand **Diagnosis Results** for pieces and crossing partners. **Diagnosis Display** selects Diagnosis Locations, Stretch, Face Side, or None. Diagnose again after correcting the shape.
+
+- The overview puts scope, intrusion, intersections and maximum stretch on separate rows. Crossing-partner lists belong to **Diagnosis Results** in the panel and are no longer repeated at the top left of either view. Location squares, diamonds and counts remain in both views.
+- The panel's **Diagnosis Display** is one group of four choices: **Diagnosis Locations / 3D Stretch Map** above **Face Side / None**. Its position stays the same before and after diagnosis; there is no duplicate dropdown in the same panel.
 
 To place a piece again, select it and place it again with **Place**. **Back to Flat** lays it flat where it is.
 
 ![right after placing around the body](img/fg_placed.png)
 
 ## 9. Dress (Simulate)
+
+In the AC9 Cloth Sim work screen, **F5** starts and stops Simulate, wherever the mouse is. This shortcut is enabled by default. **Space** keeps its Blender action; with Play selected it plays and stops recorded progress. Change or disable the shortcut under **Hotkeys → Simulate (Start / Stop)** in the add-on preferences.
 
 1. Press **Simulate** at the top of the Tool tab on the right (**AC9 Run**).
 2. At first it is preparing the calculation, so wait a little ("Preparing the simulation (N s elapsed)" appears in the 3D view; the first time you dress, it takes a little longer). **During this time the cloth does not move, but it has not stopped. Wait without pressing the button again** (pressing it again stops it).

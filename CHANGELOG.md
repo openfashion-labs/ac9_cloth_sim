@@ -9,11 +9,29 @@ The version number is the one in `blender_manifest.toml`; each release is tagged
 
 ## [Unreleased]
 
-## [0.4.1] - Unreleased
+## [0.5.0] - Unreleased
 
-Release repair in preparation. Split distribution is not published yet.
+Alpha release in preparation. Split distribution and the changes below are not published yet.
+
+### Added
+
+- Add editable material base colors, three-point loop tapes, avatar measurement entry, width-based outline extension and experimental UI timing logs.
+- Add generated tool and overlay references and a before-start guide.
+
+### Changed
+
+- Use F5 for simulation by default and retain the Blender Space action; keep the shortcut configurable.
+- Confirm duplicated patterns at the clicked location, with cancellation and Undo support.
+- Unify numeric preview dialogs, diagnosis summaries and markers, measurement labels, tool property placement and independent overlay controls.
+- Refine whole-piece and internal-line selection, outline connections and position-only snapping without implicit internal-line following.
 
 ### Fixed
+
+- Preserve shared mesh users, material-point transforms, inherited fabrics and unselected result shapes during editing and placement.
+- Restore refused settings and derived shapes together; retain safe Undo after partially failed modal edits.
+- Preserve long Windows runtime and archive paths, own cold worker processes, and reduce repeated hashing during stopping.
+- Retain live frame playback across reopening and restore the bundled avatar material.
+
 
 - Restore the prepared distribution CPU checks and split-package CI artifacts omitted during 0.4.0 public export.
 - Check required release steps and all three package roles; block publication while distribution connection and review requirements remain incomplete.

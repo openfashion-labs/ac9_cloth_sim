@@ -24,7 +24,8 @@ class ControlBasis(unittest.TestCase):
         self.sp['guides']={'torso':{'o':[0,0,0],'R':np.eye(3).tolist(),'r':100,'h0':0,'h1':100}}
         self.sp['placement']={n:{'guide':'torso','anchor':[0,0],'theta':40. if n=='A' else 140.,'h':0.} for n in ['A','B']}
         ST.new_text(bpy.context,self.sp['name']);ST.write(bpy.context,self.sp,keep=True)
-        PATTERN.rebuild(bpy.context,self.sp,{p['name']:S.Outline(p) for p in self.sp['pieces']},switch_document=True)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(bpy.context,*ST.get(bpy.context),switch_document=True)
         self.assertTrue(PATTERN.integrity(bpy.context,self.sp)['ok'])
         body=bpy.data.objects.get('ControlBasisBody')
         if body is None:

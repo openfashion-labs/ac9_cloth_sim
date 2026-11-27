@@ -23,12 +23,12 @@ SKIP_DIRS = ('tests', 'solver', '__pycache__', 'LLM', 'docs', 'core')
 SWAP = re.compile(r"(?<![\w.])\w+(?:\.\w+)*\.data\s*=(?!=)")
 # placed_view.py 6: write_local_result (a Local Sim's result kept on the placed object) is called only from the
 # Simulate operator's execute and modal (dress.AC9_OT_SimDress._to_placed via _finish), which undo_guard wraps
-SWAP_ALLOWED = {'button_view.py': 2, 'dress.py': 2, 'measure_tool.py': 2, 'pattern_view.py': 1, 'placed_view.py': 8,
+SWAP_ALLOWED = {'button_view.py': 2, 'dress.py': 2, 'measure_tool.py': 2, 'pattern_view.py': 1, 'placed_view.py': 9,
                 'prepare_build.py': 1, 'zipper_view.py': 1}
 # a datablock freed: bpy.data.<kind>.remove(...)
 FREE = re.compile(r"bpy\.data\.\w+\.(?:remove|batch_remove)\(")
 FREE_ALLOWED = {'button_view.py': 10, 'draft_tool.py': 2, 'dress.py': 5, 'export_retopo.py': 2, 'guide_edit.py': 3,
-                'operators.py': 6, 'pattern_view.py': 6, 'piece_move.py': 4, 'place_seam.py': 3, 'placed_view.py': 30,
+                'operators.py': 6, 'pattern_view.py': 6, 'piece_move.py': 4, 'place_seam.py': 3, 'placed_view.py': 24,
                 'prepare_build.py': 2, 'work_screen.py': 2, 'zipper_view.py': 4}
 # one of the add-on's operators called from Python with no undo step asked for (the second argument True)
 NESTED = re.compile(r"bpy\.ops\.ac9_cloth_sim\.(?!\w+\.poll\b)\w+\((?!\s*'(?:INVOKE|EXEC)_DEFAULT',\s*True\b)")
@@ -43,6 +43,11 @@ PUSH_ALLOWED = {'undo_guard.py': 2}
 # reconnection in PreparedResetBackup, reached through the guarded Part to Seam execute.
 # Independently checked by test_move_state_snapshot and actual Part to Seam two-step undo/redo;
 # the expected count still rejects any further unreviewed site. No handler/timer site was added.
+# placed_view.py +1: writable_mesh isolates a physical writer from live mesh users and retained shared inputs.
+# It runs within guarded operations or the native fold-side property transaction, never a timer/handler writer.
+# test_fold_shared_native dispatches native enum input, undo/redo and file reopen; test_fold_shared_mesh covers
+# refusal, outer cancellation, pair linking, fitting, local output, and legacy archives with external live users.
+# Seven archive retirement sites now share one user-preserving helper: placed_view.py has six fewer frees.
 
 
 def _sources():

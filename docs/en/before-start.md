@@ -44,13 +44,13 @@ Open **Edit > Preferences > Add-ons > AC9 Cloth Sim**. Run settings are under **
 | Keep Cache | Retains recorded progress; on by default | Turn off if you only need the last shape; the saved garment shape remains |
 | Keep All Simulate Frames | Records beyond sewing; off by default | Requires Keep Cache; long runs have a recording limit |
 | Keep Old Runs | Keeps previous result folders for a garment; off by default | Enable for comparisons; otherwise older runs are cleaned up while keeping the latest |
-| Hotkeys | Changes or disables the simulation start/stop key in the AC9 work screen | Space or Shift+Space, depending on Blender’s Spacebar Action; check your own assignment |
+| Hotkeys | Changes or disables the simulation start/stop key in the AC9 work screen | F5 is the current default; check your own assignment |
 
 The cache settings also appear in **AC9 Run > Settings**. Both places control the same preferences.
 
-### Space and simulation start/stop
+### F5 starts and stops; Space keeps Blender's action
 
-In this 0.4.1 candidate, **Space** starts and stops Simulate in the AC9 work screen. When Blender's Spacebar Action is Tools or Search, the default is **Shift+Space**. Check **Hotkeys** in the add-on preferences if you changed it. Outside the AC9 work screen, the key keeps Blender's action. Timeline playback and calculating cloth are separate operations.
+In the AC9 work screen, **F5** starts and stops Simulate by default. **Space** keeps Blender's playback, tools or search action. If you changed the key or use a setting from an older version, check **Hotkeys** in the add-on preferences. Outside the AC9 work screen, F5 does not start this simulation. Timeline playback and calculating cloth are different operations.
 
 ## Separate the last shape from recorded progress {#shape-and-frames}
 

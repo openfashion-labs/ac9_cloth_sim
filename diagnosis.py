@@ -16,15 +16,16 @@ from mathutils import Vector
 
 from . import store
 from .core import result_names as RN
+from .core import overlay_policy as OP
 from .i18n import tx
 
 _records = {}
 _sequence = [0]
 NAME = "Diagnose"
-DISPLAY_NAME = "Diagnosis Display"
+DISPLAY_NAME = OP.label("diagnosis_display")
 RESULTS_NAME = "Diagnosis Results"
 RUN_RECORDS_NAME = "Recorded Run Checks"
-DISPLAY_ITEMS = (('NONE', "None", ""), ('PROBLEMS', "Problem Areas", ""),
+DISPLAY_ITEMS = (('NONE', "None", ""), ('PROBLEMS', "Diagnosis Locations", ""),
                  ('STRETCH', "Stretch", ""), ('SIDE', "Face Side", ""))
 
 
@@ -78,14 +79,6 @@ def sources(context, spec, outlines):
         topology = PL._garment_topo(garment, key)
         world, _sig = PL._garment_co(context, garment, key)
         flat = DG._garment_flat(garment)
-        if flat is not None:
-            uv = garment.data.uv_layers.get('UVMap')
-            loops = np.empty(len(garment.data.loops), np.int64)
-            garment.data.loops.foreach_get('vertex_index', loops)
-            coords = np.empty(len(loops) * 2, np.float32)
-            uv.data.foreach_get('uv', coords)
-            if not np.allclose(flat[loops], coords.reshape(-1, 2) * 1000., atol=.001, rtol=0):
-                flat = None
         for name, t in topology.items():
             if state.get(name, {}).get('source') == 'result':
                 raw[name] = (flat, t['tri'], world, False)
@@ -269,6 +262,9 @@ def measure(shapes, names, bvh, skip, masks):
         l1, l2 = DG.stretches(V, T[valid], Y)
         f['stretch'] = float(l1.max()) if len(l1) else 1.0
         f['median'] = float(np.median(l1)) if len(l1) else 1.0
+        # Resolve the representative face during diagnosis, never from Panel.draw.
+        f['stretch_face'] = (int(np.flatnonzero(valid)[int(np.argmax(l1))])
+                             if f['stretch_checked'] and len(l1) and np.isfinite(l1).all() else None)
         found[name] = f
     face_vertices = {n: [frozenset(map(int, tri)) for tri in f['T']] for n, f in shapes.items()}
     for an, bn in combinations_with_replacement(sorted(shapes), 2):
@@ -419,11 +415,52 @@ def display_pieces(context, spec):
     return pieces, ('diagnosis', rec['serial'], tuple(sorted(pieces)))
 
 
-def summary(rec):
+def stretch_peak(rec):
+    """One reproducible maximum among completely checked pieces in this diagnosis scope."""
+    rows = [(n, f) for n, f in rec['found'].items()
+            if f['stretch_checked'] and f.get('stretch_face') is not None and np.isfinite(f['stretch'])]
+    return min(rows, key=lambda row: (-row[1]['stretch'], row[0])) if rows else None
+
+
+def stretch_lines(rec):
+    peak = stretch_peak(rec)
+    if peak is None:
+        return [tx("Stretch: not checked")]
+    name, f = peak
+    lines = [tx("Maximum stretch: x{0} ({1})", f"{f['stretch']:.2f}", name)]
+    missing = (sum(not f['stretch_checked'] or f.get('stretch_face') is None for f in rec['found'].values())
+               + len(rec.get('unavailable', ())))
+    if missing:
+        lines.append(tx("Checked pieces only; stretch not checked: {0} pieces", missing))
+    return lines
+
+
+def stretch_summary(rec):
+    return '; '.join(stretch_lines(rec))
+
+
+def stretch_spot(context, spec):
+    """Maximum face centroid in cloth and matching material coordinates; never a live fallback."""
+    from . import pattern_view as PV, diagnose as DG
+    rec = current(context)
+    peak = stretch_peak(rec) if rec is not None else None
+    if peak is None:
+        return None
+    name, f = peak
+    if f['stretch'] <= DG.OK:
+        return None
+    ids = f['T'][f['stretch_face']]
+    world = Vector(f['Y'][ids].mean(0) * .001)
+    u, v = f['V'][ids].mean(0) * .001
+    flat = PV.layout_matrix(context) @ Vector((u, v, 0))
+    return f['owner'], name, world, flat, f['stretch']
+
+
+def summary_lines(rec):
     found = rec['found']
     if not found:
-        return (tx("Selected scope: no displayed 3D shapes; not checked") if rec.get('selected_scope') else
-                tx("No displayed 3D shapes; not checked"))
+        return [(tx("Selected scope: no displayed 3D shapes; not checked") if rec.get('selected_scope') else
+                 tx("No displayed 3D shapes; not checked"))]
     inside = sum(int(f['inside'].sum()) for f in found.values())
     cross = sum(len(f['cross_t']) for f in found.values())
     body = (tx("Body/obstacles: no collision surfaces (not applicable)")
@@ -431,18 +468,24 @@ def summary(rec):
             tx("Inside body or obstacles: {0} vertices", inside) if all(f['body_checked'] for f in found.values()) else
             tx("Body/obstacles: not checked (no readable collision surface)"))
     cloth = tx("Confirmed cloth intersections: {0} faces", cross)
+    lines = [body, cloth]
     self_count = sum(len(f['self_t']) for f in found.values())
     candidates = sum(len(f['candidate_t']) for f in found.values())
     if self_count:
-        cloth += '; ' + tx("Self crossing: {0} faces", self_count)
+        lines.append(tx("Self crossing: {0} faces", self_count))
     if candidates:
-        cloth += '; ' + tx("Crossing candidates: {0} faces (sewing unverified)", candidates)
+        lines.append(tx("Crossing candidates: {0} faces (sewing unverified)", candidates))
     degenerate = sum({n: count for f in found.values() for n, count in f['unchecked_geometry'].items()}.values())
     if degenerate:
-        cloth += '; ' + tx("Degenerate faces not checked: {0}", degenerate)
+        lines.append(tx("Degenerate faces not checked: {0}", degenerate))
     scope = (tx("Checked {0} selected pieces (including linked pairs)", len(found)) if rec.get('selected_scope') else
              tx("Checked all {0} displayed pieces", len(found)))
-    return scope + ': ' + body + '; ' + cloth
+    return [scope] + lines + stretch_lines(rec)
+
+
+def summary(rec):
+    lines = summary_lines(rec)
+    return lines[0] + (': ' + '; '.join(lines[1:]) if len(lines) > 1 else '')
 
 
 def notice(rec):
@@ -451,22 +494,38 @@ def notice(rec):
     return summary(rec) + ('; ' + tx("Start-shape warnings: {0}; see Start-Shape Notes", warnings) if warnings else '')
 
 
+def draw_display(layout, context):
+    """One four-choice selector, at the same place before and after diagnosis."""
+    props = context.scene.ac9_cloth_sim
+    layout.label(text=tx(DISPLAY_NAME))
+    col = layout.column(align=True)
+    row = col.row(align=True)
+    row.prop_enum(props, 'diagnosis_display', 'PROBLEMS', text=tx("Diagnosis Locations"))
+    row.prop_enum(props, 'diagnosis_display', 'STRETCH', text=tx("3D Stretch Map"))
+    row = col.row(align=True)
+    row.prop_enum(props, 'diagnosis_display', 'SIDE', text=tx("Face Side"))
+    row.prop_enum(props, 'diagnosis_display', 'NONE', text=tx("None"))
+    if not props.show_overlays:
+        layout.prop(props, 'show_overlays')
+
+
 def draw_result(layout, context, spec, details=False):
     from . import ui as U, diagnose as DG
     rec = record(context)
+    draw_display(layout, context)
     if rec is None:
         U.draw_state(layout, context, tx("Not diagnosed yet"), icon='INFO')
-        layout.prop(context.scene.ac9_cloth_sim, 'diagnosis_display', text="Display")
     else:
         U.draw_state(layout, context, tx("Diagnosis at {0}, frame {1}", rec['time'], rec['frame']))
         if rec['stale']:
             U.draw_state(layout, context, tx("Changed since Diagnose: press it again"), icon='ERROR')
         elif rec['pending']:
             U.draw_state(layout, context, tx("Checking whether the diagnosis is still current"))
-        U.draw_state(layout, context, summary(rec))
+        for line in summary_lines(rec):
+            U.draw_state(layout, context, line)
         if rec['unavailable']:
             U.draw_state(layout, context, tx("No displayed shape, not checked: {0}", ', '.join(rec['unavailable'])))
-        layout.prop(context.scene.ac9_cloth_sim, 'diagnosis_display', text="Display")
+        U.draw_state(layout, context, tx("Stretch map: displayed cloth. Values and diamond: at diagnosis."))
         layout.prop(context.scene.ac9_cloth_sim, 'diagnosis_details')
         if rec['start']:
             notes = layout.box()

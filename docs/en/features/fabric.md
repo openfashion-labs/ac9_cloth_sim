@@ -14,8 +14,8 @@ It appears in the Tool tab when nothing is selected.
 - **Garment**: the garment you are working with.
 - **Particle Distance (mm)**: the spacing of the points when the cloth is divided into fine triangles (in mm, from 2 to 30, default 6). The smaller it is, the finer the wrinkles that show up, but the slower it runs. 4 mm takes about twice as long as 6 mm.
 - **Default Fabric**: the fabric used by pieces that don't have their own fabric. The default for a new garment is **Cotton Jersey**.
-- **Watch**: the problem watcher (see below).
-- **Default Look**: the default look of pieces (the material used for rendering).
+- **Default Material**: the default Blender material used for the appearance of pieces, separate from the fabric's physical properties.
+- **Base Color**: edit the assigned material's color here. Every piece sharing that material changes together. Assign a separate material first for a separate color.
 - **Result**: the results box (see the "Run" section).
 
 ## AC9 Piece in the Tool tab
@@ -29,7 +29,8 @@ It appears in the Tool tab when you've selected a piece. If you select several, 
 - **State**: the four states ("Piece States and Layering") and **Invert Selection**.
 - **Role**: the role. Roles are experimental and not required for normal Simulate; see [Piece Roles](roles.md).
 - **Fabric** and **Interlining**: the fabric and interlining. The pencil on the right opens a screen for fixing that fabric's or interlining's numbers (the same screen as **Edit...** in the **Fabrics** tab of **Lists**).
-- **Look**: the appearance (Blender's material field). If empty, the garment's **Default Look** is used.
+- **Material**: the Blender material used for appearance. If empty, the garment's **Default Material** is used.
+- Use **Base Color** below it to change the color without switching workspaces. Editing an inherited default also changes other pieces using that default. This simple control is unavailable for node-driven colors or a selection using different materials.
 - **Thickness**: whether to show the placed pieces and the dressed garment with thickness (appearance only). A fold over an internal line shows as two layers.
 - **Layer** (when Experimental Features is on, or when a piece has a layer): 0 to 9. Between pieces with different numbers, the higher one is kept outside the lower one. When things have settled, set it back to 0 (the arrow on the right does it for all pieces). It doesn't go back automatically. Near a seam joining a piece to another layer, the layer does not apply and the usual contact holds; a narrow piece sewn along its edge can have every vertex there, and then its Layer has no effect. Check the warning and log at the start of the run for the number of vertices reached by Layer. This records Layer coverage; it is separate from the red marks of current-shape diagnosis. Use **Diagnose** to inspect current intrusion, crossings and stretch.
 - **Distance (mm)**: point spacing per piece (finer for only the small parts). The arrow on the left returns it to the garment's value.
@@ -47,7 +48,7 @@ The **Fabrics** tab in **Lists** shows that garment's fabrics. One of them is th
 - One row is one fabric: the color, the name, and the number of pieces using it. Press a row and the pieces of that fabric are selected, and **AC9 Fabric** appears in the Tool tab. **New** at the bottom adds a new fabric with the same numbers as the default fabric.
 - **AC9 Fabric**: the name, **Preset** (pick from the prepared fabrics), the numbers (weight, bending, thickness, stretch, shear, hysteresis), **Edit...** (fix the numbers), **Make Default**, **Select Pieces**, and **Delete** (the default fabric can't be deleted).
 - The lower half is the interlining list; press a row to get **AC9 Interlining** (**Preset**, **Edit...**, **Select Pieces**, **Delete**). Fixing it affects every piece with that interlining. Add one with **New** and attach it with **Interlining** in **AC9 Piece**.
-- **Show Fabric Colors** at the very bottom shows each fabric's color on the pattern.
+- **Color by Fabric** at the very bottom shows each fabric's color on the pattern.
 
 ## What the fabric numbers mean (Edit Fabric)
 
@@ -92,13 +93,14 @@ An estimated fabric is a starting point: change it in Edit Fabric to match a rea
 - To stiffen just one piece, an **Interlining** (it adds weight and bending, like a real one) or **Strengthen** (below) is easier than changing the fabric.
 - Stretch and Shear do little to how a cloth drapes. Change them when the cloth should stretch, or follow the body's curves.
 
-## The problem watcher (Watch)
+## Runtime anomaly recording (Experimental)
 
-When it is on, it records problems that happen while the garment is being dressed, such as drifting pieces, seams pulling against each other, or a seam sewn inside out. It doesn't stop the simulation.
+With Experimental Features enabled, **Record Run Anomalies** appears under AC9 Run > Settings. This research option records candidate piece drift, opposing seam pulls and seam turning during simulation. It normally records and continues. It is not a garment property.
 
-- It is off by default. Turn it on before pressing **Simulate**.
+- It is off by default. Turn it on before **Simulate**. With Experimental off, a saved checkbox from an older file is ignored by ordinary UI runs, while its saved value is retained. Explicit research presets and headless settings remain supported.
 - A record is a candidate for a problem, and it can occur on a good garment too.
-- **Recorded Run Checks** inside **Diagnosis Results** lists stored check types and vertex counts. These records are separate from a diagnosis of the current shape. Old locations are not repainted as current Problem Areas.
+- Read results in AC9 Run > Settings > Log. Off, enabled with no candidates, and candidates recorded are distinct. The log lists stage, frame and target; stage anomaly.json files and job.json retain records.
+- This is separate from current-shape diagnosis and does not repaint historical locations red. The default crossing guard remains independent. Recording may use a cold one-shot start instead of the faster prepared/session path.
 
 ## Strengthen
 

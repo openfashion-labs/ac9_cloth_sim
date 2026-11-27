@@ -2083,51 +2083,78 @@ def mesh_cache_dir(context):
 # A pattern edit's mesh made on a background thread while the user is still drafting (prewarm_build), so the next
 # Simulate / Live / Update 3D finds it made. The mesher is numpy only (core/pattern_build) and gives the same arrays
 # on any thread. key: _build_key of the spec it is making; result: the build's return once done.
-_PREWARM = {'thread': None, 'key': None, 'result': None}
+# pending: when a newer edit's mesh began waiting for an older thread to stop (prewarm_build returned False), or
+# None. Counted as running, else build_ahead would make that mesh on the main thread in the moment between the two
+# threads; for a few seconds only, so a timer lost on a file load cannot leave it set
+_PREWARM = {'thread': None, 'key': None, 'result': None, 'stop': None, 'pending': None}
+_PENDING_S = 6.0
 _BUILT_H = {'h': None}                              # the particle distance of the last mesh made
 
 
 def _prewarm_running():
     t = _PREWARM['thread']
-    return t is not None and t.is_alive()
+    import time
+    p = _PREWARM['pending']
+    return (p is not None and time.monotonic() - p < _PENDING_S) or (t is not None and t.is_alive())
+
+
+def prewarm_give_up():
+    """The timer stopped trying (draft_tool._prewarm_tick): the press builds the mesh itself."""
+    _PREWARM['pending'] = None
 
 
 def prewarm_build(spec, h):
-    """Start making the mesh of `spec` at particle distance `h` on a background thread. Returns False when it is
-    made already or another one is still running (the caller tries again later), True when started."""
+    """Start making the mesh of `spec` at particle distance `h` on a background thread. Returns True when it is made
+    already or started, False when not started yet (the caller tries again shortly). A thread still making an older
+    edit's mesh is told to stop and the new one waits for it to end (it looks at the stop inside a piece too, so this
+    is short): before, the new edit waited for the old mesh to be finished (up to about 0.6 s on a T-shirt), and
+    starting the new one beside a stopping one let threads pile up on a fine mesh (six back-to-back edits at 4 mm:
+    six threads, the last mesh ready 0.9 s later and the screen's timers up to 80 ms late)."""
     import copy
     import threading
     key = _build_key(spec, h)
-    if any(k == key for k, _ in _BUILD_CACHE) or _PREWARM['key'] == key:
+    if any(k == key for k, _ in _BUILD_CACHE):
+        _PREWARM['pending'] = None
         return True
+    if _PREWARM['key'] == key and not (_PREWARM['stop'] is not None and _PREWARM['stop'].is_set()):
+        _PREWARM['pending'] = None
+        return True
+    if _PREWARM['stop'] is not None:
+        _PREWARM['stop'].set()
     t = _PREWARM['thread']
     if t is not None and t.is_alive():
+        if _PREWARM['pending'] is None:
+            import time
+            _PREWARM['pending'] = time.monotonic()
         return False
     pattern_build.CACHE_DIR = mesh_cache_dir(bpy.context)
     sp = copy.deepcopy(spec)
+    stop = threading.Event()
 
     def run():
         try:
-            v = pattern_build.build(sp, h)
-        except Exception:                           # the press will build it and say what is wrong
+            v = pattern_build.build(sp, h, stop=stop)
+        except Exception:                           # stopped, or the press will build it and say what is wrong
             v = None
-        if _PREWARM['key'] == key:
+        if _PREWARM['stop'] is stop:                # this thread's own entry (an edit undone back to the same key
+            #                                         started another thread for it: never written by the older one)
             _PREWARM['result'] = v
 
     t = threading.Thread(target=run, name="AC9 mesh prewarm", daemon=True)
-    _PREWARM.update(thread=t, key=key, result=None)
+    _PREWARM.update(thread=t, key=key, result=None, stop=stop, pending=None)
     t.start()
     return True
 
 
 def _prewarmed(key):
     """The background build of `key` (waited for when still running), or None."""
+    _PREWARM['pending'] = None                     # the press makes the mesh now, if not made
     t = _PREWARM['thread']
     if _PREWARM['key'] != key or t is None:
         return None
     t.join()
     v = _PREWARM['result']
-    _PREWARM.update(thread=None, key=None, result=None)     # handed over once: the caller may write into it
+    _PREWARM.update(thread=None, key=None, result=None, stop=None)     # handed over once: the caller may write into it
     return v
 
 
@@ -2315,6 +2342,8 @@ class Preparation:
 def preparation(context, *, consumer_backup=None, owner=None):
     """Keep the current garment backup alive through all consumers and the final other-garment/spec commit."""
     if owner is not None:
+        if consumer_backup is not None and not callable(consumer_backup):
+            consumer_backup.preparation_owner = owner
         yield owner
         return
     owner = Preparation(context)
@@ -4562,6 +4591,9 @@ def _relink_jobs(*_):
         was = str(g.get('ac9_job') or '')
         had_reference = bool(was or job_of(g))
         if was and job_alive(was):
+            # a Mesh Cache left on a working copy that is gone (a Live result saved before its cache followed the
+            # result): the result's own copy of the frames
+            JA.follow_cache(g, bpy.path.abspath(was, library=g.library), only_missing=True)
             continue
         cand = (os.path.join(os.path.dirname(bpy.data.filepath), 'AC9_ClothSim_jobs', os.path.basename(was))
                 if was and bpy.data.filepath else '')
@@ -4870,31 +4902,28 @@ ANOMALY_GROUP = 'AC9_Anomaly_area'
 ANOMALY_RADIUS = 0.015                            # m round the stitches that pulled hardest
 
 
-def mark_anomaly(ob, job, X_m):
-    """Mark where the solver stopped on an anomaly (anomaly.json of the stopped stage): the vertices within
-    ANOMALY_RADIUS of the hardest-pulling stitches red in the Overlays' Problems (diagnose.mark; until 2026-11-02 a
-    color attribute seen only in Solid shading's Attribute color), and in the vertex group AC9_Anomaly_area. Returns
-    the last alarm (or None)."""
+def mark_anomaly(ob, job, X_m, *, record=None):
+    """Keep the first runtime candidate's nearby vertices as history and a vertex group.
+    This does not imply a stop or current-shape diagnosis visualization."""
     from . import diagnose as DG
     DG.clear(ob, 'anomaly')
     if ob.data.color_attributes.get(ANOMALY_ATTR) is not None:      # an older result's
         ob.data.color_attributes.remove(ob.data.color_attributes[ANOMALY_ATTR])
-    al, n_all = None, 0
-    for k in range(1, 21):          # the first anomaly of the job: the rest may follow from it (user 2026-10-06)
-        p = os.path.join(job, f"s{k}", 'anomaly.json')
-        if os.path.exists(p):
-            a = json.load(open(p, encoding='utf-8'))
-            a = a if isinstance(a, list) else [a]
-            n_all += len(a)
-            if al is None and a:
-                al = dict(a[0], stage=k)
+    if record is None:
+        from .core import watch_record as WR
+        record = WR.summarize([os.path.join(job,f's{k}') for k in range(1,21)
+                               if os.path.isdir(os.path.join(job,f's{k}'))])
+    al = dict(record['first']) if record.get('first') else None
     if al is None:
         return None
-    al['count_in_job'] = n_all
+    al['count_in_job'] = record['count']
     # only a record that names its stitches has a place to paint (a fold line opened, 'unfolded', names a line):
     # 'painted' says which, so the status never claims red that is not there (user 2026-10-13)
     al['painted'] = False
-    ids = sorted({int(v) for st in al.get('top_stitches_full_verts', [])[:10] for v in st[:2] if int(v) < len(X_m)})
+    stitches = al.get('top_stitches_full_verts') or []
+    ids = sorted({v for st in (stitches[:10] if isinstance(stitches,list) else [])
+                  if isinstance(st,(list,tuple)) for v in st[:2]
+                  if isinstance(v,int) and not isinstance(v,bool) and 0 <= v < len(X_m)})
     if not ids:
         return al
     al['painted'] = True
@@ -5545,7 +5574,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
             if self.log.closed or self.log.name!=os.path.join(d,'solver_stdout.txt'):
                 self.log.close()
                 self.log=open(os.path.join(d,'solver_stdout.txt'),'w',encoding='utf8')
-            proc=subprocess.Popen([self.python,RUN_STAGES,*args],stdout=self.log,stderr=subprocess.STDOUT,
+            proc=_prepared_candidate.OwnedProcess([self.python,RUN_STAGES,*args],stdout=self.log,stderr=subprocess.STDOUT,
                                   env=env,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
             if self._native_io is not None:self._native_io.launched(proc)
             _trace('new_process_spawned',child_pid=proc.pid)
@@ -5691,10 +5720,15 @@ class AC9_OT_SimDress(bpy.types.Operator):
                 # the guard's records (cfg 'guard', on by default): one line each, so a user sees them without
                 # opening anomaly.json (10/08: what the system finds or does by itself goes in the log)
                 for al_ in (rl.get('anomalies') or []):
-                    if al_.get('kind') in ('entangle', 'crossing', 'reopened'):
+                    from .core import watch_record as WR
+                    if WR.is_watch(al_):
+                        log(context, d, 'watch', tx('Run anomaly candidate: stage {0}, frame {1}: {2} {3}',
+                            k + 1, al_.get('frame'), tx(al_.get('kind') or 'Piece drift'), al_.get('piece', '')),
+                            stage=k + 1, frame=al_.get('frame'), candidate=al_)
+                    if al_.get('kind') in ('entangle', 'crossing', 'reopened', 'unfolded'):
                         log(context, d, 'guard', f"stage {k + 1} frame {al_.get('frame')}: {al_['kind']} "
                                                  f"{al_.get('piece', '')} ({al_.get('count')})",
-                            stage=k + 1, frame=al_.get('frame'), guard=al_['kind'], count=al_.get('count'))
+                            stage=k + 1, frame=al_.get('frame'), guard=al_['kind'], count=al_.get('count'), candidate=al_)
                 # cfg 'jitter' (on by default): clusters still moving differently from their neighbors when the
                 # stage ended, at least twice the rest of the garment (under that the garment is mostly still moving
                 # as a whole: a shirt's no-gravity stage had 100 clusters at 1.2-1.6x), the largest first. A record;
@@ -6164,18 +6198,24 @@ class AC9_OT_SimDress(bpy.types.Operator):
         total = time.time() - self.t_start
         res = dict(self.info, mode=self.mode, button=type(self)._running_button or self.button, solver_s=[round(x, 2) for x in self.solver_s], solver_total_s=round(sum(self.solver_s), 2),
                    wall_s=round(total, 1), frames_cached=int(len(allf)), stage_steps=[int(len(x)) - 1 for x in fr])
-        res['anomaly'] = mark_anomaly(self.ob, d, allf[-1])
+        from .core import watch_record as WR
+        res['watch_recording'] = WR.summarize(self.stage_dirs)
+        marked = mark_anomaly(self.ob, d, allf[-1], record=res['watch_recording'])
+        first_any = res['watch_recording']['first_any']
+        res['anomaly'] = (dict(first_any, count_in_job=res['watch_recording']['all_count'],
+                               painted=bool(marked and marked.get('painted') and first_any==res['watch_recording']['first']))
+                          if first_any else None)
+        watch_text, watch_args = WR.status(res['watch_recording'])
         # Live keeps its last shape only: no frames to judge "still moving" by
         res['unsettled'] = 0 if self.mode in LIVE_MODES else mark_unsettled(self.ob, fr[-1])
         if err:
             res['error'] = err
         self._log_stages(context, [os.path.exists(os.path.join(sd, 'run_log.json')) for sd in self.stage_dirs])
-        al_ = res.get('anomaly') or {}
         log(context, d, 'error' if err else 'done',
             (tx("stopped: {0}", err) if err
              else tx("done: solver {0:.0f} s, total {1:.0f} s, the last shape kept", sum(self.solver_s), total) if self.mode in LIVE_MODES and len(allf) <= 2
              else tx("done: solver {0:.0f} s, total {1:.0f} s, {2} frames on the timeline", sum(self.solver_s), total, len(allf)))
-            + (tx("; {0} anomalies", al_.get('count_in_job')) if al_.get('count_in_job') else "")
+            + '; ' + tx(watch_text, *watch_args)
             + (tx("; still moving at the end: {0} vertices (red)", res['unsettled']) if res.get('unsettled') else ""),
             solver_s=round(sum(self.solver_s), 2), wall_s=round(total, 1))
         json.dump(res, open(os.path.join(d, 'job.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
@@ -6210,13 +6250,7 @@ class AC9_OT_SimDress(bpy.types.Operator):
                    sum(self.solver_s), ', '.join(put) or '-') + ''.join("; " + n_ for n_ in notes))
             self.report({'INFO'}, context.scene.ac9_cloth_sim.dress_status)
             return
-        al = res.get('anomaly')
-        if not al:
-            seen = tx("; no anomalies recorded")
-        else:
-            seen = (tx("; {0} anomalies, the first", al['count_in_job'])
-                    + (tx(" (marked red)") if al.get('painted') else tx(" (not on the mesh, no red)"))
-                    + tx(": stage {0} frame {1} {2} {3}", al['stage'], al['frame'], al.get('kind', ''), al.get('piece', '')))
+        seen = '; ' + tx(watch_text, *watch_args)
         done = (tx("done: solver {0:.0f} s, total {1:.0f} s, {2} frames on the timeline (every 2nd frame of the {3} the stages ran)", sum(self.solver_s), total, len(allf), self._n_frames)
                 if not dropped else
                 tx("done: solver {0:.0f} s, total {1:.0f} s, the last shape kept", sum(self.solver_s), total) if self.mode in LIVE_MODES else
@@ -6241,7 +6275,8 @@ class AC9_OT_SimDress(bpy.types.Operator):
             except (OSError, ValueError):
                 pass
         context.scene.ac9_cloth_sim.dress_status = done + seen
-        _status_brief.update(full=done + seen, brief=brief + (seen if al else ''))
+        _status_brief.update(full=done + seen, brief=brief +
+                             (seen if res['watch_recording']['count'] or res['watch_recording']['errors'] else ''))
         self.report({'INFO'}, context.scene.ac9_cloth_sim.dress_status)
 
     @PB.prepared_consumer
@@ -7559,6 +7594,11 @@ class AC9_OT_SimCollider(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _latency_changed(self, context):
+    from . import latency_trace
+    latency_trace.sync(self, context)
+
+
 class AC9ClothSimPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
@@ -7625,7 +7665,12 @@ class AC9ClothSimPreferences(bpy.types.AddonPreferences):
         name="Experimental Features",
         description="Show the features still being tried: Phase Sim, how a seam is pulled, the pieces' Layer and the "
                     "pieces' roles",
-        default=False)
+        default=False, update=_latency_changed)
+
+    latency_recording: bpy.props.BoolProperty(
+        name="Record UI Timing",
+        description="Record local operation durations and stalls for troubleshooting; no automatic upload",
+        default=False, update=_latency_changed)
 
     def draw(self, context):
         from . import distribution
@@ -7638,8 +7683,28 @@ class AC9ClothSimPreferences(bpy.types.AddonPreferences):
         self.layout.prop(self, "fast_start")
         self.layout.prop(self, "show_hints")
         self.layout.prop(self, "experimental")
+        from . import latency_trace
+        latency_trace.draw_settings(self.layout, self)
         # the hotkeys, on / off and the key itself changed in place (live_key.py; user 2026-11-23)
         _LK.draw_prefs(self.layout, context)
+
+
+class AC9_OT_OpenLatencyLogs(bpy.types.Operator):
+    """Open the local responsiveness log folder"""
+    bl_idname = 'ac9_cloth_sim.open_latency_logs'
+    bl_label = 'Open Timing Logs'
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return experimental(context)
+
+    def execute(self, context):
+        from . import latency_trace
+        path = latency_trace.root()
+        path.mkdir(parents=True, exist_ok=True)
+        bpy.ops.wm.path_open(filepath=str(path))
+        return {'FINISHED'}
 
 
 class AC9_OT_SimDeleteCache(bpy.types.Operator):
@@ -7745,7 +7810,7 @@ class AC9_OT_SimLog(bpy.types.Operator):
 
 
 CLASSES = (AC9ClothSimPreferences, AC9_OT_SimDress, AC9_OT_SimEditFrame, AC9_OT_SimMirrorResult, AC9_OT_SimReset, AC9_OT_SimCollider,
-           AC9_OT_SimLog, AC9_OT_SimDeleteCache, AC9_OT_SimCleanUp)
+           AC9_OT_SimLog, AC9_OT_SimDeleteCache, AC9_OT_SimCleanUp, AC9_OT_OpenLatencyLogs)
 
 
 def register():

@@ -41,7 +41,8 @@ class LocalResultControl(unittest.TestCase):
         sp['placement'], _ = S.mirror_twins(sp, sources={'A'})
         store.new_text(ctx, sp['name'])
         store.write(ctx, sp, keep=True)
-        PATTERN.rebuild(ctx,sp,{p['name']:S.Outline(p) for p in sp['pieces']},switch_document=True)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(ctx,*store.get(ctx),switch_document=True)
         self.assertTrue(PATTERN.integrity(ctx,sp)['ok'])
         res = dress.prepare(ctx, 20., shapes_only=True, placed_only=True)
         PV.build(ctx, sp, res['pat'], res['tris'], res['X'], res['pairs'])
@@ -156,7 +157,8 @@ class LocalResultControl(unittest.TestCase):
         ctx.scene.ac9_cloth_sim.body = ctx.object
         store.new_text(ctx, sp['name'])
         store.write(ctx, sp, keep=True)
-        PATTERN.rebuild(ctx,sp,{p['name']:S.Outline(p) for p in sp['pieces']},switch_document=True)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(ctx,*store.get(ctx),switch_document=True)
         self.assertTrue(PATTERN.integrity(ctx,sp)['ok'])
         res = dress.prepare(ctx, 20., shapes_only=True, placed_only=True)
         PV.build(ctx, sp, res['pat'], res['tris'], res['X'], res['pairs'])

@@ -1031,6 +1031,7 @@ class AC9_OT_SimPieceMesh(bpy.types.Operator):
 
     mesh_mm: FloatProperty(name="Mesh mm", default=0.0, min=0.0, max=30.0,
                            description="Particle distance of the selected pieces in mm (0: the garment's)")
+    piece: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -1050,7 +1051,10 @@ class AC9_OT_SimPieceMesh(bpy.types.Operator):
         self.layout.prop(self, "mesh_mm")
 
     def execute(self, context):
-        msg = set_piece_mesh(context, _sel_pieces(context), self.mesh_mm)
+        spec, _ = store.get(context)
+        if self.piece and self.piece not in {p['name'] for p in spec['pieces']}:
+            return {'CANCELLED'}
+        msg = set_piece_mesh(context, [self.piece] if self.piece else _sel_pieces(context), self.mesh_mm)
         if msg is None:
             self.report({'WARNING'}, "Select pattern pieces in the viewport first")
             return {'CANCELLED'}

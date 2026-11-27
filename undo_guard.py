@@ -110,6 +110,9 @@ def _wrap_execute(fn, cls):
         try:
             _pattern_preflight(context, cls)
             result = fn(self, context)
+            if (result is not None and 'RUNNING_MODAL' in result
+                    and callable(getattr(cls, 'modal', None))):
+                _modal[self.as_pointer()] = start
             return result
         except _pattern_error() as exc:
             self.report({'WARNING'}, str(exc))

@@ -342,8 +342,9 @@ def write_shape(ob, V, T, Y):
     M = np.array(ob.matrix_world)
     W = Y * PLV.MM
     co = (np.c_[W, np.ones(n)] @ np.linalg.inv(M).T)[:, :3]
+    me = PLV.writable_mesh(ob)
     me.vertices.foreach_set('co', co.astype(np.float32).ravel())
-    gen.data.foreach_set('vector', (co + PLV.origin_mm(ob) * PLV.MM).astype(np.float32).ravel())
+    me.attributes[PLV.GEN_ATTR].data.foreach_set('vector', (co + PLV.origin_mm(ob) * PLV.MM).astype(np.float32).ravel())
     me.update()
     return None
 

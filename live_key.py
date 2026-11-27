@@ -6,8 +6,8 @@ the window, so the key works wherever the mouse is. Its operator's poll lets it 
 screen with a garment that can run; elsewhere the poll fails and the event goes on to what the key did before
 (Blender's playback by default; an add-on keymap item whose poll fails passes the event on, as piece_hide's H does).
 
-The key is first Space, or Shift+Space when the Keymap preference's Spacebar Action gives Space to the tools or the
-search. It is shown, switched and rebound in the add-on's preferences (Hotkeys, draw_prefs), like in Preferences >
+The default key is F5, enabled, independently of Blender's Spacebar Action. It is shown, switched and rebound in
+the add-on's preferences (Hotkeys, draw_prefs), like in Preferences >
 Keymap: the item drawn and read is the one in the user key configuration, the one Blender saves a change to.
 Stopping is read by Live's own modal (dress.py: is_stop_key) with the same key, which gets every key first while it
 runs, so it stops wherever the mouse is. Reasons: docs/reviews/REVIEW_fable_live_hotkeys_2026-11-22 of the project
@@ -22,18 +22,13 @@ KEYMAP = 'Frames'
 LIVE_NAME = S.PLAY_KEY_NAME
 HOTKEYS = "Hotkeys"
 HOTKEYS_HELP = ("In the AC9 Cloth Sim work screen, wherever the mouse is. Elsewhere the key does what it did before "
-                "(Space plays the animation)")
+                "(Space keeps Blender's playback, tools or search action)")
 _keymaps = []
 
 
 def play_key(context=None):
-    """(type, shift) of the first key: Space, or Shift+Space when Space opens the tools or the search."""
-    try:
-        kc = (context or bpy.context).window_manager.keyconfigs.active
-        action = getattr(kc.preferences, 'spacebar_action', 'PLAY') if kc and kc.preferences else 'PLAY'
-    except (AttributeError, RuntimeError):
-        action = 'PLAY'
-    return 'SPACE', action != 'PLAY'
+    """Default simulation key, independent of Blender's playback/tools/search preference."""
+    return 'F5', False
 
 
 def user_item(context=None):
@@ -123,6 +118,7 @@ def register():
     km = kc.keymaps.new(name=KEYMAP, space_type='EMPTY')
     key, shift = play_key()
     kmi = km.keymap_items.new(AC9_OT_LivePlayKey.bl_idname, type=key, value='PRESS', shift=shift)
+    kmi.active = True
     _keymaps.append((km, kmi))
 
 

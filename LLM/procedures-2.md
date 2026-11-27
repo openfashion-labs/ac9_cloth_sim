@@ -12,15 +12,15 @@
 
 手順:
 
-1. 左の列の **Place**（または **Placement** の **Place** ボタン。`ac9_cloth_sim.use_tool` で道具が切り替わる）を持つ。
+1. 左の列の **Place**（または **Placement** の **Place** ボタン。`ac9_cloth_sim.use_tool` でツールが切り替わる）を持つ。
 2. 型紙のピースをクリックして選ぶ（Shift で追加）。
 3. カーソルを円柱の上に持っていく（黄色に光る）。
-4. 円柱の上で押し、そのまま動かして位置を決め、離す。置いたピース（3Dの鏡像ピースも）を押してドラッグすると、最初に触れた側を操作対象に固定し、押した所からの移動量だけ動かす（カーソルの下へ跳ばない）。相手だけが反対側へ従う。角度だけ・高さだけは Tool タブ AC9 Piece の Around／Height（`placement.move_placed`）。倒す角度は AC9 Piece の Tilt（spec placement の `tilt`、度。anchor を通るガイドまわりの線を軸に倒す。90 で上側が外へ水平、180 で上下逆、外へ倒れた部分は周方向に伸びる。`placement.set_tilt`）。`ac9_cloth_sim.flip_up_down` は +180。折りなど他は変えない。Esc／右クリックで取り消し。操作は `ac9_cloth_sim.place`（道具のクリックから始まる）。
-5. 円柱の無い所で押すと平らに置く（spec placement `{'guide': 'flat', 'flat': {'o': [mm], 'R': [ex, ey, n]}, 'anchor'}`）。面の上なら型紙の法線を面の法線に合わせて 2 mm 浮かせ、何も無ければ Z = 0 に上向き。刺さりは自動で直さない。平らのピースを押してドラッグすると面（地面）の上を滑る。位置・回転は Tool タブ AC9 Piece の Location & Rotation（配置中のピースのオブジェクトの変形）。
+4. 円柱の上で押し、そのまま動かして位置を決め、離す。置いたピース（3Dの鏡像ピースも）を押してドラッグすると、最初に触れた側を操作対象に固定し、押した所からの移動量だけ動かす（カーソルの下へ跳ばない）。相手だけが反対側へ従う。角度だけ・高さだけは ツールタブ AC9 Piece の Around／Height（`placement.move_placed`）。倒す角度は AC9 Piece の Tilt（spec placement の `tilt`、度。anchor を通るガイドまわりの線を軸に倒す。90 で上側が外へ水平、180 で上下逆、外へ倒れた部分は周方向に伸びる。`placement.set_tilt`）。`ac9_cloth_sim.flip_up_down` は +180。折りなど他は変えない。Esc／右クリックで取り消し。操作は `ac9_cloth_sim.place`（ツールのクリックから始まる）。
+5. 円柱の無い所で押すと平らに置く（spec placement `{'guide': 'flat', 'flat': {'o': [mm], 'R': [ex, ey, n]}, 'anchor'}`）。面の上なら型紙の法線を面の法線に合わせて 2 mm 浮かせ、何も無ければ Z = 0 に上向き。刺さりは自動で直さない。平らのピースを押してドラッグすると面（地面）の上を滑る。位置・回転は ツールタブ AC9 Piece の Location & Rotation（配置中のピースのオブジェクトの変形）。
 6. **Back to Flat**（`ac9_cloth_sim.clear_placement`）は、選んだピースを 3D の今の位置・向きのまま、アンカーの接平面へ平らにする（平らの placement に書き換える）。手の移動は捨てる。
    **Return to Unplaced**（`ac9_cloth_sim.unplace`）は選択必須。3D配置・手編集・保存形だけ破棄し、2D定義・折り・縫合・生地を保つ。連動ペアは両側、それ以外は選択側。計算中不可、Ctrl+Z可。再Placeまで未配置を保つ。Offは形を保持する別操作。
 7. 床: Run の **Floor (Z = 0)**（`scene.ac9_cloth_sim.floor`）。Z = 0 の下に厚み 20 mm の箱を当たりとして足す（シーンには何も足さない）。体・Collision・床・他の服が何も無いと、重力の無い段だけ回して止まり 1 行で知らせる。
-8. 左右: **Pair**／**Unpair**（`ac9_cloth_sim.pair`、F9 に `plane`）、**Unlink**／**Link**（`ac9_cloth_sim.unlink_pair`）。鏡の面は Tool タブ AC9 Piece の **Pair** の **Mirror Plane**（`ac9_cloth_sim.pair_plane`、`plane='x'|'y'`。Mirror Copy の対も Pair の対も）。Pair の対は型紙を回さず、相手がどちら向きに描いてあっても正しい向きで置く（spec の `mirror_layout`）。平らに置いた対は服の中心 `spec['center']['o']`（mm、Empty「AC9 Center: 服名」）で左右も前後も鏡写し、体の上の対は体の中心。中心を選択に足すのは **Select Center**（`ac9_cloth_sim.center_select`）、古いファイルの自分の面（`mirror_at`）の対を中心へそろえるのは **Align to Center**（`ac9_cloth_sim.center_align`）。置いた対の左右を入れ替えるのは **Swap Sides**（`ac9_cloth_sim.swap_sides`。対の両方が on のとき）。
+8. 左右: **Pair**／**Unpair**（`ac9_cloth_sim.pair`、F9 に `plane`）、**Unlink**／**Link**（`ac9_cloth_sim.unlink_pair`）。鏡の面は ツールタブ AC9 Piece の **Pair** の **Mirror Plane**（`ac9_cloth_sim.pair_plane`、`plane='x'|'y'`。Mirror Copy の対も Pair の対も）。Pair の対は型紙を回さず、相手がどちら向きに描いてあっても正しい向きで置く（spec の `mirror_layout`）。平らに置いた対は服の中心 `spec['center']['o']`（mm、Empty「AC9 Center: 服名」）で左右も前後も鏡写し、体の上の対は体の中心。中心を選択に足すのは **Select Center**（`ac9_cloth_sim.center_select`）、古いファイルの自分の面（`mirror_at`）の対を中心へそろえるのは **Align to Center**（`ac9_cloth_sim.center_align`）。置いた対の左右を入れ替えるのは **Swap Sides**（`ac9_cloth_sim.swap_sides`。対の両方が on のとき）。
 
 期待結果: 離すと配置した形が現れ、`○ guides; ○ / ○ pieces placed`が増える。未調整なら調整した形と同じ。Simulateは表示中の形から始める。品質はDiagnoseで確認する。
 
@@ -39,9 +39,9 @@
 手順:
 
 0. 確かめる（何も動かさない）: **診断**（Diagnose）。配置状態・シミュレーション後の現在形について、体内侵入・他布との交差・自己交差を調べる。確認済みを赤、縫合を照合できない交差候補を黄で示し、対象範囲と面数を結果に出す。面数は箇所数ではない。
-1. **Part to Seam**（`ac9_cloth_sim.move_to_seam`）: 折り設定を反映し、有効な縫う点を指定相手の点へ重ね、固定して整える（Settle）。相手の形は調整した形→着た服→円柱の順。起動後クリックで相手指定、Shiftで追加/解除、Aで全相手、Enterで適用、Escで取消。指定は今回だけでOn/Off・次Simの縫合設定は不変。移動側/追従ペアは起動時に固定表示し、相手選択でactiveは変えない。伸びは数と「オーバーレイ > 伸び」で表示。三角の潰れは拒否。伸び過ぎで形を保って近くへ運ぶ場合も、侵入/貫通が増すなら拒否。外側への補正は別途Move Outside。寄せる前の手配置・頂点編集・折りを別に保持し、反復しても基準は上書きしない。
+1. **Part to Seam**（`ac9_cloth_sim.move_to_seam`）: 折り設定を反映し、有効な縫う点を指定相手の点へ重ね、固定して整える（Settle）。相手の形は調整した形→着た服→円柱の順。起動後クリックで相手指定、Shiftで追加/解除、Aで全相手、Enterで適用、Escで取消。指定は今回だけでOn/Off・次Simの縫合設定は不変。移動側/追従ペアは起動時に固定表示し、相手選択でactiveは変えない。伸びは数と「オーバーレイ > 診断の表示 > 伸び」で表示。三角の潰れは拒否。伸び過ぎで形を保って近くへ運ぶ場合も、侵入/貫通が増すなら拒否。外側への補正は別途Move Outside。寄せる前の手配置・頂点編集・折りを別に保持し、反復しても基準は上書きしない。
 2. 細い帯（衿リブ）を指定相手の縫い付け線に沿わせ、幅方向も含めて配置する（相手指定は1と同じ）: **Band on Edge**（`ac9_cloth_sim.lay_on_edge`）。
-3. 重なったピースを外側へ出す: **Move Outside**（`ac9_cloth_sim.move_outside`）。選んだ現在形を保ち、相手の表側へ移します。自分・相手とも配置形／シミュレーション後の形で利用でき、縫い合わせは不要。補正後の形から再Simできます。移動量は重なる相手の 8 mm 外まで（報告に移動量と交差の前後が出る）。既に相手の 8 mm 以上外にあるピースは動かさない。ペアは鏡の相方も一緒に動くので、相方どうしが交差しているときは無変更で「ペアの連動を切り（Tool タブ > AC9 Piece > Pair）上の方だけで押す」と案内する。表側が曖昧、または途中で別の層や人体を通り抜ける場合も理由を表示して無変更です。
+3. 重なったピースを外側へ出す: **Move Outside**（`ac9_cloth_sim.move_outside`）。選んだ現在形を保ち、相手の表側へ移します。自分・相手とも配置形／シミュレーション後の形で利用でき、縫い合わせは不要。補正後の形から再Simできます。移動量は重なる相手の 8 mm 外まで（報告に移動量と交差の前後が出る）。既に相手の 8 mm 以上外にあるピースは動かさない。ペアは鏡の相方も一緒に動くので、相方どうしが交差しているときは無変更で「ペアの連動を切り（ツールタブ > AC9 Piece > Pair）上の方だけで押す」と案内する。表側が曖昧、または途中で別の層や人体を通り抜ける場合も理由を表示して無変更です。
 4. 体から出す・相手の側へ載せる・辺の長さを戻す: **Settle**（`ac9_cloth_sim.settle_placed`）。1 と 2 も運んだあとに同じ整えを行う。
 
 期待結果: 調整した形が変わり、残った所は赤く示される。Part to Seam の報告は 1 ピース 1 行で、相手の名前・隙間・伸び（赤が残れば体の中と貫く所の数）が出る。
@@ -60,8 +60,8 @@
 
 手順:
 
-1. 3D ビューの道具 **Whole Pieces** で、動かすピースをクリックする（着せた後は着た服のピースをクリックするとつまみが出る）。Shift＋クリックで足す。
-2. ギズモ（W で移動と回転を切り替え）か G・R で動かす。数値で動かすなら Tool タブ AC9 Piece の Location & Rotation（操作 `ac9_cloth_sim.set_pose` も残っているが、パネルのボタンは無い）。連動したペアは相手が鏡で付いてくる。対の相手へ鏡で写すのは **Mirror Placement**（`ac9_cloth_sim.mirror_pose`）。
+1. 3D ビューのツール **Whole Pieces** で、動かすピースをクリックする（着せた後は着た服のピースをクリックするとつまみが出る）。Shift＋クリックで足す。
+2. ギズモ（W で移動と回転を切り替え）か G・R で動かす。数値で動かすなら ツールタブ AC9 Piece の Location & Rotation（操作 `ac9_cloth_sim.set_pose` も残っているが、パネルのボタンは無い）。連動したペアは相手が鏡で付いてくる。対の相手へ鏡で写すのは **Mirror Placement**（`ac9_cloth_sim.mirror_pose`）。
 3. 手直しを捨てるなら、そのピースを選んで **Back to Placed Shape**（`ac9_cloth_sim.reset_placed`）。選ばずに押すと全部（確認が出る）。着た服のピースは先に調整した形に戻る。
 
 期待結果: 選んだピースが動き、Move と Turn の値が出る。続く **Simulate** がその形から始まる。
@@ -78,7 +78,7 @@
 
 前提条件:
 
-- 画面: Tool タブの最上段 **AC9 Run**。
+- 画面: ツールタブの最上段 **AC9 Run**。
 - **Body** が選ばれ、**Detect Guides** で目安があること（無いとボタンは灰色）。体が無くても、平らに置いたピースだけなら回る。
 - 3Dに配置済みのピースだけを計算する。未配置のピースとそれにつながる縫い目はその回の計算から外れ、型紙のオン／オフ設定は変わらない。
 - Preferences の **Newton Python** が使える状態であること（無いと「Set the Newton Python in the add-on preferences」）。
@@ -136,7 +136,7 @@
 
 前提条件:
 
-- **Back to Adjusted Shape**: 服（着せた結果、または配置中のピースのオブジェクト）がある。シミュレーション中は押せない。ピースだけ戻すなら、型紙をクリック（**Place** 道具）か、**Place** 道具で着た服のピースをクリックして選んでおく。
+- **Back to Adjusted Shape**: 服（着せた結果、または配置中のピースのオブジェクト）がある。シミュレーション中は押せない。ピースだけ戻すなら、型紙をクリック（**Place** ツール）か、**Place** ツールで着た服のピースをクリックして選んでおく。
 - **Fix by Hand**: 着せた結果がある。経過の再生が有効なときか、経過の再生が無効で服の形がメッシュそのもののとき（そのときは「the garment's mesh is its shape」と出て、そのまま直せる）。
 
 手順:
@@ -178,19 +178,19 @@
 
 目的: 服の既定の生地、ピースごとの生地・芯地・見た目・厚み・レイヤー・点の間隔・縮み、役割、折りを決める（README の『生地と Garment の設定』）。
 
-前提条件: 型紙が読み込まれている。服の設定は何も選ばない状態（Tool タブの **AC9 Garment**）、ピースの設定はピースを選んだ状態（**AC9 Piece**）。
+前提条件: 型紙が読み込まれている。服の設定は何も選ばない状態（ツールタブの **AC9 Garment**）、ピースの設定はピースを選んだ状態（**AC9 Piece**）。
 
 手順:
 
 1. 服の既定の生地: **AC9 Garment** の **Default Fabric**。点の間隔: **Particle Distance (mm)**。
-2. 生地の一覧: **Lists** の **Fabrics** タブ。行を押すと、その生地のピースが選ばれ（`ac9_cloth_sim.fabric_select`）、Tool タブに **AC9 Fabric** が出る。そこで **Preset**（`ac9_cloth_sim.fabric_preset`）、**Edit...**（`ac9_cloth_sim.fabric_edit`）、**Make Default**（`ac9_cloth_sim.fabric_default`）、**Select Pieces**、**Delete**（`ac9_cloth_sim.fabric_remove`）。一覧の下の **New**（`ac9_cloth_sim.fabric_new`）で、既定の生地と同じ数値の生地を足す。
+2. 生地の一覧: **Lists** の **Fabrics** タブ。行を押すと、その生地のピースが選ばれ（`ac9_cloth_sim.fabric_select`）、ツールタブに **AC9 Fabric** が出る。そこで **Preset**（`ac9_cloth_sim.fabric_preset`）、**Edit...**（`ac9_cloth_sim.fabric_edit`）、**Make Default**（`ac9_cloth_sim.fabric_default`）、**Select Pieces**、**Delete**（`ac9_cloth_sim.fabric_remove`）。一覧の下の **New**（`ac9_cloth_sim.fabric_new`）で、既定の生地と同じ数値の生地を足す。
 3. 芯地の一覧: 同じタブの下半分。行を押すと **AC9 Interlining**（**Preset**、**Edit...**、**Select Pieces**、**Delete**）。**New**（`ac9_cloth_sim.interlining_new`）で足す。芯地は服ごとの一覧で、直すとその芯地の全ピースに効く。
 4. ピースの生地と芯地: **AC9 Piece** の **Fabric** と **Interlining** の欄（スクリプトからは `scene.ac9_cloth_sim.piece_fabric`、`piece_bond`）。右の鉛筆は **Edit...** と同じ画面。
-5. ピースの見た目 **Look**、厚みの表示 **Thickness**、**Layer**（0〜9。高い方を低い方の外側に保つ。全部を 0 に戻すのは右の矢印 **All Layers to 0**、`ac9_cloth_sim.layers_to_zero`）、点の間隔 **Distance (mm)**（左の矢印で服の値に戻す、`ac9_cloth_sim.piece_mesh`）、縮み **Elastic**。どれも **AC9 Piece** の欄。Layer は一時的な順序補助として、内外を確認したら停止→All Layers to 0→Simulate で再計算する。変更は次のシム開始から有効。深い食い込みの追加回復は異層の間だけで、全0の再計算では起動しない。本人の指示なしにAIが自動解除しない。
+5. ピースのマテリアル **Material**、厚みの表示 **Thickness**、**Layer**（0〜9。高い方を低い方の外側に保つ。全部を 0 に戻すのは右の矢印 **All Layers to 0**、`ac9_cloth_sim.layers_to_zero`）、点の間隔 **Distance (mm)**（左の矢印で服の値に戻す、`ac9_cloth_sim.piece_mesh`）、縮み **Elastic**。どれも **AC9 Piece** の欄。Layer は一時的な順序補助として、内外を確認したら停止→All Layers to 0→Simulate で再計算する。変更は次のシム開始から有効。深い食い込みの追加回復は異層の間だけで、全0の再計算では起動しない。本人の指示なしにAIが自動解除しない。
 6. 役割は試験中の機能（上の『試験中の機能』）。**Simulate** の置き方・巻き方は **AC9 Piece** の欄（**Ends** など）で決める。
 7. 折り: 内部線を選ぶと **AC9 Internal Line**。**Fold Angle**（角度）、**Direction**（Mountain/Valley、布の表から見た方向）、**Turns**（回る側 **Side A**/**Side B**）、**Layers**（**Both**/**A only**/**B only**、片側計算なら反対側は2層目として追従）。`scene.ac9_iline_fold`は符号付き角度（＋Mountain）。値変更で調整した形を折り、左右ペアの対応線にも同じ文字を反映。相方のAは元のAの鏡側（hand=-1なら線の右）。拒否理由は`place_fold.why_not(piece,line)`。縫い目は`scene.ac9_seam_fold`（＋は回るピース表からMountain）、または`ac9_seam_fold_angle`＋`ac9_seam_fold_dir`。`scene.ac9_seam_fold_turn`のA/Bは縫い目a/bの回るピース。
 
-期待結果: 生地の一覧と、ピースの生地の割り当てが変わる。型紙に **Show Fabric Colors** で色が出る。何枚か選んでいて値が違う欄は「(mixed)」と赤く出て、変えると全部に効く。
+期待結果: 生地の一覧と、ピースの生地の割り当てが変わる。型紙に **Color by Fabric** で色が出る。何枚か選んでいて値が違う欄は「(mixed)」と赤く出て、変えると全部に効く。
 
 制限・してはいけないこと: 値の変更は次に **Simulate** を押したときから効く（実行中に効く対象はRun下の案内で確認。角度・方向・Taperは開始時に折っていた線だけ（現在角が非0・ピース内端ありも必要）、Strengthenのオン/オフ・倍率も対象）。既定の生地は消せない（先に別の生地を既定にする）。**Layer** は自動では 0 に戻らない。AI が値を変えるときは、本人が頼んだときだけにし、変える前の値を答えに書いておく。**Settings:** という赤い行が出ているときは、試験用の設定のセットが生地や **Watch** を固定していて、値を変えても効かない。
 
@@ -219,7 +219,7 @@
 手順:
 
 1. **Measure Body**（`ac9_cloth_sim.measure_body`）を押す。表の **Body** の列が埋まる。
-2. 道具箱の **Edit Measure**（`ac9_cloth_sim.measure_move_level`）で、測った線をドラッグして動かす。**Around**、**Along**、**Straight**（`ac9_cloth_sim.measure_tape`）で巻き尺を置く。Enter で残す（**Along**）。
+2. ツール箱の **Edit Measure**（`ac9_cloth_sim.measure_move_level`）で、測った線をドラッグして動かす。**Around**、**Along**、**Straight**（`ac9_cloth_sim.measure_tape`）で巻き尺を置く。Aroundは上部の「3点で指定」が既定で、3点目を合わせる間に輪を確認してクリック確定。「1点・向き指定」では従来の方向と傾きを使う。Backspace／Ctrl＋Zで未確定点を戻し、Escで今回の作成を取消。確定1本がUndo一回、Redoで復元される。AlongはEnterで残す。
 3. 型紙の長さは **Size Check** の **Measure Pattern**（`ac9_cloth_sim.measure_pattern`）で、外周の 2 点をクリックする。行の × は `ac9_cloth_sim.measure_pattern_remove`。
 4. 着せたあとは **Measure Garment**（`ac9_cloth_sim.measure_garment`。**Simulate** のあとは自動で測る）。表の **Cloth** と **Ease** が埋まる。
 5. 目標は **Size Check** の項目名を押して数値を入れる（`ac9_cloth_sim.measure_set_target`）。
@@ -262,7 +262,7 @@ README の『うまく動かないとき』の表を土台に、今のコード�
 
 | 症状 | 最初に見ること | してよいこと | しないこと |
 |---|---|---|---|
-| Tool タブに **AC9 Run** や **AC9 Garment** が無い | Properties エディタが Tool タブか。 | 場所を案内する。 | Preferences を AI が書き換える。 |
+| ツールタブに **AC9 Run** や **AC9 Garment** が無い | Properties エディタが ツールタブか。 | 場所を案内する。 | Preferences を AI が書き換える。 |
 | **Simulate** が灰色 | **Placement** の **Body**。**Detect Guides** をしたか。 | **Body** と **Detect Guides** を案内する。 | 体を選び直して押す操作を AI がする。 |
 | 「Set the Newton Python in the add-on preferences」 | Preferences の **Newton Python** | 指定を案内する。 | パスを推測して書く。 |
 | 診断の位置印が出ない | オーバーレイと「表示：問題箇所」、診断の対象範囲・結果時刻・失効表示を確認。黄は縫合未照合の候補で、赤の確認済みと区別する。 | 古い結果なら再診断。現在の診断結果・各ビューの対象・マーカー投影位置を分けて確認する。 | Watchの設定が手動診断の前提だと言う。未検査や候補を0件・問題なしと説明する。 |
@@ -282,3 +282,11 @@ README の『うまく動かないとき』の表を土台に、今のコード�
 ### 折りの設定が効くとき
 
 人向け正本: docs/ja/features/fold-roles.md。内部線の角度・方向は、調整した形ではTurnsがA/Bのときだけ片側を倒す。指定なしでも、開始前に角度があれば計算の折り目になる。内部線/縫い目の角度・方向、内部線Taperを実行中に変えられるのは、開始時に角度が0°でなかった線だけ。0°から新しく折る場合は、本人が停止して設定し再実行する。TurnsとLayersは実行中変更不可。Taperは角度ではなく長さで、ピース内に止まる端だけをなだらかにし、外周の端には効かない。両端が外周なら欄は出ず、現在角0°では無効。実行中の強化オン/オフ・倍率は変更可能。欄のグレーと理由を確認し、AIは実行/停止や形の編集を本人の代わりに行わない。
+
+### 表示設定の共有
+型紙側のオーバーレイで3Dも調整する。対象別に並び、型紙/3D/型紙・3Dの文字は表示先を示す。採寸の身体・衣服の採寸線と採寸テープはNパネルと同じ設定で、保存値はScene共有。名称・表示先・入口の管理はcore/overlay_policy.pyとdocs/overlay_display.md。厚みは主スイッチ外。
+
+
+## 作業前の入口と資料の場所
+
+人向けの正本は docs/ja/before-start.md（Docusaurusの「使い始める前に」）。同じ版のインストール済み本体のLLM/README.mdと必要ならprocedures.mdをAIへ添付する。ダウンロードZIPの保持は前提にしない。作業前に.blendを別名保存し、経過も必要なら隣のAC9_ClothSim_jobsを別途保持する。Keep Cacheは既定オン、Keep All Simulate Framesは既定オフ、途中記録上限は1,500。F5が現在の開始/停止の既定、SpaceはBlenderの操作。既存のカスタム割当はPreferencesのHotkeysで確認。画像・動画の説明と型紙/服の外観の承認を混同しない。

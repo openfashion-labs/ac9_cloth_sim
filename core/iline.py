@@ -4,7 +4,10 @@
 An internal line's 'pts' stays the line everything else reads (the mesh, seams, folds, snapping, the 3D). A line
 shaped here may also hold 'nodes' (indices into pts: the vertices one drags) and 'ctrl' (one per span between two
 vertices: None for straight, or [h0, h1], its Bezier handles); pts is then sampled from them as a curved edge is.
-Without them every point is a vertex and every span straight. An edit that moves pts without them (slash & spread, a
+An explicitly authored sampled_spans line stores its exact polyline in pts and only its logical corners in nodes;
+None controls on that line retain the raw span rather than substituting a chord. Whole affine transforms map every
+sample; endpoint edits carry each raw span by its endpoints' similarity. Without metadata every point is a vertex
+and every span straight. An edit that moves pts without them (slash & spread, a
 cut) leaves them stale: shape() then reads every point as a vertex, and the next edit here writes them afresh.
 
 Each edit gives the line's mirror lines (the twin's, across a piece's center line: draft.mirror_lines) the mirror
@@ -53,6 +56,18 @@ def shape(it):
         try:
             N = P[np.asarray(nodes, int)]
             C = [None if c is None else np.asarray(c, float).reshape(2, 2) for c in ctrl]
+            if (it.get('sampled_spans') is True and len(N) >= (3 if closed else 2)
+                    and len(C) == _spans(len(N), closed) and int(nodes[0]) == 0
+                    and all(int(a) < int(b) for a,b in zip(nodes,nodes[1:]))
+                    and (closed or int(nodes[-1]) == len(P)-1)
+                    and (not closed or (int(nodes[-1]) < len(P)-1 and np.linalg.norm(P[0]-P[-1]) < 1e-6))):
+                valid=True
+                for k,c in enumerate(C):
+                    if c is None:continue
+                    raw=P[int(nodes[k]):(int(nodes[k+1]) if k+1<len(nodes) else len(P)-1)+1]
+                    q=D.bezier_pts(N[k],c[0],c[1],N[(k+1)%len(N)])
+                    if len(q)!=len(raw) or np.abs(q-raw).max()>=TOL:valid=False;break
+                if valid:return N.copy(),C,closed,True
             if len(C) == _spans(len(N), closed):
                 Q, idx = sample(N, C, closed)
                 if len(Q) == len(P) and list(idx) == [int(i) for i in nodes] and np.abs(Q - P).max() < TOL:
@@ -66,24 +81,94 @@ def shape(it):
 def editable(it):
     """The line offers its vertices to drag (its own, or a hand-drawn polyline of few points)."""
     N, _, _, own = shape(it)
-    return own or len(N) <= DENSE
+    return own or it.get('seam_authored_vertices') is True or len(N) <= DENSE
 
 
-def set_shape(it, N, C):
+def span_points(it):
+    """Exact stored points per logical span, including both endpoints."""
+    N,C,closed,own=shape(it)
+    if own:
+        P=np.asarray(it['pts'],float);ids=list(it['nodes'])+[len(P)-1]
+        return [P[int(ids[k]):int(ids[k+1])+1].copy() for k in range(len(C))]
+    return [np.array([N[k],N[(k+1)%len(N)]]) for k in range(len(C))]
+
+
+def set_spans(it, parts, controls):
+    """Author logical corners without promoting the raw drawing samples to vertices."""
+    parts=[np.asarray(D._r(p),float) for p in parts]
+    controls=[None if c is None else np.asarray(D._r(c),float) for c in controls]
+    out=[];ids=[]
+    for part,c in zip(parts,controls):
+        if c is not None:part=D.bezier_pts(part[0],c[0],c[1],part[-1])
+        ids.append(len(out));out.extend(part[:-1])
+    out.append(np.asarray(parts[-1],float)[-1])
+    if not it.get('closed'):ids.append(len(out)-1)
+    it.update(pts=D._r(out),nodes=ids,ctrl=[None if c is None else D._r(c) for c in controls],sampled_spans=True)
+    it.pop('seam_authored_vertices',None)
+
+
+def _project(P,q):
+    P=np.asarray(P,float);q=np.asarray(q,float);v=np.diff(P,axis=0)
+    lengths=np.linalg.norm(v,axis=1);cum=np.r_[0,np.cumsum(lengths)]
+    t=np.clip(np.einsum('ij,ij->i',q-P[:-1],v)/np.maximum(lengths**2,1e-20),0,1)
+    dist=np.linalg.norm(P[:-1]+v*t[:,None]-q,axis=1);k=int(dist.argmin())
+    return float(cum[k]+t[k]*lengths[k]),float(dist[k])
+
+
+def _section(P,a,b):
+    P=np.asarray(P,float);cum=np.r_[0,np.cumsum(np.linalg.norm(np.diff(P,axis=0),axis=1))]
+    def at(t):return np.array([np.interp(t,cum,P[:,j]) for j in range(2)])
+    return np.vstack([at(a),P[(cum>a+1e-8)&(cum<b-1e-8)],at(b)])
+
+
+def _raw_edit(it,N,C,indices):
+    old,oldc,closed,_=shape(it);parts=span_points(it);n=len(old)
+    order=list(range(n)) if indices is None and len(N)==n else list(indices or [None]*len(N))
+    # A new point belongs to its actual raw span; existing points use identity,
+    # so deliberately detached coincident points are never matched by proximity.
+    locations=[]
+    for k,q in enumerate(N):
+        if order[k] is not None:
+            locations.append((int(order[k]),0.));continue
+        hits=[_project(p,q) for p in parts];j=min(range(len(hits)),key=lambda j:hits[j][1])
+        locations.append((j,hits[j][0]))
+    result=[]
+    for k,c in enumerate(C):
+        j=(k+1)%len(N);a,sa=locations[k];b,sb=locations[j]
+        if c is not None:
+            result.append(D.bezier_pts(N[k],c[0],c[1],N[j]));continue
+        if oldc[a] is None and (b==a or (b==(a+1)%n and sb==0)):
+            end=sb if b==a else float(np.linalg.norm(np.diff(parts[a],axis=0),axis=1).sum())
+            if end>sa+1e-10:
+                raw=_section(parts[a],sa,end)
+                result.append(D._similarity(raw[0],raw[-1],N[k],N[j])(raw));continue
+        result.append(np.array([N[k],N[j]]))
+    return result
+
+
+def set_shape(it, N, C, indices=None):
     """Write vertices N and span handles C into internal line it (pts sampled from them)."""
     closed = bool(it.get('closed'))
+    authored = it.get('nodes') is not None and it.get('ctrl') is not None and shape(it)[3]
+    logical_vertices=editable(it)
     # rounded before sampling, as stored: shape() samples the stored values again, and a curve's point count can
     # change with the rounding (31 -> 32 points seen), which read the line as stale
     N = np.asarray(D._r(np.asarray(N, float)), float)
     C = [None if c is None else np.asarray(D._r(np.asarray(c, float).reshape(2, 2)), float) for c in C]
+    if it.get('sampled_spans') is True and authored:
+        set_spans(it,_raw_edit(it,N,C,indices),C)
+        return
+    it.pop('sampled_spans',None)
     P, idx = sample(N, C, closed)
     it['pts'] = D._r(P)
-    if any(c is not None for c in C):
-        it.pop('seam_authored_vertices', None)
+    curved=any(c is not None for c in C)
+    if curved:it.pop('seam_authored_vertices', None)
+    elif logical_vertices:it['seam_authored_vertices'] = True
+    else:it.pop('seam_authored_vertices',None)
+    if curved or authored:
         it['nodes'] = [int(i) for i in idx]
         it['ctrl'] = [None if c is None else D._r(c) for c in C]
     else:
-        it['seam_authored_vertices'] = True
         it.pop('nodes', None)
         it.pop('ctrl', None)
 
@@ -105,24 +190,36 @@ def _targets(spec, name, lid):
     return out
 
 
-def _copy_to(src, dst, M, rev):
+def _copy_to(src, dst, M, rev, indices=None):
     N, C, _, own = shape(src)
     N2 = np.asarray(M(N), float)
     C2 = [None if c is None else np.asarray(M(c), float) for c in C]
     if rev:
         N2 = N2[::-1]
         C2 = [None if c is None else c[::-1] for c in C2[::-1]]
-    set_shape(dst, N2, C2)
-    if not own and not src.get('seam_authored_vertices'):
+    from . import point_connection as PC
+    PC.remap(dst, shape(dst)[0], N2, indices=indices)
+    if src.get('sampled_spans') is True and own:
+        parts=[np.asarray(M(p),float) for p in span_points(src)]
+        if rev:parts=[p[::-1] for p in parts[::-1]]
+        set_spans(dst,parts,C2)
+    else:
+        dst.pop('sampled_spans',None)
+        set_shape(dst, N2, C2)
+    if src.get('seam_authored_vertices') is True:
+        dst['seam_authored_vertices']=True
+    elif not own:
         # Moving an imported sampled curve does not author new sewing corners.
         dst.pop('seam_authored_vertices', None)
 
 
-def _edit(spec, name, lid, fn, keep=None, flags=None):
+def _edit(spec, name, lid, fn, keep=None, flags=None, indices=None):
     """fn(N, C, closed, R) -> (N, C) on line lid of piece name, its mirror lines given the mirror image. R: the
     piece's reflection across its center line when the line is its own mirror image, else None. The smooth vertices
     keep their handles on one line afterwards (keep: {vertex: 'in' | 'out'}, the handle that keeps its direction);
     flags(smooth set, N, R) -> the new smooth set (set_smooth). Returns the pieces changed."""
+    from . import point_connection as PC,boundary_connection as BC
+    connection_before=BC.snapshot(spec) if not PC._busy and indices is None else None
     pc = D.piece(spec, name)
     it = D.internal(pc, lid)
     targets = _targets(spec, name, lid)
@@ -132,6 +229,9 @@ def _edit(spec, name, lid, fn, keep=None, flags=None):
     sm = smooth_nodes(it, len(N))
     N0 = N.copy()
     N, C = fn(N, C, closed, R)
+    from . import point_connection as PC
+    mapping={old:new for new,old in enumerate(indices) if old is not None} if indices is not None else None
+    PC.remap(it, N0, N, indices=mapping)
     if len(N) != len(N0):                         # a vertex added or removed: the others are where they were
         sm = {int(np.linalg.norm(N - N0[k], axis=1).argmin()) for k in sm
               if np.linalg.norm(N - N0[k], axis=1).min() < 1e-6}
@@ -140,16 +240,20 @@ def _edit(spec, name, lid, fn, keep=None, flags=None):
     C = list(C)
     for k in sorted(sm):
         _align(N, C, closed, k, (keep or {}).get(k))
-    set_shape(it, N, C)
+    set_shape(it, N, C, indices=indices)
     _set_smooth_nodes(it, sm, len(N))
     for nm, l2, M, rev in targets:
         dst = D.internal(D.piece(spec, nm), l2)
-        _copy_to(it, dst, M, rev)
+        dest_map=({len(N0)-1-old:len(N)-1-new for old,new in mapping.items()} if rev else mapping) if mapping is not None and len(shape(dst)[0])==len(N0) else None
+        _copy_to(it, dst, M, rev, indices=dest_map)
         n = len(N)
         _set_smooth_nodes(dst, {n - 1 - k for k in sm} if rev else sm, n)
         from . import fold_hand as FH
         FH.carry(it, dst, M)
-    return list(dict.fromkeys([name] + [t[0] for t in targets]))
+    changed=[name]+[t[0] for t in targets]
+    if connection_before is not None and len(N)==len(N0):
+        changed+=BC.propagate(spec,connection_before)
+    return list(dict.fromkeys(changed))
 
 
 # ---------------------------------------------------------------- smooth vertices (user 2026-11-17)
@@ -263,6 +367,10 @@ def move_nodes(spec, name, lid, deltas):
     that is its own mirror image each vertex also gives its mirror vertex the mirror-image move, and a vertex that gets
     two moves (it and its mirror both picked, or one on the center line) takes their mean (as draft._sym_deltas).
     Returns the pieces changed."""
+    from . import point_connection as PC
+    connected = PC.move(spec, name, lid, deltas)
+    if connected is not None:
+        return connected
     deltas = {int(k): np.asarray(v, float) for k, v in deltas.items()}
 
     def fn(N, C, closed, R):
@@ -307,6 +415,17 @@ def set_handle(spec, name, lid, s, w, pos):
 def locate(it, q):
     """(span, t, distance mm) of the point of internal line it nearest q."""
     N, C, closed, _ = shape(it)
+    if it.get('sampled_spans') is True and shape(it)[3]:
+        hits=[]
+        for k,p in enumerate(span_points(it)):
+            if C[k] is not None:
+                _,t,d=_locate(N[[k,(k+1)%len(N)]],[C[k]],False,q)
+            else:
+                station,d=_project(p,q)
+                length=float(np.linalg.norm(np.diff(p,axis=0),axis=1).sum())
+                t=station/max(length,1e-12)
+            hits.append((k,t,d))
+        return min(hits,key=lambda hit:hit[2])
     return _locate(N, C, closed, q)
 
 
@@ -329,12 +448,15 @@ def _locate(N, C, closed, q):
     return best
 
 
-def _split(N, C, closed, s, t):
+def _split(N, C, closed, s, t, raw=None):
     """Insert a vertex in span s at parameter t (a curve split so its shape stays). Returns its index."""
     n = len(N)
     a, b = N[s], N[(s + 1) % n]
     if C[s] is None:
-        m = a + t * (b - a)
+        if raw is None:m = a + t * (b - a)
+        else:
+            cum=np.r_[0,np.cumsum(np.linalg.norm(np.diff(raw,axis=0),axis=1))]
+            m=np.array([np.interp(t*cum[-1],cum,np.asarray(raw)[:,j]) for j in range(2)])
         left = right = None
     else:
         h0, h1 = C[s]
@@ -357,16 +479,25 @@ def insert_node(spec, name, lid, q):
     if not editable(it):
         return _fit_split(spec, name, lid, q)
 
+    order=[]
     def fn(N, C, closed, R):
-        s, t, _ = _locate(N, C, closed, q)
-        N, k = _split(N, C, closed, s, t)
+        order[:]=range(len(N));old_len=len(N)
+        raw_mode=it.get('sampled_spans') is True and shape(it)[3]
+        s,t,_=locate(it,q) if raw_mode else _locate(N,C,closed,q)
+        N,k=_split(N,C,closed,s,t,span_points(it)[s] if raw_mode else None)
+        if len(N)>old_len:order.insert(k,None)
         if R is not None:
             qm = R([N[k]])[0]
             if np.linalg.norm(qm - N[k]) > NEAR:
-                s2, t2, _ = _locate(N, C, closed, qm)
-                N, _ = _split(N, C, closed, s2, t2)
+                if raw_mode:
+                    import copy
+                    tmp=copy.deepcopy(it);set_shape(tmp,N,C,indices=order)
+                    s2,t2,_=locate(tmp,qm);raw=span_points(tmp)[s2]
+                else:s2,t2,_=_locate(N,C,closed,qm);raw=None
+                old_len=len(N);N,k2=_split(N,C,closed,s2,t2,raw)
+                if len(N)>old_len:order.insert(k2,None)
         return N, C
-    return _edit(spec, name, lid, fn)
+    return _edit(spec, name, lid, fn, indices=order)
 
 
 def _fit_split(spec, name, lid, q):
@@ -412,12 +543,15 @@ def delete_node(spec, name, lid, i):
         N = np.delete(N, k, axis=0)
         return N, C
 
+    order=[]
     def fn(N, C, closed, R):
+        order[:]=range(len(N))
         j = _partner(N, i, R)
         for k in sorted({i} | ({j} if j is not None else set()), reverse=True):
             N, C = drop(N, C, closed, k)
+            order.pop(k)
         return N, C
-    return _edit(spec, name, lid, fn)
+    return _edit(spec, name, lid, fn, indices=order)
 
 
 def toggle_curve(spec, name, lid, q, span=None):
@@ -441,7 +575,10 @@ def toggle_curve(spec, name, lid, q, span=None):
 
         def flip(t):
             a, b = N[t], N[(t + 1) % n]
-            C[t] = np.array([a + (b - a) / 3.0, a + 2.0 * (b - a) / 3.0]) if curve else None
+            if curve and it.get('sampled_spans') is True and shape(it)[3]:
+                C[t]=np.asarray(D.fit_bezier(span_points(it)[t])[0],float)
+            else:
+                C[t] = np.array([a + (b - a) / 3.0, a + 2.0 * (b - a) / 3.0]) if curve else None
         flip(s)
         a, b = _partner(N, s, R), _partner(N, (s + 1) % n, R)
         if a is not None and b is not None:

@@ -274,6 +274,26 @@ def snap_s(tr, s, tol_mm, targets):
     return (float(t[j]), True) if d[j] <= tol_mm else (s, False)
 
 
+def center_targets(spec, key, tr):
+    """Intersections with the piece's visible symmetry axis, in track arc length."""
+    from . import draft as D
+    pc = D.piece(spec, key.split(SEP)[0])
+    if D.symmetric_edit(pc) is None:
+        return []
+    c, axis = D.self_axis(pc)
+    B = tr.B if getattr(tr, 'internal', False) else np.vstack([tr.B, tr.B[:1]])
+    normal = np.array([-axis[1], axis[0]])
+    v = (B - c) @ normal
+    result = []
+    for j in range(len(B) - 1):
+        if abs(v[j]) < 1e-7:
+            result.append(float(tr.cum[j]))
+        if v[j] * v[j+1] < 0:
+            t = v[j] / (v[j] - v[j+1])
+            result.append(float(tr.cum[j] + t * np.linalg.norm(B[j+1] - B[j])))
+    return result
+
+
 def snap_targets(spec, key, trk, skip=()):
     """Track positions worth snapping an end to on track `key`: the outline's corners, the piece's notches, the
     ends of its internal lines that touch the outline (a pocket line, a dart leg), and the ends of the other seams
@@ -303,7 +323,8 @@ def snap_targets(spec, key, trk, skip=()):
             for w, s in (('from', s0), ('to', s1)):
                 if (sm['id'], k, w) not in skip:
                     out.append(s % tr.L if is_closed(tr) else s)
-    return out
+    out += center_targets(spec, key, tr)
+    return list(dict.fromkeys(round(float(x), 8) for x in out))
 
 
 # ---------------------------------------------------------------- moving a side

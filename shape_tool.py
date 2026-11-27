@@ -44,12 +44,14 @@ def snap_settings(context):
 class Snapper:
     """A tool's snapping: targets gathered once, then point(q) per mouse move. kinds: core/snap.py names."""
 
-    def __init__(self, context, kinds, skip=()):
+    def __init__(self, context, kinds, skip=(), outline_only=False, internal_positions=False):
         spec, outlines = store.get(context)
         self._source_spec, self.outlines = spec, outlines
         self._skip, self._visible = tuple(skip), None
         self.spec, self.targets = None, None
         self.kinds = set(kinds)
+        self.outline_only=outline_only
+        self.internal_positions=internal_positions
         self.mark = None
         self.gaps = []                 # [(a, b, mm, hot)]: the point's gaps on its piece (DECISIONS
         self._segs = {}                # cloth-sim-drag-distance-snap-2026-10-23, the drawing tools)
@@ -65,7 +67,13 @@ class Snapper:
         self.spec = (dict(self._source_spec, pieces=[pc for pc in self._source_spec['pieces']
                                                     if pc['name'] in names])
                      if self._source_spec is not None else None)
-        self.targets = SN.Targets(self.spec, self.outlines, skip=self._skip) if self.spec is not None else None
+        target_spec = self.spec
+        if self.spec is not None and self.outline_only:
+            self.spec=dict(self.spec,pieces=[dict(pc,internals=[]) for pc in self.spec['pieces']])
+        # Geometry-only targets; the outline-only copy still governs gap alignment.
+        self._target_spec = target_spec if self.internal_positions else self.spec
+        self.targets = SN.Targets(self._target_spec, self.outlines, skip=self._skip,
+                                  internal_vertices=self.internal_positions) if self.spec is not None else None
         self._segs.clear()
         if self._at not in names:
             self._at = None
@@ -147,7 +155,7 @@ class Snapper:
         hit = None
         if on and r > 1e-9 and self.spec is not None:
             if 'all' not in self._segs:
-                S_ = [SN.piece_segments(pc) for pc in self.spec['pieces'] if pc.get('enabled', True)]
+                S_ = [SN.piece_segments(pc) for pc in self._target_spec['pieces'] if pc.get('enabled', True)]
                 self._segs['all'] = (np.vstack([a for a, b in S_]) if S_ else np.zeros((0, 2)),
                                      np.vstack([b for a, b in S_]) if S_ else np.zeros((0, 2)))
             u = (q - o) / r
@@ -440,7 +448,7 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
         self.press_px = None
         self.waiting = False                  # True: the press was a click, the second corner is a click too
         self.square = self.center = False
-        self.snapper = Snapper(context, ('corner', 'notch', 'iend', 'mid', 'edge', 'iline'))
+        self.snapper = Snapper(context, ('corner', 'notch', 'iend', 'mid', 'edge', 'iline'),outline_only=self.internal, internal_positions=self.internal)
         self._draw_area = context.area.as_pointer()
         self._h = bpy.types.SpaceView3D.draw_handler_add(self._draw, (context,), 'WINDOW', 'POST_VIEW')
         self._status(context)
@@ -553,6 +561,8 @@ class AC9_OT_SimDrawShape(bpy.types.Operator):
 def _tool(idname, label, desc, icon, tool):
     from . import toolbar as TB
     def draw_settings(context, layout, _tool):
+        from . import draft_tool
+        if draft_tool.parameter_header(context,layout):return
         from . import toolbar as TB
         TB.works_on(layout, tool)
         TB._keys(layout, tool)

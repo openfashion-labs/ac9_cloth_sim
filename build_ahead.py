@@ -25,7 +25,7 @@ STOP_GIVE_UP_S = 1.0              # a press waits this long for a build of anoth
 FRESH_GUESS_S = 4.0               # a build's time before one has been measured
 RUNTIME_KEYS = ('native_runtime_dir', 'native_runtime_token')
 _A = dict(due=0.0, job=None, key=None, prep=None, failed=None, stop_t=None, press_key=None, last=None, wait_t=None,
-          skip=None)
+          skip=None, generation=0)
 _QUIET = {'on': False}             # dress.log: no scene writes while on
 
 
@@ -53,8 +53,10 @@ def later(context=None, delay=QUIET_S):
     edits push it back; a build of the edit before is stopped (it is out of date)."""
     if not switched_on():
         return
+    _A['generation'] += 1
     _A['due'] = time.monotonic() + delay
     _stop_running()
+    if _A['job'] is None:_abort_prep()
     if not bpy.app.timers.is_registered(_tick):
         bpy.app.timers.register(_tick, first_interval=delay, persistent=False)
 
@@ -92,6 +94,7 @@ def _tick():
     wait = _A['due'] - time.monotonic()
     if wait > 0.02:
         return max(wait, 0.2)
+    if _A['prep'] is not None and _A['job'] is None:return 0.1
     if _A['job'] is not None:                       # the one before is still stopping or ending
         _skip('previous_build')
         return 0.3
@@ -113,6 +116,8 @@ def _tick():
 
 def _busy_retry():
     from . import dress as DR, draft_tool as DT
+    if str(getattr(bpy.context,'mode','')).startswith('EDIT'):
+        _skip('editing_mesh');return True
     for why, now in (('mesh_prewarm', DR._prewarm_running), ('drag', lambda: DT._state.get('drag') is not None),
                      ('foreground', lambda: DR._SESSION_FOREGROUND), ('modal', _modal_running),
                      ('simulating', lambda: getattr(DR.AC9_OT_SimDress, '_active_instance', None) is not None)):
@@ -126,82 +131,80 @@ def pressed():
     """A press's job was sent to the waiting solver: an edit's build still waiting for the drafting to be still
     is not wanted (the press builds or begins on its own; a build asked for after it found the model kept and did
     nothing, holding the interface 0.14-0.15 s each, three times in one test)."""
+    _A['generation'] += 1
     _A['due'] = 0.0
+    if _A['job'] is None:_abort_prep()
     if bpy.app.timers.is_registered(_tick):
         bpy.app.timers.unregister(_tick)
         _skip('pressed')
 
 
-def _start(context):
-    from . import dress as DR, store, job_archive as JA
-    from . import prepare_build as PB
-    session = DR._LIVE_SESSION
-    if (session is None or session.poisoned or session.lease is not None or session.process.poll() is not None):
-        _skip('no_idle_solver')
-        return                                      # no idle waiting solver: nothing to build on
-    spec = store.get(context)[0]
-    if spec is None:
-        _skip('no_pattern')
-        return
-    g = DR.garment(spec)
-    cj = DR.job_of(g) if g is not None else None
-    if not cj or not DR.job_alive(cj):
-        _skip('no_result')                          # a garment with no result yet: its placed start writes the scene
-        return
-    _A['skip'] = None
-    props = context.scene.ac9_cloth_sim
-    t0 = time.perf_counter()
-    owner = DR.Preparation(context)
-    base = os.path.join(str(JA.worker_temp(context)), 'ac9_build_ahead', str(os.getpid()))
-    _sweep(base)                                    # what an ended session still held when it was dropped
-    os.makedirs(base, exist_ok=True)
+def _input_update(scene, graph):
+    task=_A['prep']
+    if task is None or not hasattr(task,'dependencies'):return
+    for update in graph.updates:
+        item=getattr(update.id,'original',update.id)
+        if item.session_uid in task.dependencies and (update.is_updated_geometry or update.is_updated_transform
+                                                      or isinstance(item,bpy.types.Collection)):
+            _trace('build_ahead_superseded',generation=_A['generation'],reason='scene_input')
+            later(bpy.context);return
 
-    def temp_dir(*, allocator=None):                # never next to the .blend, never remembered as a result
-        label = time.strftime('%Y%m%d_%H%M%S') + '_' + str(time.time_ns())
-        path = PB.OwnedJobDirectory.create(base, label)
-        owner.build.directories.append(path)
-        return path
-    owner.build.job_dir = temp_dir
-    _A['prep'] = owner
-    _QUIET['on'] = True
+
+def _watch_inputs(on):
+    handlers=bpy.app.handlers.depsgraph_update_post
+    if on and _input_update not in handlers:handlers.append(_input_update)
+    elif not on and _input_update in handlers:handlers.remove(_input_update)
+
+
+def _start(context):
+    from . import dress as DR, store, ahead_prepare
+    session=DR._LIVE_SESSION
+    if session is None or session.poisoned or session.lease is not None or session.process.poll() is not None:
+        _skip('no_idle_solver');return
+    spec=store.get(context)[0]
+    if spec is None:_skip('no_pattern');return
+    g=DR.garment(spec)
+    if g is None or (not g.get('ac9_job') and not any(m.type=='MESH_CACHE' for m in g.modifiers)):
+        _skip('no_result');return
+    _A['skip']=None
+    t=time.perf_counter();task=ahead_prepare.start(context,_A['generation'])
+    task.session=session
+    _A['prep']=task
+    _watch_inputs(True)
+    _trace('build_ahead_capture',generation=task.generation,spec_sha=task.spec_sha,snapshot_s=round(task.snapshot_s,6),
+           main_s=round(time.perf_counter()-t,6),phases=task.capture_phases,bytes=(task.root/'scene.blend').stat().st_size)
+    if not bpy.app.timers.is_registered(_poll):bpy.app.timers.register(_poll,first_interval=0.05,persistent=True)
+
+
+def _prepared(context,task):
+    from . import dress as DR
+    if (task.generation!=_A['generation'] or not task.matches(context)
+            or DR._LIVE_SESSION is not task.session):
+        _skip('stale_preparation');_abort_prep();return
+    if not enabled(context):
+        _skip('not_enabled');_abort_prep();return
+    if _busy_retry():return
+    session=DR._LIVE_SESSION
+    if session is None or session.poisoned or session.lease is not None or session.process.poll() is not None:
+        _skip('no_idle_solver');_abort_prep();return
+    t=time.perf_counter()
     try:
-        info, _ = owner.prepare(props.mesh_size, xinit_from=None, continue_job=cj,
-                                continue_shown=DR.shown_shape(context, g), live=True,
-                                redo=DR.reset_pieces(g), redo_shown=DR.frozen(g), for_build=True)
-    finally:
-        _QUIET['on'] = False
-    t_prep = time.perf_counter() - t0
-    d = str(info['dir'])
-    if len(info.get('stages', ())) != 1:
-        _skip('stages', stages=len(info.get('stages', ())))
-        _abort_prep(); return
-    stage = os.path.join(d, 'build')
-    os.makedirs(stage, exist_ok=True)
-    cfg = json.loads(Path(d, 's1', 'config.json').read_text(encoding='utf-8'))
-    for k in RUNTIME_KEYS:
-        cfg.pop(k, None)
-    cfg_path = os.path.join(stage, 'config.json')
-    with open(cfg_path, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f)
-    from . import result_reference as RR
-    idx, avatar = os.path.join(d, RR.INDEX), os.path.join(d, RR.AVATAR)
-    t_key = time.perf_counter()
-    key = _key(idx, avatar, cfg)
-    _A['timing'] = dict(prepare_s=round(t_prep, 3), key_s=round(time.perf_counter() - t_key, 3))
-    if key is None or key == _A['failed']:
-        _skip('no_key' if key is None else 'failed_before')
-        _abort_prep(); return
-    python = DR.newton_python(context)
-    env = DR.solver_process_env(python, info.get('solver_env', {})) if python else None
-    if env is None or not session.compatible(python, env, cfg_path):
-        _skip('incompatible')
-        _abort_prep(); return
-    job = session.submit(idx, avatar, cfg_path, stage, op='build')
-    _A.update(job=job, key=key, stop_t=None, wait_t=None, t_sent=time.monotonic())
-    _trace('build_ahead_sent', prepare_s=round(t_prep, 3), main_s=round(time.perf_counter() - t0, 3),
-           generation=job.command['generation'])
-    if not bpy.app.timers.is_registered(_poll):
-        bpy.app.timers.register(_poll, first_interval=0.25, persistent=True)
+        row=task.read();key=row['key']
+        if key==_A['failed']:_skip('failed_before');_abort_prep();return
+        python=DR.newton_python(context)
+        env=DR.solver_process_env(python,row['solver_env']) if python else None
+        if env is None or not session.compatible(python,env,row['cfg']):
+            _skip('incompatible');_abort_prep();return
+        timing=dict(prepare_s=row['prepare_s'],key_s=row['key_s'])
+        metrics=dict(edit_generation=task.generation,prepare_s=round(row['prepare_s'],6),
+                     worker_s=round(row['worker_s'],6),phases=row['phases'],snapshot_s=round(task.snapshot_s,6))
+        job=session.submit(row['idx'],row['avatar'],row['cfg'],row['stage'],op='build')
+    except Exception as exc:
+        _trace('build_ahead_error',error=repr(exc)[:500]);_abort_prep();return
+    # The resident now owns a lease: retain the private input even if diagnostics fail.
+    _A.update(job=job,key=key,stop_t=None,wait_t=None,t_sent=time.monotonic(),timing=timing)
+    try:_trace('build_ahead_sent',**metrics,main_s=round(time.perf_counter()-t,6),generation=job.command['generation'])
+    except Exception:pass
 
 
 def _sweep(base):
@@ -226,6 +229,7 @@ def _key(idx, avatar, cfg):
 
 
 def _abort_prep():
+    if hasattr(bpy.app,'handlers'):_watch_inputs(False)
     owner, _A['prep'] = _A['prep'], None
     if owner is not None:
         try:
@@ -262,7 +266,13 @@ def _finish():
 def _poll():
     job = _A['job']
     if job is None:
-        return None
+        task=_A['prep']
+        if task is None:return None
+        if not enabled() or task.generation!=_A['generation'] or not task.matches(bpy.context):
+            _skip('stale_preparation');_abort_prep();return None
+        if task.poll() is None:return 0.05
+        _prepared(bpy.context,task)
+        return 0.25 if _A['job'] is not None else (0.05 if _A['prep'] is not None else None)
     if job.poll() is None:
         return 0.25
     _finish()
@@ -324,7 +334,10 @@ def _give_up(DR):
 
 def end():
     """Unregister / another file: stop a build in flight and drop its temporary input."""
+    _A['generation']+=1
     _stop_running()
+    if _A['job'] is None:_abort_prep()
+    elif hasattr(bpy.app,'handlers'):_watch_inputs(False)
     if bpy.app.timers.is_registered(_tick):
         bpy.app.timers.unregister(_tick)
     _A.update(due=0.0, press_key=None, wait_t=None)

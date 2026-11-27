@@ -296,7 +296,9 @@ class Resident:
             if self.g is not None and key is not None and key == self.key:
                 info = dict(mode='kept', setup_s=0.0, keepable=True, why_not=None)
             else:
-                self.drop(); info = self._fresh(init_globals, mark)
+                # up to the last heavy statement only: begin runs every later one again on this job (graph, guard,
+                # jitter, start check: about 0.22 s of a 1.77 s build on a T-shirt, 2026-11-26)
+                self.drop(); info = self._fresh(init_globals, mark, upto=max(self.i_heavy) + 1 if self.i_heavy else None)
                 self.key = key if (key is not None and info.get('keepable')) else None
                 info['mode'] = 'build'
             if self.g is not None: self._close_inputs(self.g)
@@ -337,12 +339,14 @@ class Resident:
         self.last = info
         return info
 
-    def _fresh(self, init_globals, mark):
+    def _fresh(self, init_globals, mark, upto=None):
+        """upto (a build only): the statements before it, not up to the loop. Only for a model kept for a begin,
+        which runs every statement after finalize except the heavy ones again."""
         wp = self.wp; g = dict(__name__='__main__', __file__=self.path, **init_globals); self.g = g
         g['_AC9_TOPOLOGY_CACHE'] = {}
         S = dict(heavy_snap={}, heavy_solver={}, heavy_globals={}, heavy_log={})
         t0 = time.perf_counter(); keepable = True
-        for i in range(self.loop_i):
+        for i in range(self.loop_i if upto is None else min(upto, self.loop_i)):
             if i == self.i_builder:
                 pre_ids = {k: id(v) for k, v in g.items()}; pre_log = copy.deepcopy(g['log'])
             heavy = i in self.i_heavy

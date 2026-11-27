@@ -45,7 +45,7 @@ KINDS = {                                 # kind: the legend's words
     'placement': "placed",                # Place: a band stretched to clear the body, a piece through another
     'fold': "fold stretches it",          # a fold too sharp for the piece's length here
     'hand': "moved by hand",              # moved by hand: vertices added / deleted, inside the body, stretched
-    'anomaly': "the run stopped here",    # the solver's anomaly (its hardest pulling stitches)
+    'anomaly': "Run anomaly candidates (history; see the run log)",
     'unsettled': "still moving at the end",   # moved 2 mm or more in the last 50 frames of the last stage
     'inside': "inside the body",          # From Mesh: the imported garment's vertices inside the body
     'start': "did not start as shown",    # a run: vertices that started over 0.1 mm from the shape on screen
@@ -124,10 +124,12 @@ def _pieces(context, spec, outlines):
         co, ckey = PL._garment_co(context, ob, job)
         flat = _garment_flat(ob)
         key.append(ckey)
-        if flat is not None:
-            for n, p in pieces.items():
-                if n in visible and n not in sap and display.get(n, {}).get('source') == 'result':
-                    out[n] = (flat, p['tri'], co, False)
+        # Face Side needs the surface even when its material map is unavailable.
+        if flat is None:
+            flat = np.zeros((len(co), 2))
+        for n, p in pieces.items():
+            if n in visible and n not in sap and display.get(n, {}).get('source') == 'result':
+                out[n] = (flat, p['tri'], co, False)
         sh = {n: v for n, v in sh.items() if n in sap and n in visible}
     else:
         sh = {n: v for n, v in sh.items() if n in visible}
@@ -151,6 +153,8 @@ def _garment_flat(ob):
     uv.data.foreach_get('uv', u)
     f = np.zeros((len(me.vertices), 2))
     f[lv] = u.reshape(-1, 2) * 1000.0
+    if not np.allclose(f[lv], u.reshape(-1, 2) * 1000.0, atol=.001, rtol=0):
+        return None
     return f
 
 
@@ -197,6 +201,13 @@ def _data(context, spec, outlines):
     if view is None or view['key'] != key:
         per = {}
         for n, (F, T, W, _turned) in got.items():
+            # Missing material coordinates are zero-filled by the geometry reader
+            # for Face Side. They must never become a measured x1.00 in this map.
+            F, T = np.asarray(F, float), np.asarray(T, np.int64)
+            u, v = F[T[:, 1]]-F[T[:, 0]], F[T[:, 2]]-F[T[:, 0]]
+            if (not len(T) or not np.isfinite(F).all() or not np.isfinite(W).all()
+                    or not (np.abs(u[:, 0]*v[:, 1]-u[:, 1]*v[:, 0]) > 1e-9).all()):
+                continue
             l1, l2 = stretches(F, T, np.asarray(W, float) * 1000.0)
             per[n] = (np.asarray(W, float)[T.ravel()], l1, l2)
         view = {'key': key, 'per': per}
@@ -674,6 +685,7 @@ def _draw_px():
     if probs and spec and PV.layout_empty(context) is not None:
         _draw_spots(context, spec)
         _draw_spots(context, spec, candidates=True)
+        _draw_stretch_spot(context, spec)
     lines = []                         # (text, rgb)
     # a run that has not made its first frame yet: said where the person looks (user 2026-11-13: "準備中が一切出なかった")
     if prep:
@@ -688,13 +700,11 @@ def _draw_px():
     if side:
         lines.append((tx("Face Side: blue the face, red the back"), (1.0, 1.0, 1.0)))
     if stretch:
-        lines.append((tx("Stretch: up to {0} ok, {1} yellow, {2} red, blue squashed", OK, WARN, BAD), (1.0, 1.0, 1.0)))
+        lines.append((tx("Stretch: above x{0} yellow, x{1} to x{2} yellow to red; blue compressed", OK, WARN, BAD), (1.0, 1.0, 1.0)))
         for n, m, x in summary(per, PL._selected(context)):
             c = colors(np.array([x]), np.array([1.0]))[0]
             lines.append((tx("{0}: {1:.2f} median, {2:.2f} max", n, m, x),
                           tuple(c[:3]) if x > OK else (0.85, 0.95, 0.85)))
-    if probs:
-        lines += [(t, (1.0, 0.45, 0.4)) for t in diagnosis.problem_lines(context)]
     fid = 0
     blf.size(fid, 13)
     # clear of the toolbar whatever its width (it was x = 70, under a toolbar with two columns or names; 2026-11-12)
@@ -702,6 +712,51 @@ def _draw_px():
     x0, y0 = U.view_text_origin(context, 120)
     from . import text_band
     text_band.draw(fid, [(x0, y0 - i * 20, txt, (*rgb, 1.0)) for i, (txt, rgb) in enumerate(lines)])
+
+
+def _draw_stretch_spot(context, spec):
+    """A neutral diamond, independent of the red/yellow collision squares."""
+    from . import diagnosis, text_band
+    from bpy_extras.view3d_utils import location_3d_to_region_2d
+    if context.region is None or context.region_data is None:
+        return
+    spot = diagnosis.stretch_spot(context, spec)
+    if spot is None:
+        return
+    ob, name, world, flat, value = spot
+    if VV.object_decoration_allowed(context, ob):
+        xy, seen = _seen(context, ob, world)
+    elif VV.object_decoration_allowed(context, PV.piece_objects().get(name)):
+        xy = location_3d_to_region_2d(context.region, context.region_data, flat)
+        seen = True
+    else:
+        return
+    if xy is None:
+        return
+    # Larger than a crossing square, so both remain readable at the same location.
+    corners = [(0, 26), (26, 0), (0, -26), (-26, 0), (0, 26)]
+    points = []
+    for a, b in zip(corners, corners[1:]):
+        points.extend([(xy.x + a[0] + (b[0]-a[0])*k/4,
+                        xy.y + a[1] + (b[1]-a[1])*k/4, 0.) for k in range(4)])
+    points.append(points[0])
+    if not seen:
+        points = [p for k in range(0, len(points)-1, 2) for p in (points[k], points[k+1])]
+    shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+    gpu.state.blend_set('ALPHA');gpu.state.depth_test_set('NONE')
+    try:
+        batch = batch_for_shader(shader, 'LINE_STRIP' if seen else 'LINES', {'pos':points})
+        shader.bind();shader.uniform_float('viewportSize',(context.region.width,context.region.height))
+        for width, color in ((5.,(.04,.04,.04,.9)),(2.5,(.9,.94,.98,1. if seen else .5))):
+            shader.uniform_float('lineWidth',width);shader.uniform_float('color',color);batch.draw(shader)
+    finally:
+        gpu.state.blend_set('NONE')
+    blf.size(0,12)
+    text = tx("Maximum stretch x{0}: {1}", f"{value:.2f}", name)
+    w, h = blf.dimensions(0,text)
+    x = max(4,min(xy.x+24,context.region.width-w-4))
+    y = max(4,min(xy.y-36,context.region.height-h-4))
+    text_band.draw(0,[(x,y,text,(.9,.94,.98,1. if seen else .65))])
 
 
 def invalidate():

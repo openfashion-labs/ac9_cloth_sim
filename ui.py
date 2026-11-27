@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 import os
+from .core import overlay_policy as OP
 from .i18n import CTX, fabric_name, tx, wrap
 from . import units as U
 from .core import spec as S
@@ -215,6 +216,22 @@ def draw_run(layout, context, status=True):
     col.prop(p, "hold_while_sewing")
     # Research controls only under Experimental Features (user 2026-11-14). Native 3 has no switch (always on, user
     # 2026-11-22); the research solver still takes Simulate over while it is on
+    from .core import watch_record as WR
+    watch_state = WR.panel_state(p.preset, p)
+    if watch_state['mode'] == 'INVALID':
+        col.label(text=tx('Cannot read research settings'), icon='ERROR')
+    elif exp and watch_state['editable']:
+        col.prop(p, 'watch', text='Record Run Anomalies', text_ctxt=CTX)
+    elif watch_state['explicit']:
+        if watch_state['mode'] == 'STAGED':
+            col.label(text=tx('Anomaly recording is set per stage'), icon='INFO')
+        else:
+            col.label(text=tx('Record Run Anomalies'),
+                      icon='CHECKBOX_HLT' if watch_state['mode']=='ON' else 'CHECKBOX_DEHLT')
+            col.label(text=tx('Set by research settings'))
+    if exp or watch_state['explicit']:
+        col.label(text=tx('Records candidates only (Experimental)'), icon='INFO')
+        col.label(text=tx('Results: Settings > Log'))
     if exp:
         col.prop(p, "accurate_research", text="Accurate (Research)")
         if p.accurate_research:
@@ -249,13 +266,18 @@ def draw_hidden_note(layout, context, spec):
     row.operator("ac9_cloth_sim.show_all_pieces", text="Show All")
 
 
-def draw_hide_buttons(layout):
+def draw_hide_buttons(layout, piece=None):
     """Hide / Hide Others / Show All for the selected pieces (H, Shift+H, Alt+H in the viewport)."""
     # two buttons a row (a sidebar row of three cut their words)
     col = layout.column(align=True)
     row = col.row(align=True)
-    row.operator("ac9_cloth_sim.hide_pieces", text="Hide", icon='HIDE_ON')
-    row.operator("ac9_cloth_sim.hide_pieces", text="Hide Others").unselected = True
+    if piece:
+        row.operator("ac9_cloth_sim.hide_piece", text="Hide", icon='HIDE_ON').piece = piece
+        op = row.operator("ac9_cloth_sim.hide_piece", text="Hide Others")
+        op.piece, op.others = piece, True
+    else:
+        row.operator("ac9_cloth_sim.hide_pieces", text="Hide", icon='HIDE_ON')
+        row.operator("ac9_cloth_sim.hide_pieces", text="Hide Others").unselected = True
     col.operator("ac9_cloth_sim.show_all_pieces", text="Show All", icon='HIDE_OFF')
 
 
@@ -465,7 +487,6 @@ class AC9_PT_SimMain(bpy.types.Panel):
         col = layout.column(align=True)                    # the mesh by eyedropper or name (empty: the active one)
         col.prop(props, "from_mesh_object", text="Mesh")
         col.operator("ac9_cloth_sim.from_mesh", icon='MESH_DATA')
-        layout.operator("ac9_cloth_sim.add_avatar", icon='OUTLINER_OB_ARMATURE')   # the bundled CC0 avatar (work_screen.py)
         spec, _ = store.get(context)
         if store.text(context) is not None and spec is None:
             box = layout.box()
@@ -1153,7 +1174,7 @@ def draw_garment_rows(layout, context):
         layout.label(text_ctxt=CTX, text="Other garments: obstacles, not moved", icon='INFO')
 
 
-def draw_selected_states(layout, current=None, title="Selected pieces:", states=None):
+def draw_selected_states(layout, current=None, title="Selected pieces:", states=None, piece=None):
     """The four state buttons (core/spec.py STATE_NAMES) for the selected pieces (current: the one shown pressed)."""
     if title:
         layout.label(text=tx(title))
@@ -1170,7 +1191,8 @@ def draw_selected_states(layout, current=None, title="Selected pieces:", states=
         c.alert = mixed
         op = c.operator("ac9_cloth_sim.piece_state", text=txt, icon=STATE_ICON[st],
                         depress=(not mixed and current == st))
-        op.state, op.scope = st, 'SELECTED'
+        op.state, op.scope = st, 'PIECE' if piece else 'SELECTED'
+        if piece: op.piece = piece
 
 
 def draw_piece_list(layout, spec, select=False):
@@ -1292,7 +1314,7 @@ def draw_fabric(layout, context, spec):
     # a settings set saved in this file (core/presets.py, set by a test): Dress runs it, not the default. The
     # panel rows it fixes are grayed out (Fable review 2026-10-08)
     from .core import presets as PR
-    fixed = PR.fixed_fabric(props.preset) if props.preset else {}
+    fixed = {k:v for k,v in PR.fixed_fabric(props.preset).items() if k != 'watch'} if props.preset else {}
     col = layout.column()
     col.use_property_split = True
     col.use_property_decorate = False
@@ -1306,9 +1328,6 @@ def draw_fabric(layout, context, spec):
     col.prop(props, "garment_fabric")
     if fixed:
         col.label(text_ctxt=CTX, text="Settings fix the fabric", icon='ERROR')
-    row = col.row()
-    row.active = 'watch' not in fixed
-    row.prop(props, "watch", text="Watch")
     if props.preset:
         import textwrap
         for i, ln in enumerate(wrap(tx("Settings: {0}", props.preset), 34)[:4]):
@@ -1404,7 +1423,7 @@ def draw_fabric_list(layout, context, spec):
                       icon='MOD_SOLIDIFY', right=str(len(c['iu'].get(it['id'], []))), pad=True).interlining_id = it['id']
     layout.operator("ac9_cloth_sim.interlining_new", text="New", icon='ADD')
     layout.separator()
-    layout.prop(props, "show_fabric_colors", text="Show Fabric Colors")
+    layout.prop(props, "show_fabric_colors", text=OP.label("show_fabric_colors"), text_ctxt=CTX)
 
 
 def draw_obstacles(layout, context):
@@ -1518,7 +1537,7 @@ class AC9_PT_SimLists(bpy.types.Panel):
 def draw_overlay_switch(row, props):
     """The master switch and the popover with each kind (the header and the sidebar)."""
     row.prop(props, "show_overlays", text="", toggle=True, icon='HIDE_OFF' if props.show_overlays else 'HIDE_ON')
-    row.popover(panel="AC9_PT_SimOverlays", text_ctxt=CTX, text="Overlays")
+    row.popover(panel="AC9_PT_SimOverlays", text_ctxt=CTX, text=OP.TITLE)
 
 
 class AC9_PT_SimOverlays(bpy.types.Panel):
@@ -1526,55 +1545,12 @@ class AC9_PT_SimOverlays(bpy.types.Panel):
     in the sidebar, opened with layout.popover() (draw_overlay_switch)."""
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
-    bl_label = "Overlays"
-    bl_ui_units_x = 11
+    bl_label = OP.TITLE
+    bl_ui_units_x = 21
 
     def draw(self, context):
-        layout = self.layout
-        props = context.scene.ac9_cloth_sim
-        row = layout.row()
-        row.scale_y = 1.3
-        row.prop(props, "show_overlays", text="Overlays: ON" if props.show_overlays else "Overlays: OFF",
-                 toggle=True, icon='HIDE_OFF' if props.show_overlays else 'HIDE_ON')
-        col = layout.column(align=True)
-        col.enabled = props.show_overlays
-        col.label(text=tx("Seams"))
-        col.prop(props, "show_overlay", text="Seam Lines")
-        col.prop(props, "show_lengths")
-        col.prop(props, "show_notches")
-        col.separator()
-        col.label(text_ctxt=CTX, text="Pieces")
-        col.prop(props, "show_piece_colors")
-        sub = col.row()
-        sub.active = props.show_piece_colors
-        sub.prop(props, "show_fabric_colors")
-        col.prop(props, "show_names")
-        col.prop(props, "show_internal_3d")
-        col.separator()
-        # colors that tell what is wrong with the cloth (diagnose.py, user 2026-11-02)
-        col.label(text=tx(DIAG.DISPLAY_NAME))
-        col.prop(props, "diagnosis_display", text="")
-        col.separator()
-        col.label(text_ctxt=CTX, text="Body")
-        col.prop(props, "show_guides")
-        mp = getattr(context.scene, 'ac9_cloth_sim_measure', None)
-        if mp is not None:
-            col.prop(mp, "show", text="Measurements")
-        from . import silhouette
-        if silhouette.pattern_view(context):
-            col.separator()
-            col.label(text="2D Silhouettes", text_ctxt=CTX)
-            col.prop(props, "show_silhouette_avatar")
-            col.prop(props, "show_silhouette_collisions")
-            col.operator("ac9_cloth_sim.silhouette_position")
-        # the cloth's thickness: a Solidify on the garment, not drawn over it, so not under the switch above
-        layout.separator()
-        col = layout.column(align=True)
-        col.label(text_ctxt=CTX, text="Garment")
-        col.prop(props, "show_thickness")
-        sub = col.row()
-        sub.active = props.show_thickness
-        sub.prop(props, "thickness_side", text="")
+        from .display_settings import draw
+        draw(self.layout, context)
 
 
 def _header(self, context):

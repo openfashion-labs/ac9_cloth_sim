@@ -376,6 +376,52 @@ def tape_around(body, p, n):
     return tape, surf, np.asarray(p, float) + H[:, :1] * u + H[:, 1:] * v
 
 
+def three_point_plane(points):
+    """A stable plane through three skin points (mm), or None for coincident/collinear points."""
+    P = np.asarray(points, float)
+    if P.shape != (3, 3) or not np.isfinite(P).all():
+        return None
+    a, b = P[1] - P[0], P[2] - P[0]
+    la, lb = np.linalg.norm(a), np.linalg.norm(b)
+    n = np.cross(a, b)
+    ln = np.linalg.norm(n)
+    if min(la, lb, np.linalg.norm(P[2] - P[1])) < 0.1 or ln <= max(0.1 * la, 1e-3 * la * lb):
+        return None
+    return P[0], n / ln
+
+
+def tape_around_points(body, points):
+    """Taut girth through the plane of three points on ONE closed skin section.
+
+    Check the original skin segments before taking their convex hull: a concavity may be bridged by the tape.
+    Never silently pick only the first point's limb when the other points belong to another section.
+    """
+    plane = three_point_plane(points)
+    if plane is None:
+        return None
+    o, n = plane
+    P = np.asarray(points, float)
+    matches = []
+    for W, closed in section(body, o, n):
+        if not closed:
+            continue
+        A, B = W, np.roll(W, -1, axis=0)
+        AB = B - A
+        d = P[:, None, :] - A
+        t = np.clip((d * AB).sum(2) / np.maximum((AB * AB).sum(1), 1e-18), 0, 1)
+        distances = np.linalg.norm(d - t[:, :, None] * AB, axis=2).min(1)
+        if np.max(distances) <= 0.05:
+            matches.append(W)
+    if len(matches) != 1:
+        return None
+    Q = to_plane(matches[0], o, n)
+    H = hull(Q)
+    if len(H) < 3:
+        return None
+    u, v, _ = _frame(n)
+    return perimeter(H), perimeter(Q), o + H[:, :1] * u + H[:, 1:] * v
+
+
 def _arc(P, closed, i, j):
     """The shorter way along the ordered loop / chain P from index i to index j (inclusive)."""
     if not closed:

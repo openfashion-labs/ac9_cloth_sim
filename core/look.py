@@ -34,6 +34,18 @@ def resolved(spec, name):
     return piece_look(spec, name) or default_look(spec)
 
 
+def resolved_all(spec):
+    """The same inheritance for all pieces, with one piece index and pair map."""
+    pcs, twins, default = S.piece_index(spec), FA._twin_map(spec), default_look(spec)
+    result = {}
+    for name, pc in pcs.items():
+        own = pc.get('look')
+        twin = pcs.get(twins.get(name), {}).get('look')
+        result[name] = (own if own and own.get('material') else
+                        twin if twin and twin.get('material') else default)
+    return result
+
+
 def any_look(spec):
     """True when a piece or the garment has a look (the material slots are then the add-on's)."""
     return default_look(spec) is not None or any(pc.get('look') for pc in spec.get('pieces', []))

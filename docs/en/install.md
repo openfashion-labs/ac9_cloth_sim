@@ -7,9 +7,9 @@ sidebar_position: 2
 
 ## Installation
 
-> This guide describes the 0.4.1 candidate. Until split distribution is published, use the all-in-one ZIP from the [0.4.0 Release](https://github.com/openfashion-labs/ac9_cloth_sim/releases/tag/v0.4.0).
+> This guide describes the 0.5.0 candidate. Until split distribution is published, use the all-in-one ZIP from the [0.4.0 Release](https://github.com/openfashion-labs/ac9_cloth_sim/releases/tag/v0.4.0).
 
-### Install through Extensions (0.4.1 — in preparation)
+### Install through Extensions (0.5.0 — in preparation)
 
 After publication, this section will link to the Extensions installation page. It is not available yet.
 
@@ -22,7 +22,7 @@ After publication, this section will link to the Extensions installation page. I
 ### Install manually from a ZIP
 
 1. Use Blender **5.2**; the distributed version does not install on earlier Blender versions.
-2. Currently download `ac9_cloth_sim-0.4.0.zip` from the 0.4.0 Release. After 0.4.1 publication, its all-in-one file will be `ac9_cloth_sim-0.4.1-full.zip`. **Do not extract it**.
+2. Currently download `ac9_cloth_sim-0.4.0.zip` from the 0.4.0 Release. After 0.5.0 publication, its all-in-one file will be `ac9_cloth_sim-0.5.0-full.zip`. **Do not extract it**.
 3. Open Edit → Preferences → Add-ons.
 4. Choose **Install from Disk…** from the **∨** menu at the top right, select the ZIP, and install it.
 5. Check that **AC9 Cloth Sim** is enabled.

@@ -62,6 +62,14 @@ try:
     before=snapshot()
     if action.startswith('clone'):
         result=bpy.ops.ac9_cloth_sim.clone_shape('EXEC_DEFAULT',True,piece=n,line=l,sew=action=='clone_sew')
+        assert result=={'RUNNING_MODAL'} and snapshot()==before
+        from ac9_cloth_sim import copy_place as CP
+        op=CP._active
+        candidate=CP.move_candidate(op._copy_candidate,op._copy_names,op._copy_anchor,[1500,300])
+        op._copy_end(bpy.context)
+        result=op._copy_finish(bpy.context,candidate)
+        # Headless history witness. Native copy click/automatic undo is verified in test_clone_modal.py.
+        bpy.ops.ed.undo_push(message='Confirm copied pattern')
     elif action=='cut':result=bpy.ops.ac9_cloth_sim.cut_line('EXEC_DEFAULT',True,piece=n,line=l)
     else:result=bpy.ops.ac9_cloth_sim.spread('EXEC_DEFAULT',True,piece=n,line=l,amount=.020,mode='parallel',side='auto',hinge='start')
     assert result=={'FINISHED'},result

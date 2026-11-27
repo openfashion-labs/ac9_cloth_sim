@@ -5,10 +5,16 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import sys, types
 
 ROOT = Path(__file__).resolve().parents[1]
-from core import presets
+_pkg=types.ModuleType('ac9_cloth_sim');_pkg.__path__=[str(Path(__file__).resolve().parents[1])]
+sys.modules.setdefault('ac9_cloth_sim',_pkg)
+from ac9_cloth_sim.core import presets
 from solver import fast_live_contract as Fast
+
+
+import sys, types
 
 
 class AccurateResearchTests(unittest.TestCase):
@@ -34,7 +40,7 @@ class AccurateResearchTests(unittest.TestCase):
             slot = {'proc': proc, 'key': 'same'}
             def end():
                 events.append('end'); slot.update(proc=None, key=None)
-            scope = dict(_STANDBY=slot, _PRELOAD_SESSION={}, _trace=lambda *a, **k: None,
+            scope = dict(__package__='ac9_cloth_sim', _STANDBY=slot, _PRELOAD_SESSION={}, _trace=lambda *a, **k: None,
                          _standby_key=lambda *a: 'same', _standby_drop_log=lambda: events.append('drop'),
                          standby_enabled=lambda: not research, standby_end=end)
             exec(compile(ast.Module(body=[fn], type_ignores=[]), 'standby_take', 'exec'), scope)

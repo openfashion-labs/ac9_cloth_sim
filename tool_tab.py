@@ -85,6 +85,7 @@ def clear(context):
     state = _view(context)
     state['tools'].clear()
     state['focus'] = {}
+    state.pop('reference',None)
     publish(context, 'GARMENT', origin='clear')
 
 
@@ -182,7 +183,22 @@ def release(context, kind):
 
 
 def piece_clicked(context=None, origin='click'):
-    publish(context or bpy.context, 'PIECE', origin=origin)
+    context = context or bpy.context
+    _view(context).pop('reference',None)
+    publish(context, 'PIECE', origin=origin)
+
+
+def reference_piece(context, name):
+    """Edit's face click browses attributes; it is not a whole-piece operation selection."""
+    spec = store.get(context)[0]
+    if spec is None or name not in {pc['name'] for pc in spec['pieces']}:
+        return False
+    names = SEL.pattern_pieces(context)
+    if names:
+        SEL.apply(context,names,'SUB',view='pattern')
+    _view(context)['reference'] = name
+    publish(context,'PIECE',origin='reference')
+    return True
 
 
 def focus_item(context, kind, iid):
@@ -237,9 +253,26 @@ PROPS = {                                       # on the Scene (about the select
 }
 
 
+def attribute_reference(context, spec=None):
+    spec = store.get(context)[0] if spec is None else spec
+    if _tool(context) == 'ac9_cloth_sim.edit_pattern_tool':
+        name = _view(context).get('reference')
+        if spec is not None and name in {pc['name'] for pc in spec['pieces']}:
+            return name
+    return None
+
+
+def attribute_selection(context, spec=None):
+    spec = store.get(context)[0] if spec is None else spec
+    name = attribute_reference(context, spec)
+    if name is not None:
+        return (name,),name
+    return SEL.piece_selection(context,spec)
+
+
 def _selected_piece(context, spec):
     """The selection's lead piece of this garment (pattern_view.lead_piece), else None."""
-    return SEL.piece_selection(context, spec)[1]
+    return attribute_selection(context, spec)[1]
 
 
 def resolve(context, spec):
@@ -382,8 +415,10 @@ class AC9_PT_ToolGarment(_ToolTab, bpy.types.Panel):
         sp = layout.row().split(factor=0.4)          # the pieces' default look, under the default fabric
         r = sp.row()
         r.alignment = 'RIGHT'
-        r.label(text_ctxt=CTX, text="Default Look")
+        r.label(text_ctxt=CTX, text="Default Material")
         sp.template_ID(props, "garment_look", new="material.new")
+        from . import base_color
+        base_color.draw(layout, context, spec)
         # the obstacles are listed and added in Lists > Obstacles (Fable UI review 2026-10-21, b-3): their count here
         from . import dress as D
         cols = D.collider_objects(context)
@@ -433,7 +468,10 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
         if name is None:                              # the selection changed between poll and draw
             return
         pcs = S.piece_index(spec)
-        sel, name = SEL.piece_selection(context, spec)
+        sel, name = attribute_selection(context, spec)
+        reference = attribute_reference(context, spec)
+        if reference:
+            layout.label(text=tx('Reference piece'),icon='INFO')
         pc = pcs[name]
         names = list(sel)
         # the name is a field at the top, as an object's name is in the Properties editor (user OK 2026-10-25,
@@ -459,9 +497,9 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
         row.label(text_ctxt=CTX, text="State:")
         row.operator("ac9_cloth_sim.invert_piece_selection", icon='ARROW_LEFTRIGHT')    # user 2026-10-25
         U.draw_selected_states(layout, current=S.piece_state(pc), title=None,
-                               states={S.piece_state(pcs[n]) for n in names})
+                               states={S.piece_state(pcs[n]) for n in names}, piece=reference)
         layout.label(text_ctxt=CTX, text="Display:")               # its own row: hiding is not a state (user 2026-11-15)
-        U.draw_hide_buttons(layout)
+        U.draw_hide_buttons(layout, piece=reference)
         # several pieces selected: each field shows this (the active) piece's value, its label says "mixed" in red
         # when the selected differ, a change sets them all (user 2026-10-20; the label, not a label beside the field,
         # so the field keeps its width: Fable UI review 2026-10-21)
@@ -501,7 +539,7 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
             row.operator('ac9_cloth_sim.reset_placed')
 
         # ---- fabric and look
-        col = section("ac9_cloth_sim_piece_fabric", "Fabric & Look")
+        col = section("ac9_cloth_sim_piece_fabric", "Fabric & Material")
         if col is not None:
             def edit_fabric(row):                     # the same dialog as Lists > Fabrics' Edit... (user 2026-10-25)
                 f = FA.resolved(spec, name)
@@ -530,13 +568,15 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
             r = sp.row()
             r.alignment = 'RIGHT'
             r.alert = lmix
-            r.label(text_ctxt=CTX, text="Look (mixed)" if lmix else "Look")
+            r.label(text_ctxt=CTX, text="Material (mixed)" if lmix else "Material")
             sp.template_ID(props, "piece_look", new="material.new")
+            from . import base_color
+            base_color.draw(col, context, spec, piece=True)
             if LK.piece_look(spec, name) is None:
                 d = LK.default_look(spec)
                 r = col.row()
                 r.active = False
-                r.label(text_ctxt=CTX, text=tx("Default: {0}", d['material']) if d else "No look (none for the garment)")
+                r.label(text_ctxt=CTX, text=tx("Default: {0}", d['material']) if d else "No material (none for the garment)")
             field("piece_thickness", "Thickness", lambda n: pcs[n].get('thickness', True) is not False, shown=True)
 
         # ---- the simulation's values: those a running Simulate takes first
@@ -584,7 +624,9 @@ class AC9_PT_ToolPiece(_ToolTab, bpy.types.Panel):
                 if pc.get('mesh_mm'):
                     sub = row.row(align=True)
                     sub.operator_context = 'EXEC_DEFAULT'
-                    sub.operator("ac9_cloth_sim.piece_mesh", text="", icon='LOOP_BACK').mesh_mm = 0.0
+                    op = sub.operator("ac9_cloth_sim.piece_mesh", text="", icon='LOOP_BACK')
+                    op.mesh_mm = 0.0
+                    if reference: op.piece = reference
 
             field("piece_distance", "Particle Distance (mm)",
                   lambda n: pcs[n].get('mesh_mm') or props.mesh_size, back)
@@ -801,7 +843,7 @@ def draw_transform(layout, spec, name):
     if body is None:
         return
     from . import selection as SEL
-    if len(SEL.piece_selection(bpy.context, spec)[0]) > 1:
+    if len(attribute_selection(bpy.context, spec)[0]) > 1:
         body.label(text=tx("Placed object: {0}", name), icon='INFO')
     ob = PLV.objects(spec).get(name)
     if ob is None:

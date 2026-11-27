@@ -28,7 +28,16 @@ def tick():
             space.region_3d.view_location=PV.to_world(PV.layout_matrix(bpy.context),[[450,250]])[0]
             bpy.ops.ed.undo_push(message='before Clone (+Sew)')
             before=snapshot()
-            assert bpy.ops.ac9_cloth_sim.clone_shape('EXEC_DEFAULT',True,piece=n,line=l,sew=True)=={'FINISHED'}
+            assert bpy.ops.ac9_cloth_sim.clone_shape('EXEC_DEFAULT',True,piece=n,line=l,sew=True)=={'RUNNING_MODAL'}
+            assert snapshot()==before,'copy preview changed the original'
+        phase=10
+    elif phase==10:
+        win.event_simulate(type='MOUSEMOVE',value='NOTHING',x=region.x+300,y=region.y+300)
+        win.event_simulate(type='LEFTMOUSE',value='PRESS',x=region.x+300,y=region.y+300)
+        win.event_simulate(type='LEFTMOUSE',value='RELEASE',x=region.x+300,y=region.y+300)
+        phase=11
+    elif phase==11:
+        with bpy.context.temp_override(window=win,area=area,region=region):
             cloned=snapshot();new=sorted({p['name'] for p in cloned['spec']['pieces']}-{p['name'] for p in before['spec']['pieces']})
             assert len(new)==4
             assert PT._active is not None,'Part to Seam did not open'

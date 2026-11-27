@@ -133,6 +133,24 @@ class JobArchive(unittest.TestCase):
         self.assertEqual(self.obj['ac9_job'],target)
         self.assertIn(target,self.noted);self.assertEqual(self.cleaned,[self.obj])   # the older copies are cleaned
 
+    def test_the_frames_cache_follows_the_result(self):
+        # a Live that kept its frames plays them through a Mesh Cache: it moves with the result to each copy (it used
+        # to stay on the working copy, gone with Blender's temp folder, and the result was not switched at all)
+        import os
+        (self.work/'drape.pc2').write_bytes(b'frames')
+        other=NS(type='MESH_CACHE',filepath=str(self.root/'work'/'another_job'/'drape.pc2'))
+        cache=NS(type='MESH_CACHE',filepath=str(self.work/'drape.pc2'))
+        self.obj.modifiers=[cache,other];self.obj.library=None
+        self.fake.path=NS(abspath=lambda p,library=None:p,relpath=lambda p:'//'+os.path.relpath(p,str(self.root/'saved')))
+        recovery=self.finish()
+        self.assertEqual(os.path.normpath(os.path.join(str(self.root/'saved'),cache.filepath[2:])),
+                         os.path.normpath(os.path.join(recovery,'drape.pc2')))                 # '//' beside the .blend
+        source,target=self.publish();self.J.collect()
+        self.assertEqual(self.obj['ac9_job'],target)
+        self.assertEqual(cache.filepath,'//'+os.path.join('AC9_ClothSim_jobs',self.work.name,'drape.pc2'))
+        self.assertTrue(other.filepath.endswith(os.path.join('another_job','drape.pc2')))    # another run's: kept
+        self.assertEqual(self.cleaned,[self.obj])
+
     def test_new_job_is_not_replaced_by_old_notification(self):
         self.finish();self.obj['ac9_job']='next-job';self.publish();self.J.collect()
         self.assertEqual(self.obj['ac9_job'],'next-job')

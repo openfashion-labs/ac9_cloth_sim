@@ -22,7 +22,7 @@ class Targets:
     """What can be snapped to on the pieces that are on, gathered once per tool use (the pattern does not change
     while drawing). `outlines`: {name: S.Outline} as store.get gives them (made here if None)."""
 
-    def __init__(self, spec, outlines=None, skip=()):
+    def __init__(self, spec, outlines=None, skip=(), internal_vertices=False):
         self.pts = {k: [] for k in POINT_KINDS}       # kind -> [(x, y, piece)]
         segA, segB, segP, segK = [], [], [], []
         for pc in spec.get('pieces', []):
@@ -46,7 +46,13 @@ class Targets:
                 if it.get('kind') == 'baseline' or len(it['pts']) < 2:
                     continue
                 P = np.asarray(it['pts'], float)
-                if not it.get('closed'):
+                if internal_vertices:
+                    # Position targets only: authored vertices, never curve display samples.
+                    from . import iline as IL
+                    N, _, closed, _ = IL.shape(it)
+                    indices = range(len(N)) if IL.editable(it) else (() if closed else (0, len(N)-1))
+                    self.pts['iend'] += [(*N[k], nm) for k in indices]
+                elif not it.get('closed'):
                     self.pts['iend'] += [(*P[0], nm), (*P[-1], nm)]
                 segA.append(P[:-1])
                 segB.append(P[1:])

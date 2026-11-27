@@ -149,8 +149,9 @@ def _cut_edges(it, P, used):
     if not (own or len(N) <= IL.DENSE) or len(N) < 3:
         return [{'id': next(ids), 'pts': D._r(P)}]
     out = []
+    parts=IL.span_points(it)
     for k in range(len(N) - 1):
-        e = {'id': next(ids), 'pts': D._r([N[k], N[k + 1]])}
+        e = {'id': next(ids), 'pts': D._r(parts[k])}
         if C[k] is not None:
             e['ctrl'] = D._r(np.asarray(C[k], float))
             D.refresh_curve(e)

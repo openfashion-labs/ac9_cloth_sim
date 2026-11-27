@@ -80,6 +80,9 @@ class OutlineIndex:
                 s_at.append(tr.cum[:-1])
                 self.corners[key] = np.asarray(tr.vertices)
             owner += [key] * n
+        # One candidate set for creation, M:N and seam editing, on the original track.
+        for key in self.tracks:
+            self.corners[key] = np.asarray(SE.snap_targets(spec, key, self.tracks), float)
         self.A = np.vstack(segA) if segA else np.zeros((0, 2))
         self.D = (np.vstack(segB) - self.A) if segA else np.zeros((0, 2))
         self.owner = np.array(owner)

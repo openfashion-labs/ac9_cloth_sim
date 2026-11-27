@@ -32,6 +32,7 @@ try:
     D.add_polygon(sp, [[0, 0], [100, 0], [100, 100], [0, 100]], name='A')
     store.new_text(ctx, sp['name'])
     store.put(ctx, sp)
+    PV.rebuild(ctx,*store.get(ctx))
     bpy.ops.ac9_cloth_sim.detect_guides()          # guides and a body: the run's poll passes, nothing is placed
     sp, outlines = store.get(ctx)
     PV.rebuild(ctx, sp, outlines)

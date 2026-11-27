@@ -159,6 +159,7 @@ def _unfold(ob, done, k, info=None):
     else:
         co = np.empty(len(me.vertices) * 3)
         a.data.foreach_get('vector', co)
+    me = PLV.writable_mesh(ob)
     me.vertices.foreach_set('co', co.astype(np.float32))
     me.attributes.get(PLV.GEN_ATTR).data.foreach_set(
         'vector', PLV.generated_co(ob, co.reshape(-1, 3)).astype(np.float32).ravel())
@@ -492,7 +493,8 @@ def shape_info(spec, piece, line, pat, tris, X, org=(0., 0., 0.), ob=None):
     axis = np.asarray(spec['guides'][guide]['o'], float)[:2] if G is None else np.zeros(2)
     return {'ob': ob, 'i': i, 'pat': pat, 'tris': tris, 'roll': roll, 'sides': [fall, other], 'Xid': Xid,
             'org': np.asarray(org, float), 'guide': guide, 'axis': axis, 'V': V, 'flap': flap, 'G': G,
-            'a_side': a_side, 'piece': piece, 'flat': flat}, None
+            'a_side': a_side, 'piece': piece, 'flat': flat, 'fold_path':L.copy(),
+            'fold_closed':bool(il.get('closed'))}, None
 
 
 def cuts_apart(n, T, roll, fall, other):
@@ -611,8 +613,16 @@ def _feet(info, idx, smooth=2):
     polyline (m, 3) with its tangents; None if the line has under 2 points."""
     V, X, roll = info['V'], np.asarray(info['Xid'], float), info['roll']
     r2 = V[roll]
-    pc = np.linalg.svd(r2 - r2.mean(0), full_matrices=False)[2][0]
-    order = np.argsort((r2 - r2.mean(0)) @ pc)
+    path=np.asarray(info.get('fold_path',[]),float)
+    if not info.get('fold_closed') and path.ndim==2 and path.shape[1]==2 and len(path)>1 and np.linalg.norm(np.diff(path,axis=0),axis=1).sum()>1e-9:
+        from .core import iline as IL
+        # Material order follows the authored crease, including U/S bends.
+        order=np.argsort([IL._project(path,q)[0] for q in r2],kind='stable')
+    else:
+        # Preserve closed creases until cyclic feet/tangents include their closing segment.
+        # Seam folds and older callers also use the established PCA fallback.
+        pc = np.linalg.svd(r2 - r2.mean(0), full_matrices=False)[2][0]
+        order = np.argsort((r2 - r2.mean(0)) @ pc)
     R, r2 = roll[order], r2[order]
     if len(R) < 2:
         return None
@@ -1210,7 +1220,7 @@ def fold(context, spec, piece, line, deg, side, info=None, *, preparation=None):
     # folded at this angle the turned side may need more length than the pattern has (a collar turned out round the
     # neck: its far edge goes round a wider circle): folded anyway, the stretch said and the object red
     stretch = _stretch(info, co)
-    me = ob.data
+    me = PLV.writable_mesh(ob)
     before = np.empty(len(me.vertices) * 3)
     me.vertices.foreach_get('co', before)
     me.attributes.new(f"{BEFORE_ATTR}{len(done)}", 'FLOAT_VECTOR', 'POINT').data.foreach_set(

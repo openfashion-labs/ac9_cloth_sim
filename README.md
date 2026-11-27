@@ -16,20 +16,20 @@ Windows 64ビット / Blender 5.2 / NVIDIA GeForce RTX 20・30・40・50シリ�
 
 ## インストール
 
-**Extensionsからインストール（0.4.1・公開準備中）**
+**Extensionsからインストール（0.5.0・公開準備中）**
 
 正式公開前のため、Extensionsの導入ページはまだ利用できません。
 公開後は、この位置から導入ページを開き、ページ内のボタンをBlenderへドラッグ＆ドロップして本体を入れます。
 シミュレーションに必要なNewtonは、アドオン設定から追加します。
 対応するNewtonが変わらない本体更新では、大きな部品を再ダウンロードせずに使えます。
 
-候補の確認方法は[Extensions候補ページの検査案内](tools/CANDIDATE_REPOSITORY.md)、残る作業は[0.4.1の準備状況](RELEASE_STATUS.md)をご覧ください。
+候補の確認方法は[Extensions候補ページの検査案内](tools/CANDIDATE_REPOSITORY.md)、残る作業は[0.5.0の準備状況](RELEASE_STATUS.md)をご覧ください。
 
 <details>
 <summary>現在の公開版・ZIPから手動でインストールする場合</summary>
 
 現在は[0.4.0のRelease](https://github.com/openfashion-labs/ac9_cloth_sim/releases/tag/v0.4.0)のAssetsから `ac9_cloth_sim-0.4.0.zip` を選び、展開せずに使います。
-0.4.1では全部入りZIP（`ac9_cloth_sim-0.4.1-full.zip`）も提供する予定です。まだ公開していません。
+0.5.0では全部入りZIP（`ac9_cloth_sim-0.5.0-full.zip`）も提供する予定です。まだ公開していません。
 詳しい手順は説明書をご覧ください。
 
 </details>

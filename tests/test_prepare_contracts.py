@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 import bpy,numpy as np
-from ac9_cloth_sim import dress as DR, placed_view as PLV, prepare_build as PB, store as ST, live_resume as LR
+from ac9_cloth_sim import pattern_view as PAT, dress as DR, placed_view as PLV, prepare_build as PB, store as ST, live_resume as LR
 from ac9_cloth_sim.core import prepare_plan as PP, shape_source as SH, spec as S, draft as D, fabric as FA
 
 
@@ -156,11 +156,13 @@ class ResumeResources(unittest.TestCase):
         self.sp['placement']={'A':dict(guide='torso',theta=90.,h=0.,anchor=[50,50])}
         self.sp['guides']={'torso':dict(o=[0,0,0],R=np.eye(3).tolist(),r=100,h0=-100,h1=100,points=[])}
         self.text=ST.new_text(bpy.context,self.sp['name']);ST.write(bpy.context,self.sp,keep=True)
+        from ac9_cloth_sim import pattern_view
+        pattern_view.rebuild(bpy.context,*ST.get(bpy.context),switch_document=True)
         self.stack=[];self.count=0;self.obstacles=[]
         def allocate(context,**options):
             self.count+=1;return PB.OwnedJobDirectory.create(self.root,'job_'+str(self.count))
-        self.patcher=patch.object(DR,'job_dir',allocate);self.patcher.start()
-        self.temp_patcher=patch.object(DR.tempfile,'gettempdir',lambda:str(self.root));self.temp_patcher.start()
+        self.patcher=patch.object(DR,'job_dir',allocate);self.patcher.start();self.addCleanup(self.patcher.stop)
+        self.temp_patcher=patch.object(DR.tempfile,'gettempdir',lambda:str(self.root));self.temp_patcher.start();self.addCleanup(self.temp_patcher.stop)
         self.source,self.arrays=DR.prepare(bpy.context,20.)
         np.save(Path(self.source['dir'])/'final.npy',self.arrays[3]*.001)
         (Path(self.source['dir'])/'keep.txt').write_text('previous result')
@@ -321,7 +323,7 @@ class OperationScopes(unittest.TestCase):
         from ac9_cloth_sim import place_fold as PF
         sp=S.loads(self.old_body);line=D.add_internal(sp,'A',[[0,50],[100,50]])
         twin=D.mirror_copy(sp,'A');sp['placement'],_=S.mirror_twins(sp)
-        ST.write(bpy.context,sp,keep=True);self.old_body=self.text.as_string();self.sp=sp
+        ST.write(bpy.context,sp,keep=True);PAT.rebuild(bpy.context,*ST.get(bpy.context));self.old_body=self.text.as_string();self.sp=sp
         return PF,line,twin
     def test_real_mirrored_fold_stays_pending_until_all_children_finish(self):
         PF,line,twin=self.folded_fixture()
@@ -348,7 +350,7 @@ class OperationScopes(unittest.TestCase):
         sp=S.loads(self.old_body);D.add_polygon(sp,[[120,0],[220,0],[220,100],[120,100]],name='B')
         def side(n):return {'piece':n,'from':['E1',0.],'to':['E1',1.],'dir':1}
         sp['seams']=[dict(id='OwnedSeam',a=side('A'),b=side('B'),enabled=True)]
-        ST.write(bpy.context,sp,keep=True);self.old_body=self.text.as_string();self.sp=sp
+        ST.write(bpy.context,sp,keep=True);PAT.rebuild(bpy.context,*ST.get(bpy.context));self.old_body=self.text.as_string();self.sp=sp
         with DR.preparation(bpy.context) as owner:
             placed,why=PS.place_by_partners(bpy.context,sp,'B',preparation=owner)
             self.assertIsNotNone(placed,why);self.assertIn('B',placed['placement'])
@@ -359,11 +361,11 @@ class OperationScopes(unittest.TestCase):
         sp=S.loads(self.old_body)
         D.mirror_copy(sp,'A');D.add_polygon(sp,[[300,0],[400,0],[400,100],[300,100]],name='B')
         sp['placement']['B']=dict(sp['placement']['A'],theta=-90.,anchor=[350,50]);D.mirror_copy(sp,'B')
-        sp['placement'],_=S.mirror_twins(sp);ST.write(bpy.context,sp,keep=True);self.sp=sp
+        sp['placement'],_=S.mirror_twins(sp);ST.write(bpy.context,sp,keep=True);PAT.rebuild(bpy.context,*ST.get(bpy.context));self.sp=sp
         res=DR.prepare(bpy.context,20.,shapes_only=True);self.consume(res)
         # Restore a live obstacle and the legacy source before the operation under test.
         DR.attach_cache(bpy.context,self.other,str(Path(self.source['dir'])/'drape.pc2'),2)
-        sp.pop('fabrics',None);sp.pop('default_fabric_id',None);ST.write(bpy.context,sp,keep=True)
+        sp.pop('fabrics',None);sp.pop('default_fabric_id',None);ST.write(bpy.context,sp,keep=True);PAT.rebuild(bpy.context,*ST.get(bpy.context))
         self.old_body=self.text.as_string();DR._DROP_LATER.clear()
         leaders={n:(PLV.objects(sp)[n].get(PLV.PROP),PLV.objects(sp)[n].session_uid) for n in ('A','B')}
         followers=[PLV.objects(sp)[n][PLV.TWIN_PROP] for n in ('A','B')]
@@ -445,10 +447,10 @@ class OperationScopes(unittest.TestCase):
         if internal:
             line=D.add_internal(sp,'A',[[20,50],[80,50]])
             sp['folds']=[dict(piece='A',line=line,deg=35.,side='A')]
-        ST.write(bpy.context,sp,keep=True)
+        ST.write(bpy.context,sp,keep=True);PAT.rebuild(bpy.context,*ST.get(bpy.context))
         res=DR.prepare(bpy.context,20.,shapes_only=True);self.consume(res)
         DR.attach_cache(bpy.context,self.other,str(Path(self.source['dir'])/'drape.pc2'),2)
-        sp.pop('fabrics',None);sp.pop('default_fabric_id',None);ST.write(bpy.context,sp,keep=True)
+        sp.pop('fabrics',None);sp.pop('default_fabric_id',None);ST.write(bpy.context,sp,keep=True);PAT.rebuild(bpy.context,*ST.get(bpy.context))
         self.old_body=self.text.as_string();self.sp=sp;DR._DROP_LATER.clear()
         return line
     def test_real_unsewn_part_refusal_does_not_commit_preparation(self):
@@ -480,9 +482,9 @@ class OperationScopes(unittest.TestCase):
             sp['placement'][name]=dict(sp['placement']['A'],theta=90.-i*60.,anchor=[i*120+50,50])
         def side(n):return {'piece':n,'from':['E1',0.],'to':['E1',1.],'dir':1}
         sp['seams']=[dict(id='OwnedMixed',a=side('A'),b=side('C'),enabled=True)]
-        ST.write(bpy.context,sp,keep=True);self.consume(DR.prepare(bpy.context,20.,shapes_only=True))
+        ST.write(bpy.context,sp,keep=True);PAT.rebuild(bpy.context,*ST.get(bpy.context));self.consume(DR.prepare(bpy.context,20.,shapes_only=True))
         DR.attach_cache(bpy.context,self.other,str(Path(self.source['dir'])/'drape.pc2'),2)
-        sp.pop('fabrics',None);sp.pop('default_fabric_id',None);ST.write(bpy.context,sp,keep=True)
+        sp.pop('fabrics',None);sp.pop('default_fabric_id',None);ST.write(bpy.context,sp,keep=True);PAT.rebuild(bpy.context,*ST.get(bpy.context))
         self.sp=sp;self.old_body=self.text.as_string();DR._DROP_LATER.clear()
         previous=bpy.context.scene.ac9_cloth_sim.mesh_size;bpy.context.scene.ac9_cloth_sim.mesh_size=20.
         self.addCleanup(setattr,bpy.context.scene.ac9_cloth_sim,'mesh_size',previous)

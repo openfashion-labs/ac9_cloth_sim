@@ -44,7 +44,7 @@ def working_root(context):
 
 def worker_temp(context):
     root = working_root(context) / 'tmp'
-    root.mkdir(parents=True, exist_ok=True)
+    W.PW.io_path(root).mkdir(parents=True, exist_ok=True)
     return str(root)
 
 
@@ -101,6 +101,36 @@ def accept_result(obj, directory, lease):
     obj['ac9_job'] = directory
 
 
+def follow_cache(obj, folder, only_missing=False, copied=False):
+    """Point obj's Mesh Cache at `folder`'s copy of the frames when it reads the same run from another folder (the
+    working copy, the recovery copy): a Live run keeps its sewing frames (and every frame with Keep All Frames) in a
+    Mesh Cache, and the cache has to move with the result. Left on the working copy, the frames were gone once that
+    folder was (Blender's temp folder on quit), though two copies of them were kept. only_missing: only a cache whose
+    file is gone. copied: `folder` is a verified copy of the folder the cache reads (job_workspace.archive_finished
+    copies every file of the sealed run), so its file is not looked at: on the main thread, the copy beside the
+    .blend may be on a slow disk. Returns whether one was changed."""
+    folder = os.path.normpath(str(folder))
+    pc2 = os.path.join(folder, 'drape.pc2')
+    if not copied and not os.path.exists(W.PW.io_path(pc2)):
+        return False
+    changed = False
+    for m in obj.modifiers:
+        if m.type != 'MESH_CACHE' or not m.filepath:
+            continue
+        cur = os.path.normpath(bpy.path.abspath(m.filepath, library=obj.library))
+        if (os.path.basename(cur) != 'drape.pc2' or os.path.basename(os.path.dirname(cur)) != os.path.basename(folder)
+                or os.path.normcase(cur) == os.path.normcase(pc2)):
+            continue                                 # another run's frames, or already there
+        if only_missing and os.path.exists(W.PW.io_path(cur)):
+            continue
+        try:                                         # '//...' beside a saved .blend, as dress._rel writes it
+            m.filepath = bpy.path.relpath(pc2) if bpy.data.filepath else pc2
+        except ValueError:                           # another drive
+            m.filepath = pc2
+        changed = True
+    return changed
+
+
 def capture(directory, object_name):
     """Freeze acceptance/ownership while the GUI still owns this run."""
     source = str(Path(directory).resolve())
@@ -142,6 +172,7 @@ def finish(context, directory, object_name, lease, *, request=None):
         obj['ac9_job'] = recovery
         obj['ac9_job_recovery'] = recovery
         obj['ac9_job_generation'] = generation
+        follow_cache(obj, recovery, copied=True)
         from . import blend_record as BR
         BR.note(obj, recovery)
     if plan['target']:
@@ -256,7 +287,7 @@ def resume(context):
                 or not W.saved_generation(recovery, generation)):
             continue
         try:
-            plan = json.loads((Path(recovery)/W.PLAN).read_text(encoding='utf8'))
+            plan = json.loads(W.PW.io_path(Path(recovery)/W.PLAN).read_text(encoding='utf8'))
             target = Path(plan['target']) if plan.get('target') else None
             if (plan.get('version') != 1 or plan.get('generation') != generation
                     or str(Path(recovery).resolve()) != plan.get('recovery')
@@ -268,13 +299,13 @@ def resume(context):
                     plan.get('working'), plan.get('recovery'), str(target) if target is not None else None):
                 continue
             current = Path(current).resolve()
-            if target is not None and current == target.resolve() and current.exists():
+            if target is not None and current == target.resolve() and W.PW.io_path(current).exists():
                 # A published, valid current result needs no rollback/re-export.
                 if W.saved_generation(current, generation):
                     continue
                 continue
-            if str(current) == plan.get('working') and current.exists():
-                seal = json.loads((current/W.SEAL).read_text(encoding='utf8'))
+            if str(current) == plan.get('working') and W.PW.io_path(current).exists():
+                seal = json.loads(W.PW.io_path(current/W.SEAL).read_text(encoding='utf8'))
                 if seal.get('token') != generation or seal.get('files') != W._inventory(current):
                     continue
         except (OSError, ValueError, TypeError, KeyError):
@@ -316,15 +347,15 @@ def collect():
         obj = next((ob for ob in bpy.data.objects if ob.session_uid == expected['object_uid']), None)
         if (obj is not None and obj.get('ac9_job') == expected['expected']
                 and obj.get('ac9_job_generation') == expected['generation']):
-            # Live retains its mesh, not a Mesh Cache. A cache-bearing object is
-            # deliberately not switched by this Live-only writer.
-            if not any(mod.type == 'MESH_CACHE' for mod in obj.modifiers):
-                obj['ac9_job'] = result['target']
-                # the copy beside the .blend is the result now: the working copy and the one in the temp folder are
-                # old runs (the same files three times over), deleted unless old runs are kept
-                from . import blend_record as BR
-                BR.note(obj, result['target'])
-                BR.auto_clean(obj)
+            # the copy beside the .blend is the result now, its frames too (a Live that kept them reads them through
+            # a Mesh Cache: it used to stay on the working copy, and the result was not switched at all): the working
+            # copy and the one in the temp folder are old runs (the same files three times over), deleted unless old
+            # runs are kept
+            obj['ac9_job'] = result['target']
+            follow_cache(obj, result['target'], copied=True)
+            from . import blend_record as BR
+            BR.note(obj, result['target'])
+            BR.auto_clean(obj)
         elif obj is not None and obj.get('ac9_job') != expected['expected']:
             # copied although the garment had moved on (the stop came too late): an old run beside the .blend,
             # in its history so that the clean-up deletes it (it used to stay there, in no history)

@@ -63,6 +63,10 @@ def xform_internal(it, f):
     (core/iline.py: sampled again, a scaled curve has more or fewer points). Returns it."""
     from . import iline as IL
     N, C, _, own = IL.shape(it) if it.get('ctrl') else (None, None, None, False)
+    if own and it.get('sampled_spans') is True:
+        IL.set_spans(it,[f(p) for p in IL.span_points(it)],
+                     [None if c is None else f(c) for c in C])
+        return it
     it['pts'] = _r(f(it['pts']))
     if own:
         IL.set_shape(it, np.asarray(f(N), float), [None if c is None else np.asarray(f(c), float) for c in C])
@@ -352,28 +356,8 @@ def _move_corners_one(pc, deltas):
     newC = C.copy()
     for k, d in deltas.items():
         newC[k] = C[k] + np.asarray(d, float)
-    # an internal line's end on an edge that changes rides on that edge (the same carry as the edge's own points):
-    # the ends were free points, and moving an outline edge left a line drawn to it short of it or out of the piece
-    # (user 2026-11-11). Found first, on the edges as they were; an end at a corner goes with the corner.
-    ends, seen = [], set()
-    for k, e in enumerate(pc['edges']):
-        k1 = (k + 1) % n
-        if k not in deltas and k1 not in deltas:
-            continue
-        P0 = np.asarray(e['pts'], float)
-        for it in pc.get('internals', []):
-            if it.get('closed') or it.get('kind') == 'baseline' or len(it.get('pts') or ()) < 2:
-                continue
-            for j in (0, len(it['pts']) - 1):
-                if (id(it), j) in seen:
-                    continue
-                q = np.asarray(it['pts'][j], float).reshape(1, 2)
-                if _dist_to_polyline(q, P0)[0] <= LINE_END_ON_EDGE:
-                    seen.add((id(it), j))
-                    ends.append((it, j, _similarity(C[k], C[k1], newC[k], newC[k1])))
-    for it, j, f in ends:                          # one end at a time, the line following it (curves keep shape)
-        q = np.asarray(it['pts'][j], float)
-        _move_internal_one(it, 'start' if j == 0 else 'end', f([q])[0] - q)
+    from . import point_connection as PC
+    PC.carry(pc, C, newC, deltas)
     for k, e in enumerate(pc['edges']):
         k1 = (k + 1) % n
         if k not in deltas and k1 not in deltas:
@@ -434,6 +418,15 @@ def _keep_seam_ends(spec, pc, deltas):
 
 
 def move_corners(spec, name, deltas, twins=True, merge=False):
+    from . import point_connection as PC, boundary_connection as BC
+    if PC._busy:return _move_corners_native(spec,name,deltas,twins,merge)
+    before=BC.snapshot(spec)
+    with PC.raw():changed=_move_corners_native(spec,name,deltas,twins,merge)
+    if merge:BC.remap_outline(spec,before)
+    return list(dict.fromkeys(changed+BC.propagate(spec,before)))
+
+
+def _move_corners_native(spec, name, deltas, twins=True, merge=False):
     """Move corners of piece `name` by deltas {k: (dx, dy)} mm; the twin gets the mirror-image move. A seam end
     inside an edge with one end moved keeps its distance from the end that stayed (_keep_seam_ends). merge: one corner
     moved onto a corner next to it (within MIN_EDGE) becomes that corner (user 2026-10-27, _merge_dropped).
@@ -747,7 +740,7 @@ def edit_copy(spec, names, memo=None):
     out['seams'] = copy.deepcopy(spec.get('seams', []), memo)
     # the placement too: transform_piece / scale_piece move a piece's anchor in place, and a drag edits a fresh copy
     # on every redraw, so a shared placement took the move again each time (an anchor 135 m off its piece)
-    for feature in ('placement', 'measure', 'elastic', 'attach', 'zippers'):
+    for feature in ('placement', 'measure', 'elastic', 'attach', 'zippers', 'buttons', 'tacks'):
         if feature in spec:
             out[feature] = copy.deepcopy(spec[feature], memo)
     return out
@@ -1079,6 +1072,7 @@ def _clone_shape_one(spec, name, lid, gap=20.0, sew=False):
     if it is None or not it.get('closed'):
         raise ValueError(rpt("Pick a closed internal shape first"))
     N, C, _, _ = IL.shape(it)
+    parts=IL.span_points(it)
     if len(N) < 3:
         raise ValueError(rpt("a piece needs at least 3 corners"))
     N = np.asarray(N, float)
@@ -1093,6 +1087,7 @@ def _clone_shape_one(spec, name, lid, gap=20.0, sew=False):
         N = N[::-1]
         C = [None if c is None else np.asarray(c, float)[::-1] for c in C[::-1]]
         C = C[1:] + C[:1] if n > 1 else C        # span k ran N[k] -> N[k+1]; reversed, span n-1-k runs back
+        parts=[parts[(len(parts)-2-k)%len(parts)][::-1] for k in range(len(parts))]
         at, rev = at[::-1], True
     x = corners_all(pc)[:, 0].max() + gap
     w = float(np.ptp(N[:, 0]))
@@ -1109,13 +1104,18 @@ def _clone_shape_one(spec, name, lid, gap=20.0, sew=False):
     nm = unique_name(spec, f"{name}_{lid}")
     edges = []
     for k in range(len(N)):
-        e = {'id': f"E{k + 1}", 'pts': _r([N[k] + dx, N[(k + 1) % len(N)] + dx])}
+        e = {'id': f"E{k + 1}", 'pts': _r(parts[k] + dx)}
         if C[k] is not None:
             e['ctrl'] = _r(np.asarray(C[k], float) + dx)
             refresh_curve(e)
         edges.append(e)
-    spec['pieces'].append({'name': nm, 'fabric': pc.get('fabric', ''), 'enabled': True, 'role': 'auto',
-                           'internals': [], 'edges': edges})
+    cloned = {'name': nm, 'fabric': pc.get('fabric', ''), 'enabled': True, 'role': 'auto',
+              'internals': [], 'edges': edges}
+    from . import fabric as FB
+    assigned = FB.piece_fabric(spec, name)
+    if assigned is not None:
+        cloned['fabric_id'] = assigned['id']
+    spec['pieces'].append(cloned)
     if sew:
         used = {sm['id'] for sm in spec.get('seams', [])}
         ids = (f"U{i}" for i in range(1, 100000) if f"U{i}" not in used)
@@ -1306,6 +1306,20 @@ def piece_center(pc):
     return 0.5 * (A.min(0) + A.max(0))
 
 
+def _transform_material_points(spec, name, transform):
+    """Cartesian material references follow their own piece, independently at either end."""
+    for button in spec.get('buttons') or []:
+        if button.get('piece') == name:
+            button['pt'] = transform([button['pt']])[0]
+        hole = button.get('hole')
+        if hole and hole.get('piece') == name:
+            hole['pt'] = transform([hole['pt']])[0]
+    for tack in spec.get('tacks') or []:
+        for owner, point in (('a', 'pa'), ('b', 'pb')):
+            if tack.get(owner) == name:
+                tack[point] = transform([tack[point]])[0]
+
+
 def transform_piece(spec, name, deg=0.0, shift=(0.0, 0.0), center=None, spin=False):
     """Move a whole piece in the layout: rotate by deg about center (its bbox center by default), then shift (mm).
     Its outline, handles, internal lines and placement anchor move together; the shape does not change, nor does any
@@ -1326,6 +1340,7 @@ def transform_piece(spec, name, deg=0.0, shift=(0.0, 0.0), center=None, spin=Fal
             e['ctrl'] = f(e['ctrl'])
     for it in pc.get('internals', []):
         xform_internal(it, f)
+    _transform_material_points(spec, name, f)
     pl = spec.get('placement', {}).get(name)
     if pl and 'anchor' in pl:
         pl['anchor'] = f([pl['anchor']])[0]
@@ -1375,6 +1390,7 @@ def scale_piece(spec, name, sx, sy=None, center=None, twins=True):
                 raise ValueError(rpt("edge {0} would be shorter than {1}", e['id'], len_text(MIN_EDGE)))
         for it in pc.get('internals', []):
             xform_internal(it, f)
+        _transform_material_points(spec, nm, f)
         pl = spec.get('placement', {}).get(nm)
         if pl and 'anchor' in pl:
             pl['anchor'] = f([pl['anchor']])[0]
@@ -1420,6 +1436,8 @@ def transform_group(spec, pieces=(), lines=(), deg=0.0, k=(1.0, 1.0), shift=(0.0
     lines = [x for x in dict.fromkeys(tuple(x) for x in lines) if x[0] not in pieces]
     if not pieces and not lines:
         return [], None
+    from . import boundary_connection as BC
+    connection_before=BC.snapshot(spec)
     c = group_center(spec, pieces, lines) if center is None else np.asarray(center, float)
     k = np.asarray(k, float)
     f = group_map(deg, k, shift, c)
@@ -1451,16 +1469,26 @@ def transform_group(spec, pieces=(), lines=(), deg=0.0, k=(1.0, 1.0), shift=(0.0
         if ms == l:
             rf = self_reflect(pc)
             g = lambda P, rf=rf: 0.5 * (f(P) + rf(f(rf(P))))
-        jobs.append((n, l, g, copies))
+        target = copy.deepcopy(source)
+        xform_internal(target, g)
+        jobs.append((n, l, target, copies))
         seen |= {(n, l)} | {(p, q) for p, q, _ in targets}
-    for n, l, g, copies in jobs:
+    for n, l, target, copies in jobs:
         source = internal(piece(spec, n), l)
-        xform_internal(source, g)
+        from . import point_connection as PC, iline as IL
+        N = IL.shape(source)[0]; wanted = IL.shape(target)[0]
+        applied = PC.move(spec, n, l, {j: tuple(v) for j, v in enumerate(wanted - N)})
+        if applied is not None:
+            changed += applied
+        # Copy the one precomputed target, including transformed curve handles.
+        IS.copy_geometry(target, source, lambda P: np.asarray(P, float), False)
         changed.append(n)
         for p, q, M, rev in copies:
             IS.copy_geometry(source, internal(piece(spec, p), q), M, rev)
             changed.append(p)
-    return list(dict.fromkeys(changed)), (rigid if not scaled and not jobs else None)
+    connected_changed=BC.propagate(spec,connection_before)
+    changed+=connected_changed
+    return list(dict.fromkeys(changed)), (rigid if not scaled and not jobs and not connected_changed else None)
 
 
 DUP_SKIP = ('name', 'bom', 'family', 'mirrored', 'closes_onto')
@@ -1901,6 +1929,17 @@ def _move_internal_one(it, which, d):
 def move_internal(spec, name, lid, which, d, twins=True):
     """Move an internal line: which = 'start' / 'end' (that end moves, the line follows as a similarity, the other end
     stays) or 'all' (shifted). Seams on the line keep their fractions, folds their line id. Returns pieces changed."""
+    from . import point_connection as PC
+    if not PC._busy:
+        from . import iline as IL
+        it = internal(piece(spec, name), lid)
+        k = 0 if which == 'start' else len(IL.shape(it)[0]) - 1
+        deltas = {j: d for j in range(len(IL.shape(it)[0]))} if which == 'all' else {k: d}
+        from . import boundary_connection as BC
+        connected = BC.move(spec, name, lid, deltas, which=which, twins=twins)
+        if connected is None:connected=PC._move_boundary(spec,name,lid,deltas)
+        if connected is not None:
+            return connected
     from . import internal_sync as IS
     targets = mirror_lines(spec, name, lid) if twins else []
     if twins:IS.bind_targets(spec, name, lid, targets)

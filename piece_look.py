@@ -276,13 +276,20 @@ def _placed_lines(spec, outlines, st, sel, shown=None, only=None):
         if hit is None or hit[0] != key:
             try:
                 if n in shown:
-                    P = PLV.to_world(shown[n], outlines[n].B)
-                    P = None if P is None else np.vstack([P, P[:1]])
+                    # The outline's authored corners alone form chords across a
+                    # wrapped/folded piece. Follow its displayed mesh boundary.
+                    T = np.asarray(shown[n][1])
+                    W = np.asarray(shown[n][2])
+                    E = np.sort(np.vstack([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), axis=1)
+                    E, counts = np.unique(E, axis=0, return_counts=True)
+                    rims = [item for loop, closed in _loops(E[counts == 1])
+                            for item in _rim(n, st[n], sel, W[loop], closed, in3d=True)]
                 else:
                     P = OV.wrapped_outline(spec, outlines, n)
+                    rims = [] if P is None else _rim(n, st[n], sel, P[:-1], in3d=True)
             except Exception:
-                P = None
-            hit = _prim[n] = (key, [] if P is None else _rim(n, st[n], sel, P[:-1], in3d=True))
+                rims = []
+            hit = _prim[n] = (key, rims)
         lines += hit[1]
     return lines
 

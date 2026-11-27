@@ -94,13 +94,13 @@ def seam_point(context, event):
     _set(context, dots=[(tuple(w), RED if corner else WHITE)])
 
 
-def snap_point(context, event, kinds):
+def snap_point(context, event, kinds, outline_only=False, internal_positions=False):
     """The drawing tools: the snap mark where the click would put a point (shape_tool draws it)."""
     from . import shape_tool as SH
     from . import draft_tool as DT
     if store.get(context)[0] is None:
         return SH.clear_mark()
-    snapper = _cached(('snap', tuple(kinds)), lambda: SH.Snapper(context, kinds))
+    snapper = _cached(('snap', tuple(kinds),outline_only,internal_positions), lambda: SH.Snapper(context, kinds,outline_only=outline_only,internal_positions=internal_positions))
     M = PV.layout_matrix(context)
     q = DT.mouse_mm(context, M, event.mouse_region_x, event.mouse_region_y)
     if q is None:

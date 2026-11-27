@@ -1,6 +1,10 @@
-# 0.4.1 release preparation
+# 0.5.0 release preparation
 
 This candidate repairs the split-distribution work omitted from 0.4.0.
+It also includes the completed feature fixes and UI/UX updates for 0.5.0.
+The distribution changes are reviewed in PR #13; this dependent feature PR is reviewed separately.
+Both PRs are intended for one 0.5.0 release. A standalone 0.4.1 release is not planned.
+Additional manual images remain in progress and will be added before final publication.
 It is a draft, not a published split release. Version 0.4.0 remains available as an all-in-one ZIP.
 
 | Requirement | Candidate status |

@@ -192,6 +192,7 @@ class JobWorkspace(unittest.TestCase):
         import ast
         root = Path(W.__file__).resolve().parent.parent
         found = []
+        publications = []
         for path in root.rglob('*.py'):
             rel = path.relative_to(root).as_posix()
             if rel.startswith(('tests/', 'solver/')):
@@ -203,8 +204,12 @@ class JobWorkspace(unittest.TestCase):
                     owner = node.func.value.id if isinstance(node.func.value, ast.Name) else ''
                     # any .rename(...) (os.rename, Path.rename); files arrive by os.replace of a single file
                     if (name in ('move', 'copytree') and owner == 'shutil') or name == 'rename':
+                        if rel == 'runtime_repair.py' and ast.unparse(node) in ('source.rename(target)', 'target.rename(source)'):
+                            publications.append(ast.unparse(node))
+                            continue  # explicit journaled runtime installation, covered by test_runtime_repair
                         found.append((rel, node.lineno, owner + '.' + name))
         self.assertEqual(found, [])
+        self.assertEqual(sorted(publications), ['source.rename(target)', 'target.rename(source)'])
 
     def test_path_wait_resolves_like_pathlib(self):
         from ac9_cloth_sim.core import path_wait as PW
@@ -308,6 +313,55 @@ class JobWorkspace(unittest.TestCase):
         (self.source/'final.npy').write_bytes(b'late writer')
         with self.assertRaises(ValueError):
             W.archive_finished(self.source, self.target)
+        self.assertFalse(self.target.exists())
+
+    def test_sha_picker_gives_the_standard_digest(self):
+        import hashlib
+        path = self.source/'final.npy'
+        self.assertEqual(W._sha(path), hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_sealed_archive_hashes_each_file_once(self):
+        # the Stop hashes a sealed job once for its copy, not again before and after (it was five times)
+        W.seal_finished(self.source, self.lease())
+        calls = []
+        real = W._sha
+        with patch.object(W, '_sha', lambda p: calls.append(Path(p).name) or real(p)):
+            W.archive_finished(self.source, self.target)
+        payload = [n for n in calls if not n.endswith('.json') and '.json.' not in n]
+        files = [rel for rel in W._names(self.source) if not rel.endswith('.json')]
+        self.assertEqual(len(payload), len(files))
+        self.assertTrue(W.saved_generation(self.target, json.loads((self.source/W.SEAL).read_text(encoding='utf8'))['token']))
+
+    def test_names_whose_path_order_differs_from_string_order(self):
+        # Path order on Windows ignores case and splits at '/': 'Xclo.npy' and 's1.txt' beside 's1/config.json'
+        # sort differently as strings; a sealed and an unsealed job must still archive
+        (self.source/'Xclo.npy').write_bytes(b'upper')
+        (self.source/'s1').mkdir()
+        (self.source/'s1'/'config.json').write_text('{}', encoding='utf8')
+        (self.source/'s1.txt').write_text('x', encoding='utf8')
+        self.assertEqual(W._names(self.source), sorted(W._names(self.source)))
+        W.archive_finished(self.source, self.target)
+        source2 = self.root/'local2'/'job_unique'
+        W.shutil.copytree(self.source, source2, ignore=W.shutil.ignore_patterns(W.LINK))
+        token = W.seal_finished(source2, dict(self.lease(), job=str(W.PW.resolve(source2))))
+        target2 = self.root/'saved2'/'AC9_ClothSim_jobs'/source2.name
+        W.archive_finished(source2, target2)
+        self.assertTrue(W.saved_generation(target2, token))
+
+    def test_archive_rejects_a_file_changed_after_its_copy(self):
+        W.seal_finished(self.source, self.lease())
+        original_names = W._names
+        state = dict(n=0)
+        def names_then_write(root):
+            out = original_names(root)
+            if Path(root) == Path(self.source).resolve() and state['n'] == 1:
+                p = Path(root)/'final.npy'
+                p.write_bytes(p.read_bytes() + b'x')    # written after its copy was hashed
+            state['n'] += 1
+            return out
+        with patch.object(W, '_names', names_then_write):
+            with self.assertRaises(ValueError):
+                W.archive_finished(self.source, self.target)
         self.assertFalse(self.target.exists())
 
     def test_durable_recovery_survives_working_directory_removal(self):

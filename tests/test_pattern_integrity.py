@@ -57,7 +57,12 @@ def refused(fn):
 def regular():
     reset()
     SEL.apply(ctx,['Rectangle.002'],'SET',active='Rectangle.002',interaction=True)
-    assert bpy.ops.ac9_cloth_sim.duplicate_pieces()=={'FINISHED'}
+    assert bpy.ops.ac9_cloth_sim.duplicate_pieces()=={'RUNNING_MODAL'}
+    from ac9_cloth_sim import copy_place as CP
+    op=CP._active
+    sp=CP.move_candidate(op._copy_candidate,op._copy_names,op._copy_anchor,[1500,300])
+    op._copy_end(ctx)
+    assert op._copy_finish(ctx,sp)=={'FINISHED'}  # Integrity only; native click/Undo are exercised by GUI tests.
     assert PV.integrity(ctx,store.get(ctx)[0])['ok']
     sp,_,owner=store.begin_edit(ctx);D.move_piece(sp,'Rectangle',shift=(30,40))
     assert not DT.commit(ctx,sp,['Rectangle'],owner=owner)

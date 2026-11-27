@@ -100,7 +100,7 @@ class DeselectDot(unittest.TestCase):
         self.seed()
         from ac9_cloth_sim import draft_tool, toolbar, seam_edit_tool
         self.DT, self.TB, self.SE = draft_tool, toolbar, seam_edit_tool
-        self.ctx = NS(screen=bpy.context.screen, area=NS(type='VIEW_3D', tag_redraw=lambda: None))
+        self.ctx = NS(scene=bpy.context.scene,screen=bpy.context.screen, area=NS(type='VIEW_3D', tag_redraw=lambda: None))
 
     def seed(self):
         self.assertTrue(GM.mark_flat(bpy.context, 'A', (300., 300.)))
@@ -130,7 +130,7 @@ class DeselectDot(unittest.TestCase):
                 self.seed()
                 op = NS(_pick3d=lambda *args:False)
                 ev = NS(mouse_region_x=20,mouse_region_y=20,shift=shift)
-                with patch.object(self.SE.store,'get',return_value=({},{})), patch.object(self.SE.PV,'layout_matrix',return_value=None), patch.object(self.TB,'under',return_value=(kind,None,-1)), patch.object(self.SE,'mouse_mm',return_value=None), patch.object(self.SE,'unselect_seam'):
+                with patch.object(self.SE.store,'get',return_value=({'pieces':[]},{})), patch.object(self.SE.PV,'layout_matrix',return_value=None), patch.object(self.TB,'under',return_value=(kind,None,-1)), patch.object(self.SE,'mouse_mm',return_value=None), patch.object(self.SE,'unselect_seam'):
                     self.SE.AC9_OT_SimSeamClick.invoke(op,self.ctx,ev)
                 self.assertEqual(bool(GM._mark),shift,(kind,shift))
 

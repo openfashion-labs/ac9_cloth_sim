@@ -5,6 +5,13 @@ sidebar_position: 2
 
 # Data Model
 
+## Editing vertex connections
+
+Internal lines do not connect through coordinate coincidence. Only outline attachments are evaluated by core/boundary_connection.py and boundary_nodes. Reading and display do not rewrite the JSON.
+Legacy vertex_groups metadata is retained but inactive. Topology edits preserve its index identity, but runtime connections and movement do not read it. The retired implementation is archived outside the addon and is not registered, executed, or distributed.
+Outline EIDs and false detach markers in boundary_nodes remain active. Separating the outline leaves the internal endpoints independent. When extension retains a former outline as an internal path, it does not join other internal lines to that path.
+
+
 ## One source of truth; what you see is made from it
 
 A garment's information (the pieces' shapes, seams, placement, folds, piece roles, fabrics) is kept as JSON in a
