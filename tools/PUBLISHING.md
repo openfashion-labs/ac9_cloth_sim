@@ -6,7 +6,7 @@
 
 1. 本体/Runtime/全部入りのCIと、同じ成果物での導入検査を完了する。採用するrelease workflowのrun IDとPR head SHAを固定する。保持期限を過ぎたartifactは使えない。再実行でZIPを作り直した場合は別成果物として検査する。
 2. Runtimeの別Release配布について、同梱NVIDIAライセンスの配布条件を確認する。既存の0.4.0全部入りへの承認を流用しない。単に「standalone SDKではない」と表示したことを条件確認の代わりにしない。
-3. 接続処理と配布条件の確認後、maintainerが `.github/release_scope.json` の `asset_publication_approved` をtrueにし、解消した残件を外す。**この準備候補ではtrueにし、公開後の `production_install_update_check` だけを残している。公開完了の `ready` はfalseのまま。** この設定を含む最終headについてCIを通し、owner承認を得てmainへ通常マージする。設定だけで公開は実行されない。
+3. 接続処理と配布条件の確認後、maintainerが `.github/release_scope.json` の `asset_publication_approved` をtrueにし、解消した残件を外す。**最終公開候補ではtrueにし、公開後の `production_install_update_check` だけを残す。公開完了の `ready` は、その確認が終わるまでfalseのまま。実際の許可状態は対象候補のJSONを確認する。** この設定を含む最終headについてCIを通し、owner承認を得てmainへ通常マージする。設定だけで公開は実行されない。
 4. 既存の権限を持つ担当者が、mainのマージcommitに対する `v<本体版>` を用意する。初回Runtimeは `runtime-<runtime版>` のタグも用意し、既存Runtimeタグを移動しない。`v*` の既存保護を解除/迂回しない。workflow自身はタグを作らない。
 
 ## 公開を実行する
