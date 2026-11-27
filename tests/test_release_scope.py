@@ -25,5 +25,14 @@ class ReleaseScope(unittest.TestCase):
         with self.assertRaises(ValueError):M.require_publish_ready({'publication':{'ready':True,'remaining':['connection']}})
     def test_explicit_completed_publication_is_accepted(self):
         M.require_publish_ready({'publication':{'ready':True,'remaining':[]}})
+    def test_pr_docs_are_isolated_and_main_publication_stays_serialized(self):
+        M.validate_docs_concurrency('concurrency:\n  group: '+M.DOCS_GROUP+'\n  cancel-in-progress: false\n')
+    def test_global_pages_and_other_group_policies_are_rejected(self):
+        for group in ('pages','docs','${{ github.ref }}'):
+            with self.subTest(group=group),self.assertRaises(ValueError):
+                M.validate_docs_concurrency('concurrency:\n  group: '+group+'\n  cancel-in-progress: false\n')
+    def test_publication_queue_must_not_cancel_running_jobs(self):
+        with self.assertRaises(ValueError):
+            M.validate_docs_concurrency('concurrency:\n  group: '+M.DOCS_GROUP+'\n  cancel-in-progress: true\n')
 
 if __name__=='__main__':unittest.main()

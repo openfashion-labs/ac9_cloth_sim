@@ -8,6 +8,8 @@ slug: /
 
 This source is the **0.5.0 release candidate**. The public release remains 0.4.0. This candidate is not published; the completed settings, shape and diagnosis images are included.
 
+Some screenshots use the Japanese UI. The English captions and surrounding text explain the corresponding controls; an English page does not imply that every screenshot shows the English UI.
+
 This is the manual for an add-on that loads garment patterns in Blender, sews them together, puts them on an avatar, and lets you check how the cloth settles.
 It is currently an **alpha version**. Use the guide corresponding to your installed version. Features are missing, and the screens and steps will keep changing.
 

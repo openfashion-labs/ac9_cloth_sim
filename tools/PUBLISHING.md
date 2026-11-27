@@ -13,7 +13,7 @@
 
 mainを対象にpublish-distributionを手動実行し、検査したrun IDとレビューされたPR head SHAを渡す。PR headとsquash後のmainはcommit SHAが異なるが、ファイルのtreeは一致する必要がある。別の変更がmainへ入った場合は止まり、古い版をそのまま公開しない。
 
-- 成功した同じrepoのrelease PR CI、merged PR、同じheadへの承認をAPIで検査する。source treeと現在mainも照合する。
+- 成功した同じrepoのrelease PR CI、merged PR、同じheadへの承認をAPIで検査する。承認は各人の最新状態を使い、OWNER/MEMBER/COLLABORATORのApproveだけを数える。source treeと現在mainも照合する。
 - artifactを取得し、3ZIPのCRC/サイズ/SHA/ID/版/wheel構成を検査する。
 - mainタグとRuntimeタグの存在を確認。本体タグは現在mainを指すことを確認する。
 - 旧公開記録と同じURLに異なるSHAを割り当てない。既存assetはサイズ/利用可能なdigestを見た後、実ダウンロードしてSHAを照合する。`--clobber`は使わない。
@@ -23,7 +23,7 @@ mainを対象にpublish-distributionを手動実行し、検査したrun IDと�
 
 ## 説明書サイトと目録を一緒に維持する
 
-docs workflowは固定したcatalog SHAの `website/static/extensions/` を通常のサイトへ取り込み、サイト全体をビルドする。他系統と通常の静的ファイルを保持する。公開処理とdocsのビルド/配信は同じconcurrency groupを使う。GitHub concurrencyはFIFOの保証ではないため、遅れて到着したmain/catalogの世代は配信直前のhead照合で拒否する。
+docs workflowは固定したcatalog SHAの `website/static/extensions/` を通常のサイトへ取り込み、サイト全体をビルドする。他系統と通常の静的ファイルを保持する。mainのdocsビルド/配信と公開処理は同じ `pages` concurrency groupを使う。PRのビルドはPR番号ごとの別groupへ分け、公開の待機runを押し出さない。GitHub concurrencyはFIFOの保証ではないため、遅れて到着したmain/catalogの世代は配信直前のhead照合で拒否する。
 
 配信前にcurrent main/catalogがビルド時から変わっていないことと、公開index・保持台帳・3形式の匿名取得bytesを照合する。取得失敗/世代不一致/台帳欠落は旧サイトを保持して停止する。初回でasset公開許可だけ済み、まだcatalogが無い場合も配信を止める。assetとcatalogを準備した後の再実行が配信の再開点となる。
 

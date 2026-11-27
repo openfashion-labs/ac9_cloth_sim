@@ -66,7 +66,9 @@ def require_merged_approval(pulls, reviews, sha, repo):
             raise ValueError('Review author must be identifiable')
         latest[user['id']] = review
     if (len(candidates) != 1 or any(r['state'] == 'CHANGES_REQUESTED' for r in latest.values())
-            or not any(r['state'] == 'APPROVED' and r.get('commit_id') == sha for r in latest.values())):
+            or not any(r['state'] == 'APPROVED' and r.get('commit_id') == sha
+                       and r.get('author_association') in {'OWNER', 'MEMBER', 'COLLABORATOR'}
+                       for r in latest.values())):
         raise ValueError('A merged PR and approval of this exact source are required')
     return candidates[0]
 

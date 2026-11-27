@@ -19,10 +19,10 @@ on:
 permissions:
   contents: read
 
-# Catalog publication uses this same group; an older whole-site build cannot
-# arrive after a newer catalog publication.
+# PR builds use a separate queue. Main builds and catalog publication remain
+# serialized so an older whole-site build cannot arrive after a newer catalog.
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.event.pull_request.number) || 'pages' }}
   cancel-in-progress: false
 
 jobs:

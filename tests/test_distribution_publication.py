@@ -44,10 +44,10 @@ class Publication(unittest.TestCase):
     def test_approval_of_an_old_head_does_not_pass(self):
         pulls = [{'merged_at': '2026-11-25', 'head': {'sha': SHA, 'repo': {'full_name': REPO}}, 'base': {'ref': 'main'}}]
         with self.assertRaises(ValueError):
-            publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': 'b' * 40, 'user': {'id': 1}}], SHA, REPO)
-        publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}}], SHA, REPO)
+            publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': 'b' * 40, 'user': {'id': 1}, 'author_association': 'MEMBER'}], SHA, REPO)
+        publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}, 'author_association': 'MEMBER'}], SHA, REPO)
         pulls[0]['merged_at'] = None
-        with self.assertRaises(ValueError):publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}}], SHA, REPO)
+        with self.assertRaises(ValueError):publication.require_merged_approval(pulls, [{'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}, 'author_association': 'MEMBER'}], SHA, REPO)
 
     def test_existing_asset_is_reused_but_never_overwritten(self):
         expected = {'bytes': 7, 'sha256': SHA + 'b' * 24}
@@ -58,13 +58,32 @@ class Publication(unittest.TestCase):
 
     def test_old_approval_does_not_override_later_changes_or_dismissal(self):
         pulls = [{'merged_at': '2026-11-25', 'head': {'sha': SHA, 'repo': {'full_name': REPO}}, 'base': {'ref': 'main'}}]
-        approval = {'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}}
+        approval = {'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}, 'author_association': 'MEMBER'}
         for state in ('CHANGES_REQUESTED', 'DISMISSED'):
             later = {**approval, 'state': state}
             with self.subTest(state=state), self.assertRaises(ValueError):
                 publication.require_merged_approval(pulls, [approval, later], SHA, REPO)
         publication.require_merged_approval(pulls, [{**approval, 'state': 'CHANGES_REQUESTED'}, approval], SHA, REPO)
         with self.assertRaises(ValueError):publication.require_merged_approval(pulls, [{**approval, 'user': None}], SHA, REPO)
+
+    def test_only_trusted_associations_can_approve_publication(self):
+        pulls = [{'merged_at': '2026-11-25', 'head': {'sha': SHA, 'repo': {'full_name': REPO}}, 'base': {'ref': 'main'}}]
+        review = {'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}}
+        for association in ('NONE', 'FIRST_TIMER', 'FIRST_TIME_CONTRIBUTOR', 'CONTRIBUTOR', 'MANNEQUIN', '', None, 'UNKNOWN'):
+            with self.subTest(association=association), self.assertRaises(ValueError):
+                publication.require_merged_approval(pulls, [{**review, 'author_association': association}], SHA, REPO)
+        with self.assertRaises(ValueError):
+            publication.require_merged_approval(pulls, [review], SHA, REPO)
+        for association in ('OWNER', 'MEMBER', 'COLLABORATOR'):
+            with self.subTest(association=association):
+                self.assertEqual(publication.require_merged_approval(
+                    pulls, [{**review, 'author_association': association}], SHA, REPO), pulls[0])
+
+    def test_untrusted_latest_review_does_not_revive_an_older_trusted_approval(self):
+        pulls = [{'merged_at': '2026-11-25', 'head': {'sha': SHA, 'repo': {'full_name': REPO}}, 'base': {'ref': 'main'}}]
+        review = {'state': 'APPROVED', 'commit_id': SHA, 'user': {'id': 1}, 'author_association': 'MEMBER'}
+        with self.assertRaises(ValueError):
+            publication.require_merged_approval(pulls, [review, {**review, 'author_association': 'NONE'}], SHA, REPO)
 
     def test_runtime_release_requires_notes_before_any_github_call(self):
         with tempfile.TemporaryDirectory() as temporary:
