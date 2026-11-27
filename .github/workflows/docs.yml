@@ -19,11 +19,24 @@ on:
 permissions:
   contents: read
 
+# PR builds use a separate queue. Main builds and catalog publication remain
+# serialized so an older whole-site build cannot arrive after a newer catalog.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.event.pull_request.number) || 'pages' }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      source_head: ${{ steps.catalog.outputs.source_head }}
+      catalog_sha: ${{ steps.catalog.outputs.catalog_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Include the persistent distribution catalog
+        id: catalog
+        run: python3 tools/catalog_site.py overlay
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -45,20 +58,27 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.DOCS_DEPLOY == 'true')
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && vars.DOCS_DEPLOY == 'true'))
     runs-on: ubuntu-latest
-    # 配信が重ならないようにする (PR のビルドは並列でよいので deploy だけに付ける)
-    concurrency:
-      group: pages
-      cancel-in-progress: false
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.build.outputs.source_head }}
+
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Reject stale generations and verify anonymous asset bytes
+        env:
+          SOURCE_HEAD: ${{ needs.build.outputs.source_head }}
+          CATALOG_SHA: ${{ needs.build.outputs.catalog_sha }}
+        run: python3 tools/catalog_site.py guard --source-head "$SOURCE_HEAD" --catalog-sha "$CATALOG_SHA"
 
       - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
         id: deployment

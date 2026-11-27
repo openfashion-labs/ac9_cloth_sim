@@ -1,0 +1,14 @@
+name: release-scope
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  release-scope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - run: python3 -m unittest discover -s tests -p test_release_scope.py
+      - run: python3 tools/check_release_scope.py --root . --phase plan

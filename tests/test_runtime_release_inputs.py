@@ -18,6 +18,18 @@ spec.loader.exec_module(splitter)
 
 
 class RuntimeReleaseInputs(unittest.TestCase):
+    def test_main_notices_preserve_credits_without_claiming_bundled_wheels(self):
+        canonical = (TOOLS.parent / 'THIRD_PARTY_NOTICES.txt').read_bytes()
+        main = splitter.main_notices(canonical)
+        self.assertNotIn(b'It bundles these Python packages as wheels', main)
+        self.assertIn(b'this main ZIP does not contain wheels/', main)
+        self.assertEqual(main.split(b'\n\n', 1)[1], canonical.split(b'\n\n', 1)[1])
+
+    def test_missing_or_changed_notices_are_rejected(self):
+        for canonical in (b'', b'Unknown notice format\n'):
+            with self.subTest(canonical=canonical), self.assertRaises(ValueError):
+                splitter.main_notices(canonical)
+
     def make_full(self, root, revision):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, 'w') as archive:
@@ -31,6 +43,7 @@ class RuntimeReleaseInputs(unittest.TestCase):
         with zipfile.ZipFile(path, 'w') as archive:
             archive.writestr('blender_manifest.toml', manifest)
             archive.writestr('LICENSE', f'Main license revision {revision}')
+            archive.writestr('THIRD_PARTY_NOTICES.txt', (TOOLS.parent / 'THIRD_PARTY_NOTICES.txt').read_bytes())
             archive.writestr('__init__.py', 'def register(): pass\ndef unregister(): pass\n')
             archive.writestr('wheels/fixture.whl', wheel)
         return path, {'fixture.whl': hashlib.sha256(wheel).hexdigest()}

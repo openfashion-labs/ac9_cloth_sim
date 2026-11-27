@@ -67,3 +67,9 @@ When you stop the simulation, **Result** in **AC9 Garment** on the Tool tab show
 - `Frames: on the timeline` is a sign that the progress can be played back. After **Fix by Hand**, it is `Frames: off (shape kept)`; after the frames were deleted (after a run that did not retain progress, or after **Delete Cache**), it is `Frames: dropped (shape kept)`.
 - The last line is the job folder name; open it with **Open**. If it cannot be found (for example, you passed along only the .blend), `Result: folder gone` and `Shape stays in garment` appear. The shape remains in the garment and you can continue from it.
 - Opening **Settings** below the status display shows the whole status of the last run, the last few lines of the log, and **Log** (the whole previous log). If something looks wrong, please include the contents of **Log**.
+
+## Accurate (Research)
+
+Enable **Experimental Features** in the add-on preferences to show **Accurate (Research)** in **AC9 Run**. It is off by default. Stop simulation before switching it. Turning it off restores the previous solver; the choice is saved in the .blend.
+
+This research feature is for Simulate with a static body. Phase Sim and Local Sim keep their existing solvers. It does not guarantee realistic shapes or faster computation and may run more slowly. Folded double layers still have unresolved return and bulging behavior.

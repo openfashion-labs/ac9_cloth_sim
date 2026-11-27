@@ -29,6 +29,26 @@ on:
       - dress.py
       - solver/**
       - tests/test_solver_math.py
+      - tools/**
+      - _addon.py
+      - core/live_session.py
+      - core/prepared_candidate.py
+      - place_lay.py
+      - i18n_ja.py
+      - distribution.py
+      - runtime_repair.py
+      - runtime_repair_worker.py
+      - tests/test_runtime_repair.py
+      - tests/test_distribution_repository_index.py
+      - tests/test_runtime_release_inputs.py
+      - tests/test_release_assets.py
+      - .github/release_scope.json
+      - draft_tool.py
+      - dart_ui.py
+      - spread_ui.py
+      - place_targets.py
+      - core/**
+      - tests/**
 
 permissions:
   contents: read
@@ -97,7 +117,29 @@ jobs:
                       raise SystemExit(f'{path}:{node.lineno}: SciPy is not a bundled dependency')
           EOF
 
-      - name: Download the pinned wheels
+      - name: Check release scope contract
+        if: hashFiles('.github/release_scope.json') != ''
+        run: python3 tools/check_release_scope.py --root . --phase plan
+
+      - name: Check distribution CPU safety
+        if: hashFiles('tools/download_distribution_wheels.py') != ''
+        run: |
+          python3 -m unittest discover -s tests -p test_distribution_repository_index.py
+          python3 -m unittest discover -s tests -p test_runtime_repair.py
+          python3 -m unittest discover -s tests -p test_runtime_release_inputs.py
+          python3 -m unittest discover -s tests -p test_release_assets.py
+          python3 -m unittest discover -s tests -p test_candidate_repository.py
+          python3 -m unittest discover -s tests -p test_distribution_publication.py
+          python3 -m unittest discover -s tests -p test_public_repository.py
+
+      - name: Download and verify the pinned wheels
+        if: hashFiles('tools/download_distribution_wheels.py') != ''
+        run: |
+          python3 tools/download_distribution_wheels.py --out wheels --source . --prepare-manifest
+
+      # Preserve the pre-tools stable-tag rebuild contract, including its original pins.
+      - name: Download the legacy stable-tag wheels
+        if: env.TAG != '' && hashFiles('tools/download_distribution_wheels.py') == ''
         run: |
           mkdir wheels
           python3 -m pip download --no-deps --only-binary :all: \
@@ -155,7 +197,25 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
-            libxi6 libxrender1 libxkbcommon0 libsm6 libice6 libgl1 libegl1 libxxf86vm1 libxfixes3 libgomp1
+            libxi6 libxrender1 libxkbcommon0 libsm6 libice6 libgl1 libegl1 libxxf86vm1 libxfixes3 libgomp1 xvfb xauth
+
+      - name: Check every context command, mirror regression, 3D carry and actual undo before packaging
+        if: hashFiles('tests/test_command_scene.py') != ''
+        run: |
+          blender="$RUNNER_TEMP/blender/blender"
+          mkdir -p "$RUNNER_TEMP/command-package" "$RUNNER_TEMP/command-checks" "$RUNNER_TEMP/command-extensions"
+          ln -s "$GITHUB_WORKSPACE" "$RUNNER_TEMP/command-package/ac9_cloth_sim"
+          export BLENDER_USER_EXTENSIONS="$RUNNER_TEMP/command-extensions"
+          for test in test_command_symmetry test_context_contracts test_command_scene test_numeric_size test_numeric_gap_symmetry; do
+            "$blender" -b --factory-startup --python-exit-code 1 --python "tests/$test.py" -- \
+              "$RUNNER_TEMP/command-package" "$RUNNER_TEMP/command-checks/$test.json"
+          done
+          xvfb-run -a "$blender" --factory-startup --enable-event-simulate --python-exit-code 1 \
+            --python tests/test_command_modal.py -- "$RUNNER_TEMP/command-package" "$RUNNER_TEMP/command-checks/modal.json"
+          python3 -c 'import json,os; from pathlib import Path; p=Path(os.environ["RUNNER_TEMP"])/"command-checks/modal.json"; assert json.loads(p.read_text())["ok"]'
+          xvfb-run -a "$blender" --factory-startup --enable-event-simulate --python-exit-code 1 \
+            --python tests/test_clone_modal.py -- "$RUNNER_TEMP/command-package" "$RUNNER_TEMP/command-checks/clone-modal.json"
+          python3 -c 'import json,os; from pathlib import Path; p=Path(os.environ["RUNNER_TEMP"])/"command-checks/clone-modal.json"; assert json.loads(p.read_text())["ok"]'
 
       - name: Validate and build the extension
         run: |
@@ -201,6 +261,55 @@ jobs:
             exit 1
           fi
 
+      # PR artifacts only. The canonical full ZIP remains the sole release attachment.
+      - name: Derive split distribution preview from the canonical full ZIP
+        if: github.event_name == 'pull_request'
+        run: |
+          full=$(find "$RUNNER_TEMP/dist" -maxdepth 1 -type f -name '*.zip' -print -quit)
+          python3 tools/split_distribution.py --full "$full" --out "$RUNNER_TEMP/split-preview"
+          blender="$RUNNER_TEMP/blender/blender"
+          for package in "$RUNNER_TEMP/split-preview/repository/"*.zip; do
+            "$blender" --command extension validate "$package"
+          done
+          "$blender" --command extension server-generate --repo-dir "$RUNNER_TEMP/split-preview/repository" --html
+          python3 tools/check_release_scope.py --root . --phase packages --build "$RUNNER_TEMP/split-preview/build.json"
+          version=$(sed -nE 's/^version = "([^"]+)".*/\1/p' blender_manifest.toml)
+          python3 tools/build_candidate_repository.py --source-repo "$RUNNER_TEMP/split-preview/repository" \
+            --out "$RUNNER_TEMP/candidate-page" --base-url http://127.0.0.1:8765/ --main-version "$version"
+
+      - name: Rehearse the public catalog without publishing
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'tools')
+          from publish_distribution import planned_asset_urls
+          from build_public_repository import build_public, EXPECTED_BASE
+          temporary = Path(os.environ['RUNNER_TEMP'])
+          build = json.loads((temporary/'split-preview/build.json').read_text())
+          version = build['main_version']
+          urls = planned_asset_urls(build, version, 'openfashion-labs/ac9_cloth_sim', [])
+          refs = {'channel':'preview','packages':{role:{'url':urls[role],'bytes':entry['bytes'],'sha256':entry['sha256']} for role,entry in build['packages'].items()}}
+          build_public(temporary/'split-preview/repository', refs, [], temporary/'public-catalog-preview', EXPECTED_BASE, version)
+          PY
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: github.event_name == 'pull_request'
+        with:
+          name: public-catalog-preview
+          path: ${{ runner.temp }}/public-catalog-preview/
+          if-no-files-found: error
+          retention-days: 5
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          name: split-distribution-preview
+          path: ${{ runner.temp }}/split-preview/
+          if-no-files-found: error
+          retention-days: 5
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: extension-zip
@@ -209,42 +318,5 @@ jobs:
           # PR の ZIP（約 190 MB）は中身の確認に数日あれば足りる。タグの ZIP は Release にも添付される
           retention-days: ${{ env.TAG != '' && 90 || 5 }}
 
-  publish:
-    needs: build
-    if: inputs.tag != '' || github.ref_type == 'tag'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.TAG }}
-          sparse-checkout: CHANGELOG.md
-          sparse-checkout-cone-mode: false
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: extension-zip
-          path: dist
-
-      - name: Attach the ZIP to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Release が無ければ draft で作る。本文は CHANGELOG.md の該当節
-          # （`## [x.y.z]` から次の `## ` または末尾のリンク定義まで）。
-          # 既にあれば（draft でも）本文は触らず ZIP を差し替えるだけ
-          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            ver="${TAG#v}"
-            awk -v ver="$ver" '
-              $0 ~ "^## \\[" ver "\\]" { on=1; next }
-              on && (/^## / || /^\[/) { exit }
-              on { print }
-            ' CHANGELOG.md > notes.md
-            if [ ! -s notes.md ]; then
-              echo "::error::could not extract the [$ver] section from CHANGELOG.md"
-              exit 1
-            fi
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --title "$TAG" --notes-file notes.md
-          fi
-          gh release upload "$TAG" dist/*.zip --repo "$GITHUB_REPOSITORY" --clobber
+  # Release attachment is handled only by the explicit reviewed-artifact workflow.
+  # Tag runs remain build-only, including legacy full ZIP rebuilds.

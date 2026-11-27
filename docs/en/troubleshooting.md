@@ -68,3 +68,9 @@ We are reviewing the information needed for diagnosis and how reports will be re
 If a problem occurs, note what you did, what you expected, what actually happened, and any error shown on screen.
 
 For missing progress playback, check [recording settings and range](features/run.md#recording-progress). Running Simulate alone does not determine whether progress was kept.
+
+## Reporting a bug
+
+In [Issues](https://github.com/openfashion-labs/ac9_cloth_sim/issues), include the add-on version, GPU name, steps to reproduce (buttons pressed), expected and actual behavior, and a screenshot with readable error text. Find the version by opening AC9 Cloth Sim under Preferences → Add-ons.
+
+Without a numpad, use **Emulate Numpad** under Preferences → Input. Without a middle mouse button, use **Emulate 3 Button Mouse**.

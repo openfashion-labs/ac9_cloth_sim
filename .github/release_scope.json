@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "version": "0.4.1",
+  "channel": "preview",
+  "distribution": "split",
+  "required_packages": [
+    "full",
+    "main",
+    "runtime"
+  ],
+  "publication": {
+    "asset_publication_approved": false,
+    "ready": false,
+    "remaining": [
+      "runtime_distribution_terms_review",
+      "production_install_update_check"
+    ]
+  }
+}

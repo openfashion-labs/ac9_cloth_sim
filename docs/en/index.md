@@ -14,6 +14,7 @@ It is currently an **alpha version (0.4.0)**. Features are missing, and the scre
 | Chapter | When to read it |
 |---|---|
 | [Installation and prerequisites](install.md) | How to install, system requirements, what to do first |
+| [Before you start](before-start.md) | AI help, saving a separate copy, initial settings, shape and progress, backups |
 | [Blender basics](blender-basics.md) | You are new to Blender. How to read the screen, common keys, how modes work |
 | [Your first garment](first-garment.md) | You want to dress one garment from start to finish |
 | [Concepts](concepts.md) | You are not sure which shape you are looking at, or where things are saved |

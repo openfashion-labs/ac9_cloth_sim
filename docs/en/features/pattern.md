@@ -5,7 +5,7 @@ sidebar_position: 4
 
 # Edit and draw patterns
 
-What you do in this panel: fix the shape of a pattern, draw a new one, and make left and right match. If there is a dressed garment, the edited shape is carried onto it right away (shape only, no physics calculation).
+What you do in this panel: fix the shape of a pattern, draw a new one, and make left and right match. By default, edits wait until the next **Simulate** or **Update 3D**. With **3D Follows Edits** on, they are reflected after each edit. Carrying the shape over does not itself settle the cloth through simulation.
 
 ## Panel layout
 
@@ -83,7 +83,7 @@ Symmetric pieces are connected as a "left/right pair", and fixing one side also 
 
 ## Reflecting an edited pattern on the dressed garment
 
-When you edit a pattern, the edited shape is carried onto the current garment right away. But it is only carried over; the cloth has not settled. Pressing **Simulate** continues the calculation from the current shape of the garment, and the whole garment settles into the edited pattern (see the "Run" section). If the shape cannot be carried over (the cloth flips over, the area becomes 0), it stops and shows the reason.
+When pattern edits reach 3D depends on **3D Follows Edits**. Off by default, it leaves the adjusted and dressed shapes unchanged until **Update 3D** or the next **Simulate**. When on, each edit is reflected. Carrying the shape over alone does not settle the cloth. Pressing **Simulate** continues the calculation from the current shape of the garment, and the whole garment settles into the edited pattern (see the "Run" section). If the shape cannot be carried over (the cloth flips over, the area becomes 0), it stops and shows the reason.
 
 - **3D Follows Edits** (in **AC9 Run** on the Tool tab, below the run buttons): off by default. While it is off, pattern edits go only into the pattern, and the dressed garment and the adjusted shape wait as they are until the next run (you can keep editing the pattern without waiting for 3D). Press it to carry each edit to 3D as described above (each edit then takes a moment).
 - If there are edits waiting, **Update 3D** next to it turns red and "3D not updated" appears in the tool's options row. Press **Update 3D**, press **3D Follows Edits** again, or run the next **Simulate**, and they are all carried to 3D together (no physics calculation).

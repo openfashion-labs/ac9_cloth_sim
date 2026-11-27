@@ -70,3 +70,9 @@ sidebar_position: 7
 不具合が起きたら、「どんな操作をしたか」「どうなると思ったか」「実際にどうなったか」と、画面に表示されたエラーを控えてください。
 
 経過が再生できないときは、[記録設定と保存範囲](features/run.md#recording-progress)を確認してください。シミュレートをしたかどうかだけでは判断しません。
+
+## 不具合を報告するとき
+
+[Issues](https://github.com/openfashion-labs/ac9_cloth_sim/issues)へ、アドオンの版、GPU名、再現する操作（押したボタン）、期待した結果と実際の表示、エラー文字の読めるスクリーンショットを添えてください。版はPreferencesのAdd-onsでAC9 Cloth Simを開くと確認できます。
+
+テンキーがない場合はPreferences → Inputの **Emulate Numpad**、中ボタンがない場合は **Emulate 3 Button Mouse** を使えます。
