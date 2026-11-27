@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.4.1"
-build_id = "0ea0bd43da7b444e6f96e5a84281d37860f994032bc3cce578218a846ce21998"
+build_id = "19b10000bf42c73ccfff652f6885ddf1fcf26c0c703603c9238c2438b40a8182"
 
 [[documents]]
 id = "guide_blender"
@@ -1301,7 +1301,7 @@ sha256 = "22ff1aade1388db0c4f2764a6bf45a7e3d8bb3344df5dfe9ade545ca589e0575"
 
 [[sources]]
 path = "tests/test_distribution_publication.py"
-sha256 = "15fa7fbbc7ac963c261ea9715958a9f46aa5e71e97f9d13c9922b07c918841ea"
+sha256 = "4d0f40a7cdc50254d1ecf8c8baeb81a4e9a65641cf508f8fbf6586a9dc53bada"
 
 [[sources]]
 path = "tests/test_distribution_repository_index.py"
@@ -1705,7 +1705,7 @@ sha256 = "6fb1c019d3eba30f28429ff84bb241670e442c8c9a9dce0a4c2cf384fba56252"
 
 [[sources]]
 path = "tests/test_release_scope.py"
-sha256 = "3abf810d80cd3a54096e93e6e3b7a26fcaf59197c0ee3db92c489dcfdab66fc4"
+sha256 = "a2defb02386586d1ca0e1e01cd59c12330156bdbd4bd46c948ca0df85423a4a8"
 
 [[sources]]
 path = "tests/test_resident_runner.py"
@@ -1925,7 +1925,7 @@ sha256 = "f90e03a88055ab2e99f9a982ad30823ff40d3f8f5c4dc36387a19714bb2b9fdf"
 
 [[sources]]
 path = "tools/check_release_scope.py"
-sha256 = "ae4ce4a7f3a2973ad9722ed17c6f0cad21f5eed315f6c1033841381d3559ac98"
+sha256 = "9cdbe01bd714ec4b5cbbd5874d151b460f8a67e8f20d19e41d27a45f32829bac"
 
 [[sources]]
 path = "tools/distribution_spec.py"
@@ -1937,7 +1937,7 @@ sha256 = "618a50330856783b1961e0752e260491f3a0fecc3ca6f667ea49ee0860df2eac"
 
 [[sources]]
 path = "tools/publish_distribution.py"
-sha256 = "cd545c9e8cf40b015a61025f1d6d788e17690c071ceb4c2ae564ea96e530e975"
+sha256 = "d74bec3a499f43c0b90ec35a004e8068a32af40352a82f5864d9bf0de4b98e07"
 
 [[sources]]
 path = "tools/split_distribution.py"

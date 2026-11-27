@@ -2,7 +2,7 @@
 """Promote one reviewed CI build without rebuilding or overwriting release assets.
 
 Only the explicit --execute path performs external mutations. License/asset
-authorization remains closed in release_scope.json until maintainer review.
+authorization is recorded separately in release_scope.json by the maintainer.
 """
 import argparse
 import hashlib
@@ -66,7 +66,9 @@ def require_merged_approval(pulls, reviews, sha, repo):
             raise ValueError('Review author must be identifiable')
         latest[user['id']] = review
     if (len(candidates) != 1 or any(r['state'] == 'CHANGES_REQUESTED' for r in latest.values())
-            or not any(r['state'] == 'APPROVED' and r.get('commit_id') == sha for r in latest.values())):
+            or not any(r['state'] == 'APPROVED' and r.get('commit_id') == sha
+                       and r.get('author_association') in {'OWNER', 'MEMBER', 'COLLABORATOR'}
+                       for r in latest.values())):
         raise ValueError('A merged PR and approval of this exact source are required')
     return candidates[0]
 
@@ -152,11 +154,17 @@ class Publisher:
         return matches[0] if matches else None
 
     def ensure_asset(self, tag, entry, source_sha):
+        if tag.startswith('runtime-'):
+            notes = self.root / '.github/runtime_release_notes.md'
+            if not notes.is_file() or not notes.read_text(encoding='utf-8').strip():
+                raise ValueError('Runtime release notes must be prepared before publication')
+            note_arguments = ('--notes-file', str(notes))
+        else:
+            note_arguments = ('--notes', 'AC9 Cloth Sim preview distribution. See the versioned installation guide and licenses.')
         release = self.release(tag)
         if release is None:
             command('gh', 'release', 'create', tag, '--repo', self.repo, '--target', source_sha,
-                    '--verify-tag', '--draft', '--prerelease', '--title', tag, '--notes',
-                    'AC9 Cloth Sim preview distribution. See the versioned installation guide and licenses.')
+                    '--verify-tag', '--draft', '--prerelease', '--title', tag, *note_arguments)
             release = self.release(tag)
         name = Path(entry['path']).name
         matches = [a for a in release['assets'] if a['name'] == name]

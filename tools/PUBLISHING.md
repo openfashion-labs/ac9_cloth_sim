@@ -6,24 +6,24 @@
 
 1. 本体/Runtime/全部入りのCIと、同じ成果物での導入検査を完了する。採用するrelease workflowのrun IDとPR head SHAを固定する。保持期限を過ぎたartifactは使えない。再実行でZIPを作り直した場合は別成果物として検査する。
 2. Runtimeの別Release配布について、同梱NVIDIAライセンスの配布条件を確認する。既存の0.4.0全部入りへの承認を流用しない。単に「standalone SDKではない」と表示したことを条件確認の代わりにしない。
-3. 接続処理と配布条件の確認後、maintainerが `.github/release_scope.json` の `asset_publication_approved` をtrueにし、解消した残件を外す。正式URLでの導入/更新確認は公開後に行うため残してよい。**現時点はfalseで実公開を禁止している。** 変更後の最終headについてCIを通し、owner承認を得てmainへ通常マージする。
+3. 接続処理と配布条件の確認後、maintainerが `.github/release_scope.json` の `asset_publication_approved` をtrueにし、解消した残件を外す。**最終公開候補ではtrueにし、公開後の `production_install_update_check` だけを残す。公開完了の `ready` は、その確認が終わるまでfalseのまま。実際の許可状態は対象候補のJSONを確認する。** この設定を含む最終headについてCIを通し、owner承認を得てmainへ通常マージする。設定だけで公開は実行されない。
 4. 既存の権限を持つ担当者が、mainのマージcommitに対する `v<本体版>` を用意する。初回Runtimeは `runtime-<runtime版>` のタグも用意し、既存Runtimeタグを移動しない。`v*` の既存保護を解除/迂回しない。workflow自身はタグを作らない。
 
 ## 公開を実行する
 
 mainを対象にpublish-distributionを手動実行し、検査したrun IDとレビューされたPR head SHAを渡す。PR headとsquash後のmainはcommit SHAが異なるが、ファイルのtreeは一致する必要がある。別の変更がmainへ入った場合は止まり、古い版をそのまま公開しない。
 
-- 成功した同じrepoのrelease PR CI、merged PR、同じheadへの承認をAPIで検査する。source treeと現在mainも照合する。
+- 成功した同じrepoのrelease PR CI、merged PR、同じheadへの承認をAPIで検査する。承認は各人の最新状態を使い、OWNER/MEMBER/COLLABORATORのApproveだけを数える。source treeと現在mainも照合する。
 - artifactを取得し、3ZIPのCRC/サイズ/SHA/ID/版/wheel構成を検査する。
 - mainタグとRuntimeタグの存在を確認。本体タグは現在mainを指すことを確認する。
 - 旧公開記録と同じURLに異なるSHAを割り当てない。既存assetはサイズ/利用可能なdigestを見た後、実ダウンロードしてSHAを照合する。`--clobber`は使わない。
-- 新規assetはdraftへ置き、全assetを再取得照合してからprereleaseとして公開する。公開後にも匿名取得して3形式のサイズ/SHAを照合する。
+- 新規assetはdraftへ置き、全assetを再取得照合してからprereleaseとして公開する。Runtime Releaseには `.github/runtime_release_notes.md` を使用し、AC9用の計算部品・本体の導入経路・各ライセンスの適用を明示する。公開後にも匿名取得して3形式のサイズ/SHAを照合する。
 - 検証済み参照から公開目録と導入ページを生成し、Gitの `distribution-catalog` ブランチへ記録する。本体コードの追加PRは作らない。mainへの直接pushやブランチ保護変更はしない。
 - docs workflowをmainから明示実行する。GITHUB_TOKENによるpushだけに起動を依存しない。[GitHub公式のイベント説明](https://docs.github.com/en/actions/concepts/security/github_token)
 
 ## 説明書サイトと目録を一緒に維持する
 
-docs workflowは固定したcatalog SHAの `website/static/extensions/` を通常のサイトへ取り込み、サイト全体をビルドする。他系統と通常の静的ファイルを保持する。公開処理とdocsのビルド/配信は同じconcurrency groupを使う。GitHub concurrencyはFIFOの保証ではないため、遅れて到着したmain/catalogの世代は配信直前のhead照合で拒否する。
+docs workflowは固定したcatalog SHAの `website/static/extensions/` を通常のサイトへ取り込み、サイト全体をビルドする。他系統と通常の静的ファイルを保持する。mainのdocsビルド/配信と公開処理は同じ `pages` concurrency groupを使う。PRのビルドはPR番号ごとの別groupへ分け、公開の待機runを押し出さない。GitHub concurrencyはFIFOの保証ではないため、遅れて到着したmain/catalogの世代は配信直前のhead照合で拒否する。
 
 配信前にcurrent main/catalogがビルド時から変わっていないことと、公開index・保持台帳・3形式の匿名取得bytesを照合する。取得失敗/世代不一致/台帳欠落は旧サイトを保持して停止する。初回でasset公開許可だけ済み、まだcatalogが無い場合も配信を止める。assetとcatalogを準備した後の再実行が配信の再開点となる。
 

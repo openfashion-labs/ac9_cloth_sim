@@ -5,11 +5,18 @@ from pathlib import Path
 
 REQUIRED=('Check distribution CPU safety','Derive split distribution preview from the canonical full ZIP')
 ROLES={'full','main','runtime'}
+DOCS_GROUP="${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.event.pull_request.number) || 'pages' }}"
 
 def validate_workflow(text):
     missing=[name for name in REQUIRED if not re.search(r'(?m)^\s*- name: '+re.escape(name)+r'\s*$',text)]
     if not re.search(r'(?m)^\s*name: split-distribution-preview\s*$',text):missing.append('split-distribution-preview')
     if missing:raise ValueError('Required distribution CI omitted: '+', '.join(missing))
+
+def validate_docs_concurrency(text):
+    match=re.search(r'(?m)^concurrency:[ \t]*\n((?:[ \t]+[^\n]*(?:\n|$))+)',text)
+    lines=[] if match is None else [line.strip() for line in match[1].splitlines()]
+    if 'group: '+DOCS_GROUP not in lines or 'cancel-in-progress: false' not in lines:
+        raise ValueError('PR docs must use a separate queue while main retains the pages group')
 
 def validate_plan(root):
     scope=json.loads((root/'.github/release_scope.json').read_text(encoding='utf-8'))
@@ -26,8 +33,9 @@ def validate_plan(root):
     docs=(root/'.github/workflows/docs.yml').read_text(encoding='utf-8')
     if 'tools/publish_distribution.py' not in publisher or 'group: pages' not in publisher:
         raise ValueError('Explicit reviewed-artifact publication workflow is missing')
-    if 'catalog_site.py overlay' not in docs or 'catalog_site.py guard' not in docs or 'group: pages' not in docs:
+    if 'catalog_site.py overlay' not in docs or 'catalog_site.py guard' not in docs:
         raise ValueError('Persistent catalog and stale-generation guard must be connected')
+    validate_docs_concurrency(docs)
     if '--clobber' in (root/'.github/workflows/release.yml').read_text(encoding='utf-8'):
         raise ValueError('Legacy release workflow must not overwrite public assets')
     return scope
