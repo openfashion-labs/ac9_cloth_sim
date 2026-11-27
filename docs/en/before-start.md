@@ -37,6 +37,10 @@ The pattern, placement, settings and saved garment shape are stored in the .blen
 
 Open **Edit > Preferences > Add-ons > AC9 Cloth Sim**. Run settings are under **AC9 Run > Settings** in the Properties editor's **Tool** tab.
 
+![Example preferences; see the table below for defaults](img/d_preferences.png)
+
+![AC9 Run with Settings open; cache and all-frame settings are shared with Preferences](img/d_run_settings.png)
+
 | Setting | Effect | What to check |
 |---|---|---|
 | Simulation Working Directory | Working location during calculation; empty uses Blender/OS temporary storage | Separate from the project location; choose a working disk if needed |
@@ -51,6 +55,8 @@ The cache settings also appear in **AC9 Run > Settings**. Both places control th
 ### F5 starts and stops; Space keeps Blender's action
 
 In the AC9 work screen, **F5** starts and stops Simulate by default. **Space** keeps Blender's playback, tools or search action. If you changed the key or use a setting from an older version, check **Hotkeys** in the add-on preferences. Outside the AC9 work screen, F5 does not start this simulation. Timeline playback and calculating cloth are different operations.
+
+![Example Hotkeys setting: F5 starts and stops Simulate](img/d_hotkeys.png)
 
 ## Separate the last shape from recorded progress {#shape-and-frames}
 

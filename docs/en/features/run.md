@@ -22,7 +22,7 @@ The run buttons are grouped in **AC9 Run** at the top of the Tool tab. Always sh
 - Expected result: while it runs, the garment moves on screen and the status appears below the button. When you stop it, "done: …" appears (one line; the whole of it is inside **Settings**).
 - Limits: after you press it, wait a little before the cloth starts to move (it depends on the computer). Pinch the cloth after it starts moving. If it does not start, `… did not start: <reason>` stays in the status display.
 
-![the AC9 Run panel](../img/d_tool_tab.png)
+![the AC9 Run panel with Settings open](../img/d_run_settings.png)
 
 ## Experimental Features
 

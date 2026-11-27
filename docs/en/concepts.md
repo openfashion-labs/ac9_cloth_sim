@@ -32,6 +32,10 @@ Everything about one garment (the pattern shapes, seams, placement, fold lines, 
 
 We distinguish four stages of a piece. Without adjustments, its Placed Shape and Adjusted Shape coincide.
 
+![The same sleeve as a flat pattern, placed shape, adjusted shape and worn shape](img/concept_shapes.png)
+
+This example isolates one sleeve. Only the pattern is viewed from above; the three 3D views share the same camera and scale.
+
 | Shape | Where it is | What you did to get there |
 |---|---|---|
 | **Flat pattern** | On the floor (the middle view of the Work Screen) | Right after loading or drawing |
@@ -50,7 +54,7 @@ There are three buttons for going back to an earlier shape, and they differ in h
 Select pieces and press it to affect only those pieces; press it with nothing selected to affect the whole garment (a confirmation appears for the whole garment).
 Linked mirrored pieces go back together. Even with Back to Flat, the dressed shape of unselected pieces stays.
 
-<!-- figure: Figure 3: a piece's four forms and the three "go back" buttons -->
+![Each restore button applied to a separate copy of the same worn shape](img/concept_restore.png)
 
 When you fix a pattern, by default the adjusted shape and the dressed garment do not change right away (so that you don't wait at each fix). The next time you press **Simulate** or another run, the fixes are **carried over to the adjusted shape and the dressed garment together** (no physics is calculated for that) and the run settles them. To see the 3D shape after every fix, turn on **3D Follows Edits** under **AC9 Run** in the Tool tab (each fix then takes a moment). **Update 3D** carries everything over at once.
 

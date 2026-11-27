@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.5.0"
-build_id = "f7a53857cccea0b16b30faa5e857a454aa54849ccb16b4fe291c60117758c3e1"
+build_id = "2179974a062e535a4c880bda32d533134a98aeed68a1d15381ce7525aa55f854"
 
 [[documents]]
 id = "guide_blender"
@@ -9,7 +9,7 @@ title = "Blender の基本（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "Blender の基本"
 operators = []
-sha256 = "e7bf3f3be4bd324651349d326c22d21cf530601cfa5c47209ffbf5b73dd53de4"
+sha256 = "d451bdc1aaa3cde98675343adf6dea50e9b00c00ece41137246d7427a2d801c9"
 
 [[documents]]
 id = "guide_first"
@@ -17,7 +17,7 @@ title = "はじめての 1 着（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "はじめての 1 着"
 operators = []
-sha256 = "e7bf3f3be4bd324651349d326c22d21cf530601cfa5c47209ffbf5b73dd53de4"
+sha256 = "d451bdc1aaa3cde98675343adf6dea50e9b00c00ece41137246d7427a2d801c9"
 
 [[documents]]
 id = "guide_concepts"
@@ -25,7 +25,7 @@ title = "考え方（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "考え方"
 operators = []
-sha256 = "e7bf3f3be4bd324651349d326c22d21cf530601cfa5c47209ffbf5b73dd53de4"
+sha256 = "d451bdc1aaa3cde98675343adf6dea50e9b00c00ece41137246d7427a2d801c9"
 
 [[documents]]
 id = "guide_trouble"
@@ -33,7 +33,7 @@ title = "困ったとき（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "困ったとき"
 operators = []
-sha256 = "e7bf3f3be4bd324651349d326c22d21cf530601cfa5c47209ffbf5b73dd53de4"
+sha256 = "d451bdc1aaa3cde98675343adf6dea50e9b00c00ece41137246d7427a2d801c9"
 
 [[documents]]
 id = "guide_notes"

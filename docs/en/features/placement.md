@@ -73,6 +73,22 @@ Press **Diagnose** in its own panel to inspect the displayed cloth surface befor
 
 Placement no longer adds automatic quality warnings or red marks. Failures to construct a shape or missing required settings are still reported immediately. Press **Diagnose** again after correcting the shape.
 
+### Diagnosis display examples
+
+The front panel was deliberately stretched sideways for this example. It is not a garment-quality reference.
+
+![Diagnosis panel: six pieces, five inside vertices, 69 confirmed crossing faces, maximum stretch x1.71](../img/d_diagnosis_panel.png)
+
+![Match diagnosis squares and the maximum-stretch diamond between the garment and its pattern](../img/d_diagnosis_views.png)
+
+The same shape with **3D Stretch Map** selected. Red surface coloring shows stretch distribution; its purpose differs from the red squares in Diagnosis Locations.
+
+![3D stretch distribution on the same shape](../img/d_diagnosis_stretch.png)
+
+This example has missing material coordinates. Stretch is **not checked**, and crossings whose sewing cannot be verified are yellow **crossing candidates**. Zero confirmed crossing faces does not mean that candidates or unchecked items have disappeared.
+
+![Unchecked stretch and 137 crossing-candidate faces shown in yellow](../img/d_diagnosis_unchecked.png)
+
 ## Tools for tidying the adjusted shape (no physics calculation)
 
 Select the pieces first, then press any of these. They are tools for tidying the starting shape before the simulation.

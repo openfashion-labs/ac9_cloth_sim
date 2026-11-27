@@ -33,6 +33,10 @@ sidebar_position: 7
 - In current-shape diagnosis, red marks confirmed issues such as crossings; yellow marks crossing candidates whose seams could not be verified. Read the target, counts and unchecked items too. Color alone does not determine quality. Past run records are separate.
 
 
+Below is the same view before and after deliberately stretching the front panel for diagnosis. Match the red squares and maximum-stretch diamond to the pattern in the [diagnosis display examples](features/placement.md).
+
+![Same view before and after stretching the front panel for diagnosis](img/d_diagnosis_before_after.png)
+
 ## When it doesn't work
 
 | Symptom | What to check first | Next step |
