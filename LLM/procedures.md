@@ -4,6 +4,8 @@
 
 折りの案内: `docs/ja/features/fold-roles.md` を参照。左右のミラーペアの内部線は追加/移動/曲線編集/削除/折り/ゴムを同じ保存対応で同期する。配置だけのUnlinkと型紙の同期は別。古い片線を準備中に見えない線で補完しない。不一致は別メッシュで保持し、古い共有形の対応不明なA/Bは理由付きで拒否する。中央軸上の線は1回、軸外の鏡像2線は各1回適用し、No Sideでは今回の対称な折りをまとめて戻す。無関係な後続の折りや頂点編集は保護する。
 
+人向けの正本は docs/ja/before-start.md（Docusaurusの「使い始める前に」）。同じ版のインストール済み本体のLLM/README.mdと必要ならprocedures.mdをAIへ添付する。ダウンロードZIPの保持は前提にしない。作業前に.blendを別名保存し、経過も必要なら隣のAC9_ClothSim_jobsを別途保持する。Keep Cacheは既定オン、Keep All Simulate Framesは既定オフ、途中記録上限は1,500。この0.4.1候補ではSpace（Blender側でツール/検索ならShift+Space）が開始/停止の既定。既存のカスタム割当はPreferencesのHotkeysで確認。画像・動画の説明と型紙/服の外観の承認を混同しない。
+
 ## 案内上の注意と画面の場所
 
 目的: 利用者に操作を案内するときの、場所の言い方と、AI がしてよいこと・してはいけないことを決めておく。
@@ -11,8 +13,8 @@
 画面の場所（新しい既定の配置。README の『画面の配置』）:
 
 - 3D ビューのサイドバー（N パネル）の **AC9 Cloth Sim** タブ: **Setup**、**Pattern**、**Lists**、**Placement**、**Measure**。
-- 右下の Properties エディタの **Tool** タブ: **AC9 Run**（常に最上段）、**AC9 Garment**、**AC9 Piece**、**AC9 Seam**（下に **Lengths & Notches** と **Blend**）、**AC9 Internal Line**、**AC9 Edges**、**AC9 Fabric**、**AC9 Interlining**、**AC9 Button**、**AC9 Measurement**。最後に触った物で切り替わる。何かを選んだのに該当パネルが出ないときは、Tool タブを開いているかを確かめる。
-- サイドバーの **Lists** のタブは 6 つ（**Seams**、**Pieces**、**Fabrics**、**Collision**、**Tapes**、**Fasteners**）。一覧は見て選ぶだけで、設定は Tool タブ。
+- 右下の Properties エディタの **Tool** タブ: **AC9 Run**（常に最上段）、**AC9 Garment**、**AC9 Piece**、**AC9 Seam**（下に **Lengths & Notches** と **Blend**）、**AC9 Internal Line**、**AC9 Edges**、**AC9 Fabric**、**AC9 Interlining**、**AC9 Button**、**AC9 Measurement**。最後に触った物で切り替わる。何かを選んだのに該当パネルが出ないときは、ツールタブを開いているかを確かめる。
+- サイドバーの **Lists** のタブは 6 つ（**Seams**、**Pieces**、**Fabrics**、**Collision**、**Tapes**、**Fasteners**）。一覧は見て選ぶだけで、設定は ツールタブ。
 - 画面の言語: Blender が日本語表示なら、ボタンは日本語の訳で出る。案内では英語の名前と、日本語表示の利用者には画面の日本語の両方が通じるように言う（訳は `i18n_ja.py`）。
 - 左の道具の列: 型紙の道具は **Setup** の **Pattern Tools** がオンのときだけ出る。**Edit Measure**・**Tape Around**・**Tape Along**・**Tape Straight**・**Place** は常に出る。
 - 3D ビューのヘッダー右上: **Overlays**（目のボタンと一覧）。
@@ -120,12 +122,12 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 目的: BOM に入っている、1 着ぶんより多いピースから、使うピースだけを on にする。服のまとまりの分け方が違えば直す。
 
-前提条件: 型紙が読み込まれている。画面は **Setup** パネルと Tool タブの **AC9 Piece**。
+前提条件: 型紙が読み込まれている。画面は **Setup** パネルと ツールタブの **AC9 Piece**。
 
 手順:
 
 1. **Setup** の **Garment** の欄の下の、使うまとまりの行（`<名前> (on の数/ピースの数)`、`ac9_cloth_sim.select_garment`）を押す。そのまとまりのピースが選ばれる（Shift で足す）。まとまりが 1 つだけなら行は出ないので、3D ビューで使うピースを選ぶ。
-2. Tool タブの **AC9 Piece** の **State** で **Active**（`ac9_cloth_sim.piece_state`）。
+2. ツールタブの **AC9 Piece** の **State** で **Active**（`ac9_cloth_sim.piece_state`）。
 3. **State** の行の **Invert Selection**（`ac9_cloth_sim.invert_piece_selection`）で残りを選び、**Off**。
 4. まとまりの分け方が違う（オレンジの行、縫い目が別の服のピースや自分自身に付いている）ときは、まず **Update BOM Seams**（`ac9_cloth_sim.seams_from_bom`）。手動分類の訂正が必要な場合だけ正しい 1 着ぶんのピースを選びF3の **Garment from Selection**（`ac9_cloth_sim.garment_from_selection`）。そのまとまりと元のまとまりの BOM の縫い目が作り直される。名前は行の鉛筆（`ac9_cloth_sim.rename_garment`）。
 5. 全部を戻すときは **All On**（`ac9_cloth_sim.enable_all_pieces`）。
@@ -140,7 +142,7 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 操作 ID: `ac9_cloth_sim.use_tool`（道具に切り替える。`tool` に道具の ID。Whole Pieces は `transform_pattern_tool`、Edit Pieces は `edit_pattern_tool`、どちらも頭に `ac9_cloth_sim.` を付ける。道具の ID で、操作 ID ではない）、`ac9_cloth_sim.edit_pattern`（Edit Pieces に切り替える操作）、`ac9_cloth_sim.pattern_transform`（G・R・S、`mode='MOVE'|'ROTATE'|'SCALE'`）、`ac9_cloth_sim.pattern_edit`（K・X・C・N のキー）、`ac9_cloth_sim.pattern_drag`、`ac9_cloth_sim.pick_piece_under`（ダブルクリック）、`ac9_cloth_sim.context_menu`（何もしていないときの右クリック）、`ac9_cloth_sim.sync_3d`（Update 3D）、`ac9_cloth_sim.set_gap`、`ac9_cloth_sim.pattern_rotate`、`ac9_cloth_sim.pattern_scale`、`ac9_cloth_sim.duplicate_pieces`、`ac9_cloth_sim.symmetrize`、`ac9_cloth_sim.parallel_line`、`ac9_cloth_sim.add_dart`、`ac9_cloth_sim.move_dart`、`ac9_cloth_sim.spread`、`ac9_cloth_sim.cut_line`、`ac9_cloth_sim.piece_label`、`ac9_cloth_sim.mirror_copy`、`ac9_cloth_sim.symmetric_edit`、`ac9_cloth_sim.delete_piece`、`ac9_cloth_sim.delete_selected`、`ac9_cloth_sim.restore_pieces`
 
-目的: 型紙の形を直す。直した形は、着せた服があれば、その場で服へ写る（README の『Pattern（型紙を直す）』）。
+目的: 型紙の形を直す。既定の3D Follows Editsオフでは、調整した形と着た服への反映はUpdate 3Dまたは次のSimulateまで待つ。オンなら編集ごとに写る。反映と物理計算は別。人向けの正本はdocs/ja/features/pattern.md。
 
 前提条件:
 
@@ -154,14 +156,14 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 2. 形を直す: **Pattern** の **Edit Pieces** を押して道具を持つ。型紙の上で、角・辺・取っ手・内部線（端・途中の点・線全体）をドラッグする。クリックで選び、Shift＋クリックで足すと、選んだ全部を一緒にドラッグできる。ダブルクリックでピース全体を選ぶ。ドラッグ中は X／Y で軸、Shift で 0／45／90°、数字で長さ、Ctrl で吸着を切る。G／R／S（選んだ角・辺・線）、K（辺か内部線に点を足す）、C（辺か内部線の区間をカーブ／直線）、N（合印）、Shift+D（そのまま複製）。S は拡大・縮小だけ。ダーツを足す・動かす、切り開き、線で切る、平行な線は右クリックのメニューにだけある（右クリック＝カーソルの下の物にできることの全部、キーは近道）。道具のヘッダーにはカーソルの下の物のキーだけが出る。全部は **Pattern** パネルの **Keys**（2 つの道具の両方）。
 2b. 何もしていないときの右クリックは、カーソルの下の物のメニュー（`ac9_cloth_sim.context_menu`）。右クリックした物が先に選ばれ、項目はキーやボタンと同じ操作を呼ぶ。操作の途中の右クリックは取り消し。
 2c. **AC9 Run** の **3D Follows Edits**（シーンのプロパティ `follow_edits`、既定オフ）が外れている間は、型紙の直しは 3D に写らずに待つ（`sync_pending` が真、**Update 3D** が赤）。**Update 3D**（`ac9_cloth_sim.sync_3d`）か、次の **Simulate** で写る。
-3. 距離をそろえる: 選んだ内部線・辺の Tool タブに周りまでの距離が並ぶ。距離は表示だけで、「数値入力…」（`ac9_cloth_sim.set_gap`）の小窓で、今の位置からの X・Y か、周りまでの距離を入れて動かす。
+3. 距離をそろえる: 選んだ内部線・辺の ツールタブに周りまでの距離が並ぶ。距離は表示だけで、「数値入力…」（`ac9_cloth_sim.set_gap`）の小窓で、今の位置からの X・Y か、周りまでの距離を入れて動かす。
 4. 左右ペアの片方を直すと、相方も鏡像で直る。ずれたときは片方を消し、もう片方を **Mirror Copy** する。**Mirror Copy**（`ac9_cloth_sim.mirror_copy`）は選んだ全部を縫い目ごと鏡に写す。
 5. そのままの複製は **Selected Pieces** の **Duplicate** か Shift+D（`ac9_cloth_sim.duplicate_pieces`）。鏡にせず、左右ペアにもしない。複製したピースどうしの縫い目だけ一緒に写る。複製は置かれていないので Place で置く。
-6. 左右対称の 1 ピース（1 枚で裁つ前身頃など）は Tool タブ **AC9 Piece** の **Symmetric Edit**。Rectangle／Ellipse の道具のヘッダーのチェック（既定オン）で、描いたときからオンにもできる。オンのままなら K・X・N、内部線（描く・動かす・消す）・折り・ダーツ・切り開き・縫い目も反対側へ鏡で入る（中心線をまたいで自分の鏡になる線は 1 本）。角を隣の角に落とすと 1 点にまとまる。中心線は `mirror_axis`（中心 x, y と角度）に持ち、R で回すと一緒に回る。中心線で切ると左右ペアでない 2 枚になる。崩れたら隣の **Symmetrize**（`ac9_cloth_sim.symmetrize`、`keep='LEFT'|'RIGHT'`、既定 LEFT）で反対側を作り直す。
+6. 左右対称の 1 ピース（1 枚で裁つ前身頃など）は ツールタブ **AC9 Piece** の **Symmetric Edit**。Rectangle／Ellipse の道具のヘッダーのチェック（既定オン）で、描いたときからオンにもできる。オンのままなら K・X・N、内部線（描く・動かす・消す）・折り・ダーツ・切り開き・縫い目も反対側へ鏡で入る（中心線をまたいで自分の鏡になる線は 1 本）。角を隣の角に落とすと 1 点にまとまる。中心線は `mirror_axis`（中心 x, y と角度）に持ち、R で回すと一緒に回る。中心線で切ると左右ペアでない 2 枚になる。崩れたら隣の **Symmetrize**（`ac9_cloth_sim.symmetrize`、`keep='LEFT'|'RIGHT'`、既定 LEFT）で反対側を作り直す。
 7. 外周の辺か内部線に平行な内部線は右クリックの Parallel Line（`ac9_cloth_sim.parallel_line`、先に小窓。`distance` m・`count` 本・等間隔。辺なら `piece`・`edges` はカンマ区切りの辺 ID で内側へ、隣り合う辺は 1 本の線。内部線なら `line` に線 ID、`flip`・`both` で側、`extend` で端を外周まで）。
-8. ピースの名前は Tool タブの **AC9 Piece** のいちばん上の欄か F2（`ac9_cloth_sim.piece_label`）。
+8. ピースの名前は ツールタブの **AC9 Piece** のいちばん上の欄か F2（`ac9_cloth_sim.piece_label`）。
 
-期待結果: 型紙の形が変わる。着せた服・調整した形へは、**3D Follows Edits** が外れていれば（既定）次の実行（Simulate など）か **Update 3D** でまとめて写り、押されていればその場で写る。配置中のピースのオブジェクト（Place・Part to Seam・Fold などの後）も、その場で新しい型紙の形に作り直す（頂点ごとに直したものは除き、そう出る）。写したか・写せなかった理由は Run の状態行に「Pattern edit: …」として残る。ピースを動かす・回すだけでは着た服は動かない。写せない形は、理由が出て止まる。続けて **Simulate**（「シミュレーションする（Simulate）」の節）で落ち着く。
+期待結果: 型紙の形が変わる。着せた服・調整した形へは、**3D Follows Edits** が外れていれば（既定）次の実行（Simulate など）か **Update 3D** でまとめて写り、押されていればその場で写る。調整した形も同じ反映時点で更新する。3D Follows Editsがオフの間は、型紙編集だけで即時更新されるとは案内しない。写したか・写せなかった理由は Run の状態行に「Pattern edit: …」として残る。ピースを動かす・回すだけでは着た服は動かない。写せない形は、理由が出て止まる。続けて **Simulate**（「シミュレーションする（Simulate）」の節）で落ち着く。
 
 制限・してはいけないこと: 型紙のピースのオブジェクトは鍵が掛かっている。Blender の G／R／S や標準の編集で動かさない。型紙データを JSON で直接変えると、着せた服へ写せずエラーになることがある。Blender の標準の X でピースのオブジェクトだけが消えたときは、**Lists** の **Pieces** タブの **Restore N Deleted Object(s)**（`ac9_cloth_sim.restore_pieces`）で戻す。
 
@@ -179,7 +181,7 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 
 1. **Piece** の **Draw**（角を順にクリック、最初の角か Enter で閉じる）、**Rectangle**、**Ellipse**。
 2. **Internal** の **Line**（ピースの上で点をクリックして Enter。3 点以上の後に最初の点をクリックすると閉じた図形）、**Rectangle**、**Ellipse**。
-2b. 閉じた図形では、Tool タブの **AC9 Internal Line** と右クリックのメニューに **Convert to Hole**（中を穴にする、もう一度で埋める。外周に触れる・交わる、ほかの穴と重なる、折り・ゴムの付いた図形は断られる）、**Clone as Pattern**（同じ形の新しいピース。生地は元のピース、縫い目なし、置かれていない、元のピースの右）、**Clone as Pattern (+Sew)**（さらに新しいピースの辺を図形に縫い付け、元のピースが置いてあれば 3D でもその上に付ける）が出る（Clone の 2 つは右クリックのメニューだけ）。
+2b. 閉じた図形では、ツールタブの **AC9 Internal Line** と右クリックのメニューに **Convert to Hole**（中を穴にする、もう一度で埋める。外周に触れる・交わる、ほかの穴と重なる、折り・ゴムの付いた図形は断られる）、**Clone as Pattern**（同じ形の新しいピース。生地は元のピース、縫い目なし、置かれていない、元のピースの右）、**Clone as Pattern (+Sew)**（さらに新しいピースの辺を図形に縫い付け、元のピースが置いてあれば 3D でもその上に付ける）が出る（Clone の 2 つは右クリックのメニューだけ）。
 3. 数字を打つと寸法を指定できる（シーンの長さの単位）。Shift で 15° 刻み。Backspace で 1 歩戻る。
 
 期待結果: ピース、または内部線が型紙に増える。
@@ -197,7 +199,7 @@ SVG（描画アプリで描いた型紙など）は **Setup** の **Import SVG**
 前提条件:
 
 - 画面: 縫い目の選択と端のドラッグは、型紙の見える 3D ビューで **Edit Seams** を持って行う。着た服の上でも 3D の縫い目の線は選べる。
-- 縫い目を選ぶと、Tool タブに **AC9 Seam** が出る。
+- 縫い目を選ぶと、ツールタブに **AC9 Seam** が出る。
 
 手順:
 

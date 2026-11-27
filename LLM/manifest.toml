@@ -1,7 +1,7 @@
 schema = 1
 addon_id = "ac9_cloth_sim"
 addon_version = "0.4.1"
-build_id = "8abfe3d3214da7bd7e9670eed4902d812150a0295c540450e1eb6079b1f0632a"
+build_id = "0ea0bd43da7b444e6f96e5a84281d37860f994032bc3cce578218a846ce21998"
 
 [[documents]]
 id = "guide_blender"
@@ -9,7 +9,7 @@ title = "Blender の基本（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "Blender の基本"
 operators = []
-sha256 = "cc8c406a680229636bed70ad9b90038db150dbadfaaeb7bae271729b31d75e90"
+sha256 = "6681dae01ec1121de0ddb81b6fd521f77786b62173edfa09bac6c8a08e832cda"
 
 [[documents]]
 id = "guide_first"
@@ -17,7 +17,7 @@ title = "はじめての 1 着（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "はじめての 1 着"
 operators = []
-sha256 = "cc8c406a680229636bed70ad9b90038db150dbadfaaeb7bae271729b31d75e90"
+sha256 = "6681dae01ec1121de0ddb81b6fd521f77786b62173edfa09bac6c8a08e832cda"
 
 [[documents]]
 id = "guide_concepts"
@@ -25,7 +25,7 @@ title = "考え方（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "考え方"
 operators = []
-sha256 = "cc8c406a680229636bed70ad9b90038db150dbadfaaeb7bae271729b31d75e90"
+sha256 = "6681dae01ec1121de0ddb81b6fd521f77786b62173edfa09bac6c8a08e832cda"
 
 [[documents]]
 id = "guide_trouble"
@@ -33,7 +33,7 @@ title = "困ったとき（人向けの説明書 docs/ja の写し）"
 path = "README.md"
 section = "困ったとき"
 operators = []
-sha256 = "cc8c406a680229636bed70ad9b90038db150dbadfaaeb7bae271729b31d75e90"
+sha256 = "6681dae01ec1121de0ddb81b6fd521f77786b62173edfa09bac6c8a08e832cda"
 
 [[documents]]
 id = "guide_notes"
@@ -41,7 +41,7 @@ title = "案内上の注意と画面の場所"
 path = "procedures.md"
 section = "案内上の注意と画面の場所"
 operators = ["ac9_cloth_sim.update_3d", "ac9_cloth_sim.dress", "ac9_cloth_sim.edit_frame", "ac9_cloth_sim.delete_cache", "ac9_cloth_sim.export_retopo"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "import_bom"
@@ -49,7 +49,7 @@ title = "型紙を読み込む（Import BOM）"
 path = "procedures.md"
 section = "型紙を読み込む（Import BOM）"
 operators = ["ac9_cloth_sim.import_bom"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "update_bom_seams"
@@ -57,7 +57,7 @@ title = "着装形を保ってBOMの縫い目を更新（Update BOM Seams）"
 path = "procedures.md"
 section = "着装形を保ってBOMの縫い目を更新（Update BOM Seams）"
 operators = ["ac9_cloth_sim.seams_from_bom"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "import_dxf"
@@ -65,7 +65,7 @@ title = "型紙を読み込む（Import DXF）"
 path = "procedures.md"
 section = "型紙を読み込む（Import DXF）"
 operators = ["ac9_cloth_sim.import_dxf", "ac9_cloth_sim.export_dxf", "ac9_cloth_sim.import_svg"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "from_mesh"
@@ -73,7 +73,7 @@ title = "型紙を読み込む（From Mesh）"
 path = "procedures.md"
 section = "型紙を読み込む（From Mesh）"
 operators = ["ac9_cloth_sim.from_mesh", "ac9_cloth_sim.new_pattern", "ac9_cloth_sim.set_units"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "use_pieces"
@@ -81,7 +81,7 @@ title = "使うピースを選ぶ"
 path = "procedures.md"
 section = "使うピースを選ぶ"
 operators = ["ac9_cloth_sim.select_garment", "ac9_cloth_sim.rename_garment", "ac9_cloth_sim.garment_from_selection", "ac9_cloth_sim.piece_state", "ac9_cloth_sim.invert_piece_selection", "ac9_cloth_sim.enable_all_pieces", "ac9_cloth_sim.refresh"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "edit_pattern"
@@ -89,7 +89,7 @@ title = "型紙を直す（Whole Pieces・Edit Pieces・右クリック・3D Fol
 path = "procedures.md"
 section = "型紙を直す（Whole Pieces・Edit Pieces）"
 operators = ["ac9_cloth_sim.use_tool", "ac9_cloth_sim.edit_pattern", "ac9_cloth_sim.pattern_transform", "ac9_cloth_sim.context_menu", "ac9_cloth_sim.sync_3d", "ac9_cloth_sim.duplicate_pieces", "ac9_cloth_sim.symmetrize", "ac9_cloth_sim.parallel_line", "ac9_cloth_sim.pattern_edit", "ac9_cloth_sim.pattern_drag", "ac9_cloth_sim.pick_piece_under", "ac9_cloth_sim.set_gap", "ac9_cloth_sim.pattern_rotate", "ac9_cloth_sim.add_dart", "ac9_cloth_sim.move_dart", "ac9_cloth_sim.spread", "ac9_cloth_sim.cut_line", "ac9_cloth_sim.piece_label", "ac9_cloth_sim.mirror_copy", "ac9_cloth_sim.symmetric_edit", "ac9_cloth_sim.delete_piece", "ac9_cloth_sim.delete_selected", "ac9_cloth_sim.restore_pieces"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "draw_piece"
@@ -97,7 +97,7 @@ title = "型紙を描く（Draw Piece・Internal Line・図形）"
 path = "procedures.md"
 section = "型紙を描く（Draw Piece・Internal Line・図形）"
 operators = ["ac9_cloth_sim.draw_piece", "ac9_cloth_sim.draw_line", "ac9_cloth_sim.draw_shape", "ac9_cloth_sim.delete_internal", "ac9_cloth_sim.cut_out", "ac9_cloth_sim.clone_shape"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "seams"
@@ -105,7 +105,7 @@ title = "縫い目を付ける・直す"
 path = "procedures.md"
 section = "縫い目を付ける・直す"
 operators = ["ac9_cloth_sim.edit_seams", "ac9_cloth_sim.seam_click", "ac9_cloth_sim.seam_list_pick", "ac9_cloth_sim.seam_move_side", "ac9_cloth_sim.seam_notch", "ac9_cloth_sim.add_seam", "ac9_cloth_sim.add_seam_mn", "ac9_cloth_sim.match_length", "ac9_cloth_sim.seam_edit", "ac9_cloth_sim.seam_path", "ac9_cloth_sim.seam_path_part", "ac9_cloth_sim.pick_seam", "ac9_cloth_sim.blend", "ac9_cloth_sim.match_notches", "ac9_cloth_sim.notches_from_bom", "ac9_cloth_sim.close_dart", "ac9_cloth_sim.fold_dart"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "guides"
@@ -113,7 +113,7 @@ title = "使う体と置く目安を用意する（Detect Guides・Edit Guides�
 path = "procedures.md"
 section = "使う体と置く目安を用意する（Detect Guides・Edit Guides）"
 operators = ["ac9_cloth_sim.detect_guides", "ac9_cloth_sim.edit_guides"]
-sha256 = "52d2a8f82feb0fd5eec9506b9cc16d13f43a68bc09e882153a57780c009d2b34"
+sha256 = "8e0812440821f1ff99411f57fcfe8eac9c1fd28383223d992c472ef16691ad4b"
 
 [[documents]]
 id = "place"

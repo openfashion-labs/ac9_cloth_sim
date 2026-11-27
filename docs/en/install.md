@@ -56,3 +56,5 @@ After publication, this section will link to the Extensions installation page. I
 - With a test .blend, first save it under a different name after opening it. The simulation history (the timeline frames) is made in the `AC9_ClothSim_jobs` folder next to the saved .blend (if you haven't saved, it goes to a temporary folder, and you can't play the history back later).
 - The last shape of the dressed garment stays inside the .blend. If you hand just the .blend to another PC, the last shape is visible when you open it, and you can continue from it with **Simulate** (only playing back the history isn't possible).
 - It assumes the avatar is standing straight and facing the -Y direction (the front).
+
+After installation, see [Before you start](before-start.md) for project storage, initial settings and recorded progress.

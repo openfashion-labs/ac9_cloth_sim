@@ -19,6 +19,8 @@ You make 6 pattern pieces.
 | Sleeves (left and right) | Draw one, then make a left/right pair with Mirror Copy |
 | Neck ribs (left and right) | Draw a thin rectangle, then Mirror Copy |
 
+Before working, check project storage and recording settings in [Before you start](before-start.md).
+
 ## What you need
 
 - Blender 5.2 with AC9 Cloth Sim installed (see [Installation](install.md)). You need no body and no pattern: the body is the bundled avatar (CC0).
@@ -27,7 +29,7 @@ To start from your own body (avatar), or from a pattern made in other software (
 
 ## 1. Open the work screen
 
-1. Start Blender and, with the new file as it is, **first save it under a name** (**Ctrl+Shift+S**). The simulation's progress is kept in a folder created next to the saved .blend.
+1. Start Blender and, with the new file as it is, **first save it under a name** (**Ctrl+Shift+S**). Progress retained by your recording settings is stored in a folder beside the saved .blend.
 2. Press **N** in the 3D viewport to show the sidebar, and open the "AC9 Cloth Sim" tab ("Work Screen" in [Blender basics](blender-basics.md)).
 3. In the **Setup** panel, press **Work Screen**. You get a screen with the 3D view on the left, the pattern in the middle, and the Tool tab on the right.
 
@@ -45,7 +47,7 @@ Use these measurements as a guide for the size of the pattern you draw. For exam
 ## 3. Make the front from a rectangle
 
 1. In **Setup**, press **New Garment**. You get a garment with no pieces.
-2. In the **Pattern** panel, press **Rectangle** in the **Piece** row and drag in the pattern view in the middle to draw a rectangle. To set its size in numbers, start drawing, type the width and press **Tab**, then type the height and press **Enter**.
+2. In the **Pattern** panel, press **Rectangle** in the **Piece** row and drag in the pattern view in the middle to draw a rectangle. To set its size numerically, finish drawing, switch to **Whole Pieces**, right-click the rectangle and choose **Numeric Input...**. Enter the width and height and confirm.
 3. Press **Edit Pieces** and drag the corners into shape.
    - Press **K** on an edge to add a point there (the shoulder tip, the underarm and so on).
    - Press **C** on an edge to make that edge a curve. Drag its handles to round the neckline and the armhole.
