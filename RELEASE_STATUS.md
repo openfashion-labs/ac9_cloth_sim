@@ -13,12 +13,13 @@ It is a draft, not a published split release. Version 0.4.0 remains available as
 | Reject a workflow missing the split-distribution requirements | Independent release-scope CI and omission regression tests added |
 | Public repository index, Release assets and installation URL | Publication/catalog/site code connected and rehearsed offline; actual activation and public HTTPS checks remain pending |
 | Main-component third-party notices | Corrected the conflicting bundled-wheel introduction; component credits preserved |
-| Separate runtime distribution terms | Pending review |
+| Separate runtime distribution terms | Maintainer assessment recorded for the pinned, unmodified wheels and retained notices; asset authorization is prepared in this candidate. The Runtime Release uses the versioned AC9-component notice. Final approval must cover this source head. |
 | Installation and update through the public URL in Blender | Pending; local package validation is insufficient |
 
-The publication gate is deliberately closed in `.github/release_scope.json`.
-The current tag workflow must not be used to publish this candidate while these requirements remain open.
-Restoring the preview workflow alone does not complete production publishing.
+Asset authorization is enabled in this preparation candidate's `.github/release_scope.json`.
+Publication is not complete: `ready` remains false, and public-URL installation/update verification remains pending.
+The tag workflow only builds and checks packages. Actual publication still requires successful CI and approval
+of the final source, a matching merged main tree, the required tags and explicit execution of `publish-distribution`.
 
 The branch README can be viewed before merging. The documentation workflow builds PRs,
 but currently deploys the public site only from main; there is no hosted documentation PR preview.
@@ -34,4 +35,4 @@ and does not prove installation/update from the future public HTTPS repository.
 
 See [publishing instructions](tools/PUBLISHING.md) for immutable asset promotion,
 the persistent catalog branch, whole-site deployment and required approval.
-Both publication completion and asset authorization remain explicitly false.
+Publication completion remains false. Enabling asset authorization alone does not run or complete publication.
